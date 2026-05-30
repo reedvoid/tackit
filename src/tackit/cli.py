@@ -17,10 +17,11 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 from . import sync
-from .core import Core
+from .core import Core, stale_alert_text
 from .db import init_store, require_store
 from .errors import TackitError
 
@@ -64,6 +65,45 @@ def _dump(model):
     return model.model_dump(mode="json")
 
 
+# --- D19: built-in stale surfacing (design.md "Enforcement" tier 2) ---------
+# The stale check is code in the app, not advice: every Core-opening command
+# surfaces the outstanding stale set deterministically -- on entry (before the op)
+# and again on exit if the op changed it. It goes to STDERR so that `--json` stdout
+# stays clean and parseable. The wording is single-sourced in core.stale_alert_text.
+
+def _stale_ids(tasks) -> list[int]:
+    out = []
+    for t in tasks:
+        out.append(t.id)
+    return out
+
+
+def _print_stale_banner(tasks, changed: bool = False) -> None:
+    text = stale_alert_text(tasks)
+    if text:
+        prefix = "[after this change] " if changed else ""
+        print(prefix + text, file=sys.stderr)
+    elif changed:
+        print("✓ stale worklist now empty — reconciliation complete.", file=sys.stderr)
+
+
+@contextmanager
+def _core_session():
+    """Open Core, surface the entry stale banner, run the command, then surface the
+    exit banner if the stale set changed, and close. Centralizes the mandatory
+    before/after stale check so no command can skip it."""
+    core = Core.open()
+    entry = core.stale_worklist()
+    _print_stale_banner(entry)
+    try:
+        yield core
+    finally:
+        after = core.stale_worklist()
+        if _stale_ids(after) != _stale_ids(entry):
+            _print_stale_banner(after, changed=True)
+        core.close_conn()
+
+
 # --- command handlers -------------------------------------------------------
 
 def _cmd_init(args) -> int:
@@ -78,28 +118,21 @@ def _cmd_init(args) -> int:
 
 
 def _cmd_add(args) -> int:
-    core = Core.open()
-    try:
+    with _core_session() as core:
         task = core.add(args.name, description=args.desc or "", labels=args.label, deps=args.dep)
         _emit("created " + _fmt_slice(core.show(task.id)), _dump(core.show(task.id)), args.json)
-    finally:
-        core.close_conn()
     return 0
 
 
 def _cmd_show(args) -> int:
-    core = Core.open()
-    try:
+    with _core_session() as core:
         s = core.show(args.id)
         _emit(_fmt_slice(s), _dump(s), args.json)
-    finally:
-        core.close_conn()
     return 0
 
 
 def _cmd_search(args) -> int:
-    core = Core.open()
-    try:
+    with _core_session() as core:
         hits = core.search(args.terms)
         text = (
             "\n".join(f"T{h.id}  ({h.score:+.3f})  {h.name}" for h in hits)
@@ -107,14 +140,11 @@ def _cmd_search(args) -> int:
             else "(no matches)"
         )
         _emit(text, [_dump(h) for h in hits], args.json)
-    finally:
-        core.close_conn()
     return 0
 
 
 def _cmd_edit(args) -> int:
-    core = Core.open()
-    try:
+    with _core_session() as core:
         result = core.edit(args.id, name=args.name, description=args.desc)
         text = ["edited " + _fmt_task(result.task)]
         if result.newly_stale:
@@ -123,47 +153,35 @@ def _cmd_edit(args) -> int:
         else:
             text.append("  no dependents to review.")
         _emit("\n".join(text), _dump(result), args.json)
-    finally:
-        core.close_conn()
     return 0
 
 
 def _cmd_close(args) -> int:
-    core = Core.open()
-    try:
+    with _core_session() as core:
         result = core.close(args.id)
         text = ["closed " + _fmt_task(result.task), "  review obligations (one hop):"]
         text += _fmt_neighbors("depends on", result.dependencies)
         text += _fmt_neighbors("depended on by", result.dependents)
         _emit("\n".join(text), _dump(result), args.json)
-    finally:
-        core.close_conn()
     return 0
 
 
 def _cmd_reopen(args) -> int:
-    core = Core.open()
-    try:
+    with _core_session() as core:
         t = core.reopen(args.id)
         _emit("reopened " + _fmt_task(t), _dump(t), args.json)
-    finally:
-        core.close_conn()
     return 0
 
 
 def _cmd_reconcile(args) -> int:
-    core = Core.open()
-    try:
+    with _core_session() as core:
         t = core.reconcile(args.id)
         _emit("reconciled (stale cleared) " + _fmt_task(t), _dump(t), args.json)
-    finally:
-        core.close_conn()
     return 0
 
 
 def _cmd_dep(args) -> int:
-    core = Core.open()
-    try:
+    with _core_session() as core:
         if args.dep_action == "add":
             s = core.dep_add(args.from_task, args.to_task)
             verb = "added"
@@ -175,14 +193,11 @@ def _cmd_dep(args) -> int:
             _dump(s),
             args.json,
         )
-    finally:
-        core.close_conn()
     return 0
 
 
 def _cmd_label(args) -> int:
-    core = Core.open()
-    try:
+    with _core_session() as core:
         if args.label_action == "add":
             t = core.label_add(args.id, args.label)
             verb = "added"
@@ -190,26 +205,20 @@ def _cmd_label(args) -> int:
             t = core.label_rm(args.id, args.label)
             verb = "removed"
         _emit(f"{verb} label '{args.label}' on " + _fmt_task(t), _dump(t), args.json)
-    finally:
-        core.close_conn()
     return 0
 
 
 def _cmd_ls(args) -> int:
-    core = Core.open()
-    try:
+    with _core_session() as core:
         stale = True if args.stale else None
         tasks = core.ls(status=args.status, label=args.label, stale=stale)
         text = "\n".join(_fmt_task(t) for t in tasks) if tasks else "(no matching tasks)"
         _emit(text, [_dump(t) for t in tasks], args.json)
-    finally:
-        core.close_conn()
     return 0
 
 
 def _cmd_stale(args) -> int:
-    core = Core.open()
-    try:
+    with _core_session() as core:
         tasks = core.stale_worklist()
         if tasks:
             text = "stale worklist (reconcile each, then it's empty):\n" + "\n".join(
@@ -218,31 +227,23 @@ def _cmd_stale(args) -> int:
         else:
             text = "stale worklist empty — reconciliation complete."
         _emit(text, [_dump(t) for t in tasks], args.json)
-    finally:
-        core.close_conn()
     return 0
 
 
 def _cmd_render(args) -> int:
-    core = Core.open()
-    try:
+    with _core_session() as core:
         md = core.render(args.label)
         _emit(md, {"label": args.label, "markdown": md}, args.json)
-    finally:
-        core.close_conn()
     return 0
 
 
 def _cmd_history(args) -> int:
-    core = Core.open()
-    try:
+    with _core_session() as core:
         rows = core.history(args.id)
         text = "\n".join(
             f"  {r.changed_at}  {r.from_status or '(new)'} -> {r.to_status}" for r in rows
         )
         _emit(f"status history of T{args.id}:\n{text}", [_dump(r) for r in rows], args.json)
-    finally:
-        core.close_conn()
     return 0
 
 

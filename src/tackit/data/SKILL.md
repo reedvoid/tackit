@@ -22,20 +22,32 @@ that drift and contradict each other.
   belong to your memory, not here. Keep tackit to actionable tasks + dependencies.
 
 ## The reconciliation discipline (the core of using tackit well)
-tackit tracks not just tasks but whether they're still in sync after changes. The
-tools state your obligations in their responses — **do what they say** — and hold
-this model so you never lose the thread:
+tackit tracks not just tasks but whether they're still in sync after changes. **The
+app checks for stale tasks itself, on every single call, and puts the outstanding
+list in front of you** — this is not a reminder you can opt out of; it is the tool
+telling you the plan is currently inconsistent. When you see a stale alert, act on it.
 
 - **Changing a task can invalidate everything that depends on it.** When you edit
   one, its dependents are marked **stale** = "may no longer be correct; review me."
-- **Work the stale set to empty.** For each stale task, look at it, then either fix
-  it (which may stale *its* dependents in turn) or reconcile it if still correct.
-  Drift propagates only where real changes happen.
-- **Never treat work as done while any task is stale.** A closed task silently out
-  of sync with a changed dependency is the worst outcome — wrong and invisible.
-  Clear the worklist before you wrap up.
-- A stale task **cannot be closed** until reconciled. The tools enforce this — don't
-  fight it; reconcile first.
+- **To reconcile a stale task, look at it TOGETHER WITH the tasks it `depends_on`.**
+  A task is stale precisely because one of its dependencies changed under it. So
+  `show` it, read it against those `depends_on` neighbors, and decide: if it is now
+  wrong, `edit` it (which re-stales *its* own dependents — the cascade flows on); if
+  it is still correct, `reconcile` it. Looking at the stale task alone, without its
+  dependencies, defeats the entire check — you cannot tell if it is still in sync
+  without seeing what moved beneath it.
+- **Work the stale set to empty.** The pass is done only when the worklist (`stale`)
+  is empty. Drift propagates only where real changes happen.
+- **Never treat work as done — never end your turn — while any task is stale.** A
+  task left closed while something it depends on changed is the single worst outcome
+  this tool exists to prevent: it is **wrong, and it is invisible**, so it silently
+  corrupts everything downstream and no one discovers it until much later, at far
+  greater cost. An empty stale list is the only safe stopping point.
+- **A stale task cannot be closed, and neither can anything that depends on a stale
+  task.** The tools enforce both: `close` is refused if the task is stale, *or* if it
+  transitively depends on a stale task (closing it would mark work done on top of
+  drift that may still change). Don't fight the refusal — reconcile the named
+  upstream first, then close.
 
 ## Code ↔ task traceability — MANDATORY, not a nicety
 This is the most important convention here and the easiest to under-take seriously.
@@ -64,11 +76,31 @@ style nit. The system's ability to recover intent across context resets depends
 entirely on this.
 
 ## Working effectively
-- **Search before you create.** `search` for related work first — to find the tasks
-  this one should depend on, and to avoid duplicating something that exists.
-- **Wire dependencies explicitly.** A task building on another must declare it. The
-  dependency graph is what makes reconciliation and "what does this change affect?"
-  possible; an unlinked task is invisible to both.
+- **Search before you create — targeted, not exhaustive.** `search` for the concepts
+  your new task touches (its component, table, function, feature) and inspect the
+  handful of ranked hits — you do **not** read every task. This is how you find the
+  tasks this one should depend on and avoid duplicating something that exists. It is
+  cheap only because tasks are named discoverably (see the traceability convention
+  above): a vaguely named prerequisite is invisible to search, so it never surfaces
+  and the link is silently lost. Discoverable naming is what keeps this from being a
+  scan of the whole store.
+- **Wire dependencies explicitly — including among tasks you add together.** A task
+  building on another must declare the edge; the dependency graph is what makes
+  reconciliation and "what does this change affect?" possible, and an unlinked task
+  is invisible to both. Two cases to handle, not one:
+  - *Edges to existing tasks:* `search` for the prerequisites your new task builds
+    on and wire an edge to each.
+  - *Edges within a batch:* when you add several tasks at once (decomposing a plan),
+    the dependencies are frequently **among the new tasks themselves** — wire that
+    internal DAG too, not just the edges out to pre-existing tasks. This is the case
+    most easily forgotten, because `search` won't surface tasks you only just created.
+- **Search is best-effort; keep wiring as you discover edges.** Keyword search is
+  recall-limited: if your terms don't match how a prerequisite was worded, you will
+  miss it and create an unlinked task. That is not a permanent failure — add the edge
+  the moment you notice it (often while coding), and the reconciliation machinery
+  takes the propagation from there. Wire what you can find now; keep wiring as you
+  learn more. A missing edge you never add, though, is drift that will never be
+  caught — so err toward wiring.
 - **Right-size tasks.** A task is a describable unit of work — a black-box feature —
   not one line of code, not a whole subsystem. If you can't describe it without
   listing implementation steps, it's too small; if it has many independent parts,

@@ -35,6 +35,55 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# --- D19: built-in stale obligation surfacing (design.md "Enforcement" tier 2) ---
+# The stale check is CODE IN THE APP, not advice: every invocation surfaces the
+# outstanding stale set through both adapters (CLI stderr, MCP result envelope),
+# deterministically, before the requested op and again after. These two helpers are
+# the single source of the warning's wording, so it reads identically everywhere.
+
+def stale_alert_text(stale_tasks: list[Task]) -> str:
+    """The strongly-worded stale-obligation banner; empty string when nothing is
+    stale. Names the tasks, the required action (review each AGAINST its depends_on
+    neighbors, then edit-or-reconcile), and the negative fallout of ignoring it."""
+    if not stale_tasks:
+        return ""
+    ids = []
+    for t in stale_tasks:
+        ids.append(f"T{t.id}")
+    id_list = ", ".join(ids)
+    n = len(stale_tasks)
+    if n == 1:
+        noun = "task is"
+    else:
+        noun = "tasks are"
+    return (
+        f"⚠ STALE TASKS OUTSTANDING — {n} {noun} unreconciled: {id_list}.\n"
+        f"Each was marked stale because something it depends on changed and it has "
+        f"NOT been re-verified. For each: read it together with its depends_on "
+        f"neighbors (`show <id>`), then `edit` it if it is now wrong (which re-stales "
+        f"its own dependents) or `reconcile` it if it is still correct. Until this "
+        f"list is empty the plan is KNOWN to be internally inconsistent, and a task "
+        f"left closed on top of an unreconciled dependency is WRONG AND INVISIBLE — "
+        f"the exact failure tackit exists to prevent. Do not treat any work as done "
+        f"while this list is non-empty. (Full worklist: `stale`.)"
+    )
+
+
+def stale_alert_payload(stale_tasks: list[Task]) -> dict | None:
+    """Structured form of the stale alert for the MCP result envelope; None when
+    nothing is stale. Carries the same wording as :func:`stale_alert_text`."""
+    if not stale_tasks:
+        return None
+    ids = []
+    for t in stale_tasks:
+        ids.append(t.id)
+    return {
+        "count": len(stale_tasks),
+        "stale_task_ids": ids,
+        "message": stale_alert_text(stale_tasks),
+    }
+
+
 class Core:
     """The operation surface. Open via :meth:`open` for normal use (runs the D18
     startup sync first); construct directly only in tests with a ready store."""
@@ -151,18 +200,33 @@ class Core:
         """D4 - tag a task. (Pure tagging is not a content change, so it does NOT
         stale dependents -- D10 fires only on edits that can invalidate them.)"""
         self._require_row(task_id)
-        with self._mutate():
-            self._attach_label(task_id, label)
+        if not label or not label.strip():
+            raise ValidationError("label must be a non-empty string (D4/S2).")
+        clean = label.strip()
+        # No-op guard (D20): re-adding a label the task already carries changes nothing,
+        # so it must not bump version / re-dump tackit.sql.
+        existing = self.conn.execute(
+            "SELECT 1 FROM task_labels WHERE task_id = ? AND label = ?", (task_id, clean)
+        ).fetchone()
+        if existing is None:
+            with self._mutate():
+                self._attach_label(task_id, clean)
         return self.get(task_id)
 
     def label_rm(self, task_id: int, label: str) -> Task:
         """D4 - untag a task."""
         self._require_row(task_id)
-        with self._mutate():
-            self.conn.execute(
-                "DELETE FROM task_labels WHERE task_id = ? AND label = ?",
-                (task_id, label.strip()),
-            )
+        clean = label.strip() if label else ""
+        # No-op guard (D20): removing a label the task doesn't carry changes nothing.
+        existing = self.conn.execute(
+            "SELECT 1 FROM task_labels WHERE task_id = ? AND label = ?", (task_id, clean)
+        ).fetchone()
+        if existing is not None:
+            with self._mutate():
+                self.conn.execute(
+                    "DELETE FROM task_labels WHERE task_id = ? AND label = ?",
+                    (task_id, clean),
+                )
         return self.get(task_id)
 
     def labels_of(self, task_id: int) -> list[str]:
@@ -217,21 +281,66 @@ class Core:
                 stack.append(r["to_task"])
         return False
 
+    def _stale_upstream(self, task_id: int) -> list[int]:
+        """All tasks ``task_id`` transitively depends_on that are currently stale
+        (excluding itself), id-sorted. Underpins the dependency-aware close-gate
+        (D14 extended): closing a task that sits on unreconciled upstream drift is
+        refused, since that drift may still change and re-invalidate it."""
+        seen: set[int] = set()
+        stack: list[int] = []
+        rows = self.conn.execute(
+            "SELECT to_task FROM dependencies WHERE from_task = ?", (task_id,)
+        ).fetchall()
+        for r in rows:
+            stack.append(r["to_task"])
+        stale_found: list[int] = []
+        while stack:
+            node = stack.pop()
+            if node in seen:
+                continue
+            seen.add(node)
+            row = self.conn.execute(
+                "SELECT stale FROM tasks WHERE id = ?", (node,)
+            ).fetchone()
+            if row is not None and bool(row["stale"]):
+                stale_found.append(node)
+            nxt = self.conn.execute(
+                "SELECT to_task FROM dependencies WHERE from_task = ?", (node,)
+            ).fetchall()
+            for r in nxt:
+                stack.append(r["to_task"])
+        stale_found.sort()
+        return stale_found
+
     def dep_add(self, from_task: int, to_task: int) -> Slice:
         """D5 - declare ``from_task depends_on to_task``; return from_task's slice."""
-        with self._mutate():
-            self._add_edge(from_task, to_task)
+        # No-op guard (D20): an edge that already exists is idempotent, so it must not
+        # bump version. (A new edge still runs the full D14 validation in
+        # ``_add_edge``: self-edge, FK, and cycle checks.)
+        existing = self.conn.execute(
+            "SELECT 1 FROM dependencies WHERE from_task = ? AND to_task = ?",
+            (from_task, to_task),
+        ).fetchone()
+        if existing is None:
+            with self._mutate():
+                self._add_edge(from_task, to_task)
         return self.show(from_task)
 
     def dep_rm(self, from_task: int, to_task: int) -> Slice:
         """D5 - remove the edge ``from_task depends_on to_task``."""
         self._require_row(from_task)
         self._require_row(to_task)
-        with self._mutate():
-            self.conn.execute(
-                "DELETE FROM dependencies WHERE from_task = ? AND to_task = ?",
-                (from_task, to_task),
-            )
+        # No-op guard (D20): removing an edge that isn't there changes nothing.
+        existing = self.conn.execute(
+            "SELECT 1 FROM dependencies WHERE from_task = ? AND to_task = ?",
+            (from_task, to_task),
+        ).fetchone()
+        if existing is not None:
+            with self._mutate():
+                self.conn.execute(
+                    "DELETE FROM dependencies WHERE from_task = ? AND to_task = ?",
+                    (from_task, to_task),
+                )
         return self.show(from_task)
 
     def dependencies_of(self, task_id: int) -> list[NeighborRef]:
@@ -270,8 +379,13 @@ class Core:
     def reopen(self, task_id: int) -> Task:
         """D7/D8 - move a closed task back to open (logged). Does not set stale;
         the history log keeps the earlier 'closed' fact."""
-        with self._mutate():
-            self._set_status(task_id, "open", clear_stale=False)
+        row = self._require_row(task_id)
+        # No-op guard (D20): reopening an already-open task changes nothing, so it must
+        # not bump version / re-dump tackit.sql (which would be spurious git churn
+        # and a false "newer" signal for D18 ordering).
+        if row["status"] != "open":
+            with self._mutate():
+                self._set_status(task_id, "open", clear_stale=False)
         return self.get(task_id)
 
     def _mark_dependents_stale(self, task_id: int) -> list[NeighborRef]:
@@ -301,12 +415,14 @@ class Core:
     def reconcile(self, task_id: int) -> Task:
         """D11 - clear ``stale`` on a task reviewed and found still-correct, with
         no content change (so it does NOT cascade to dependents)."""
-        self._require_row(task_id)
-        with self._mutate():
-            self.conn.execute(
-                "UPDATE tasks SET stale = 0, updated_at = ? WHERE id = ?",
-                (_now(), task_id),
-            )
+        row = self._require_row(task_id)
+        # No-op guard (D20): reconciling a task that isn't stale changes nothing.
+        if bool(row["stale"]):
+            with self._mutate():
+                self.conn.execute(
+                    "UPDATE tasks SET stale = 0, updated_at = ? WHERE id = ?",
+                    (_now(), task_id),
+                )
         return self.get(task_id)
 
     # ====================================================================
@@ -336,8 +452,28 @@ class Core:
                 f"REFUSED: T{task_id} is stale -- it has unreconciled upstream "
                 f"changes. Reconcile (review + `reconcile`) first, then close (D14)."
             )
-        with self._mutate():
-            self._set_status(task_id, "closed", clear_stale=False)
+        # Dependency-aware close-gate (D14 extended): even if T itself is not stale,
+        # refuse to mark it done while anything it transitively depends_on is stale
+        # -- that upstream drift is unreconciled and may still change under T.
+        upstream = self._stale_upstream(task_id)
+        if upstream:
+            labels = []
+            for uid in upstream:
+                labels.append(f"T{uid}")
+            id_list = ", ".join(labels)
+            raise InvariantError(
+                f"REFUSED: T{task_id} transitively depends on unreconciled stale "
+                f"task(s) {id_list} -- closing it would mark work done on top of "
+                f"drift that may still change. Reconcile {id_list} first, then "
+                f"close (D14)."
+            )
+        # No-op guard (D20): closing an already-closed task changes nothing -- still
+        # return the obligation payload (deps/dependents), but don't bump version
+        # or re-dump tackit.sql. (A closed task is never stale, so the gate above
+        # always passes on this path.)
+        if row["status"] != "closed":
+            with self._mutate():
+                self._set_status(task_id, "closed", clear_stale=False)
         return CloseResult(
             task=self.get(task_id),
             dependencies=self.dependencies_of(task_id),
@@ -354,25 +490,34 @@ class Core:
         then apply the edit, then return the now-stale set. Entry point of the
         change-time cascade (reconciling each may, if it too changes, stale its
         own dependents)."""
-        self._require_row(task_id)
+        row = self._require_row(task_id)
         if name is not None and not name.strip():
             raise ValidationError("task name cannot be set empty (D3/S1).")
+        # No-op guard (D20): D10 staling and the version bump must fire ONLY on a
+        # real content change. "Actual change" = a provided field differs from
+        # what is already stored -- a field-level comparison against the current
+        # row (no diff machinery needed; the row is already in hand). A bare
+        # `edit ID` with no differing field stales nothing and bumps nothing.
+        new_name = name.strip() if name is not None else None
+        name_changes = new_name is not None and new_name != row["name"]
+        desc_changes = description is not None and description != row["description"]
+        if not name_changes and not desc_changes:
+            return ChangeResult(task=self.get(task_id), newly_stale=[])
         with self._mutate():
             newly_stale = self._mark_dependents_stale(task_id)  # D10, before change
             sets, params = [], []
-            if name is not None:
+            if name_changes:
                 sets.append("name = ?")
-                params.append(name.strip())
-            if description is not None:
+                params.append(new_name)
+            if desc_changes:
                 sets.append("description = ?")
                 params.append(description)
-            if sets:
-                sets.append("updated_at = ?")
-                params.append(_now())
-                params.append(task_id)
-                self.conn.execute(
-                    f"UPDATE tasks SET {', '.join(sets)} WHERE id = ?", tuple(params)
-                )
+            sets.append("updated_at = ?")
+            params.append(_now())
+            params.append(task_id)
+            self.conn.execute(
+                f"UPDATE tasks SET {', '.join(sets)} WHERE id = ?", tuple(params)
+            )
         return ChangeResult(task=self.get(task_id), newly_stale=newly_stale)
 
     # ====================================================================
