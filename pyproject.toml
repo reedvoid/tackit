@@ -1,0 +1,46 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tackit"
+version = "0.1.0"
+description = "A deterministic task + dependency tracker for coding agents (SQLite + Pydantic, MCP + CLI)."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "reedvoid" }]
+license = "MIT"
+license-files = ["LICEN[CS]E*"]
+keywords = ["task-tracker", "coding-agents", "mcp", "sqlite", "dependency-graph"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Topic :: Software Development",
+]
+# Resolved 2026-05-30 (most-recent-stable-published->=2-weeks-ago rule):
+#   pydantic 2.13.4 (2026-05-06), mcp 1.27.1 (2026-05-08).
+# mcp 1.27.2 (2026-05-29) was skipped as too fresh; floor at the known-good versions.
+dependencies = [
+    "pydantic>=2.13.4,<3",
+    "mcp>=1.27.1,<2",
+]
+
+[project.scripts]
+# One console entry point. With no args / a CLI verb -> CLI (design.md "Interface
+# - CLI"). With the `mcp` subcommand -> the stdio MCP server (design.md "Interface
+# - MCP"); the same entry point launches both, per the Installation section.
+tackit = "tackit.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/reedvoid/tackit"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tackit"]
+# Ship the cross-agent SKILL.md inside the package so `tackit setup` can locate and
+# copy it (design.md "Interface - Skill"; skill.md).
+artifacts = ["src/tackit/data/SKILL.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

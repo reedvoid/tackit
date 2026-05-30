@@ -1,3 +1,19 @@
 # Design/planning docs are kept LOCAL only — they reference private source
 # projects (used as case-study material) and must not ship in this public repo.
 docs/
+
+# Python build / env artifacts
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+
+# A tackit store dogfooded inside this repo (the binary db is local; if we ever
+# track our own plan in tackit, tackit.sql would be committed and the db ignored).
+.tackit/tackit.db
+.tackit/tackit.db-wal
+.tackit/tackit.db-shm
+.tackit/backups/
