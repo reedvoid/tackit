@@ -1,0 +1,3 @@
+# Design/planning docs are kept LOCAL only — they reference private source
+# projects (used as case-study material) and must not ship in this public repo.
+docs/
