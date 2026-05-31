@@ -35,6 +35,33 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _validate_text(value: str | None, field: str) -> None:
+    """D2 fail-loud: refuse text that cannot be stored AND round-tripped. Two cases
+    the property-based test surfaced, both rejected loudly at the boundary so the
+    store stays storable and rebuildable:
+
+      * a **NUL byte** (``\\x00``) survives into the SQLite TEXT value but breaks the
+        D18 serialization -- ``sqlite3.executescript`` raises on an embedded NUL when
+        rebuilding tackit.db from tackit.sql (fresh clone / import / pull);
+      * an **unpaired UTF-16 surrogate** (``\\ud800``-``\\udfff``) is not valid UTF-8,
+        so SQLite cannot even encode it on insert (UnicodeEncodeError).
+    """
+    if value is None:
+        return
+    if "\x00" in value:
+        raise ValidationError(
+            f"{field} contains a NUL byte (\\x00), which is not allowed because it "
+            f"breaks the tackit.sql serialization (D2/D18)."
+        )
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ValidationError(
+            f"{field} contains characters that are not valid UTF-8 (e.g. an unpaired "
+            f"surrogate) and cannot be stored (D2/D18)."
+        ) from exc
+
+
 # --- D19: built-in stale obligation surfacing (design.md "Enforcement" tier 2) ---
 # The stale check is CODE IN THE APP, not advice: every invocation surfaces the
 # outstanding stale set through both adapters (CLI stderr, MCP result envelope),
@@ -166,6 +193,8 @@ class Core:
         FK checks (D14) apply to the deps."""
         if not name or not name.strip():
             raise ValidationError("task name must be a non-empty string (D3/S1).")
+        _validate_text(name, "task name")
+        _validate_text(description, "task description")
         ts = _now()
         with self._mutate():
             cur = self.conn.execute(
@@ -191,6 +220,7 @@ class Core:
     def _attach_label(self, task_id: int, label: str) -> None:
         if not label or not label.strip():
             raise ValidationError("label must be a non-empty string (D4/S2).")
+        _validate_text(label, "label")
         self.conn.execute(
             "INSERT OR IGNORE INTO task_labels(task_id, label) VALUES (?, ?)",
             (task_id, label.strip()),
@@ -493,6 +523,8 @@ class Core:
         row = self._require_row(task_id)
         if name is not None and not name.strip():
             raise ValidationError("task name cannot be set empty (D3/S1).")
+        _validate_text(name, "task name")
+        _validate_text(description, "task description")
         # No-op guard (D20): D10 staling and the version bump must fire ONLY on a
         # real content change. "Actual change" = a provided field differs from
         # what is already stored -- a field-level comparison against the current
