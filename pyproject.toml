@@ -27,6 +27,17 @@ dependencies = [
     "mcp>=1.27.1,<2",
 ]
 
+[project.optional-dependencies]
+# Test-only tooling (not shipped). hypothesis is pinned EXACT per the version policy:
+# 6.152.7 (2026-05-13) is the newest stable uploaded >=2 weeks before 2026-05-30.
+# Pure-Python, dev-only, so it shares no runtime constraint with pydantic/mcp.
+# Property-based / stateful tests live in tests/test_property.py.
+test = [
+    "pytest>=8,<10",
+    "coverage>=7,<8",
+    "hypothesis==6.152.7",
+]
+
 [project.scripts]
 # One console entry point. With no args / a CLI verb -> CLI (design.md "Interface
 # - CLI"). With the `mcp` subcommand -> the stdio MCP server (design.md "Interface

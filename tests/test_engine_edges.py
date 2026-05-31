@@ -1,0 +1,142 @@
+"""Engine edge cases the original suite left in the negative space (Pass 3).
+
+These pin behaviors the happy-path tests don't touch: edit-empty refusal,
+status-blind traversal, malformed FTS5 syntax, invalid filter, empty render,
+edge-to-missing on both add-time and dep_rm, and add-with-deps+labels.
+"""
+
+import pytest
+
+from tackit.errors import InvariantError, NotFoundError, ValidationError
+
+
+def test_edit_empty_name_refused(core):
+    core.add("a")
+    with pytest.raises(ValidationError):
+        core.edit(1, name="   ")
+
+
+def test_traversal_is_status_blind(core):
+    core.add("a")  # T1
+    core.add("b")
+    core.dep_add(2, 1)  # T2 depends_on T1
+    core.close(1)  # close the prerequisite
+    # a closed neighbor is still returned in both directions (D6)
+    assert [n.id for n in core.dependents_of(1)] == [2]
+    deps = core.dependencies_of(2)
+    assert [n.id for n in deps] == [1]
+    assert deps[0].status == "closed"
+
+
+def test_search_malformed_fts_syntax_refused(core):
+    core.add("a")
+    with pytest.raises(ValidationError):
+        core.search('"unbalanced')  # malformed FTS5 MATCH -> loud refusal, not raw error
+
+
+def test_ls_invalid_status_refused(core):
+    with pytest.raises(ValidationError):
+        core.ls(status="bogus")
+
+
+def test_render_empty_label(core):
+    md = core.render("nonexistent-label")
+    assert "No tasks" in md
+
+
+def test_label_empty_refused(core):
+    core.add("a")
+    with pytest.raises(ValidationError):
+        core.label_add(1, "   ")
+
+
+def test_dep_rm_missing_task_refused(core):
+    core.add("a")
+    with pytest.raises(NotFoundError):
+        core.dep_rm(1, 999)
+
+
+def test_add_with_deps_and_labels_at_once(core):
+    core.add("base")  # T1
+    t = core.add("dep", labels=["x", "y"], deps=[1])
+    assert t.id == 2
+    assert core.labels_of(2) == ["x", "y"]
+    assert [n.id for n in core.dependencies_of(2)] == [1]
+
+
+def test_add_dep_to_missing_refused(core):
+    with pytest.raises(NotFoundError):
+        core.add("bad", deps=[999])
+
+
+def test_edit_name_change(core):
+    core.add("old name")
+    core.edit(1, name="new name")
+    assert core.get(1).name == "new name"
+
+
+def test_add_empty_label_refused(core):
+    with pytest.raises(ValidationError):
+        core.add("x", labels=[""])
+
+
+def test_ls_stale_filter(core):
+    core.add("base")  # T1
+    core.add("dep")
+    core.dep_add(2, 1)
+    core.edit(1, description="x")  # stales T2
+    assert [t.id for t in core.ls(stale=True)] == [2]
+
+
+def test_render_shows_deps_and_extra_labels(core):
+    core.add("base", labels=["design"])  # T1
+    core.add("feature", labels=["design", "core"])  # T2
+    core.dep_add(2, 1)  # T2 depends_on T1
+    md = core.render("design")
+    assert "depends on" in md.lower()  # T2's dependency edge is rendered
+    assert "core" in md  # the non-rendered extra label is listed
+
+
+def test_nul_byte_in_name_refused(core):
+    # A NUL byte breaks the D18 tackit.sql round-trip; the boundary must reject it.
+    with pytest.raises(ValidationError):
+        core.add("bad\x00name")
+
+
+def test_nul_byte_in_description_refused(core):
+    with pytest.raises(ValidationError):
+        core.add("ok", description="body\x00here")
+
+
+def test_nul_byte_in_label_refused(core):
+    core.add("a")
+    with pytest.raises(ValidationError):
+        core.label_add(1, "tag\x00")
+
+
+def test_nul_byte_on_edit_refused(core):
+    core.add("a")
+    with pytest.raises(ValidationError):
+        core.edit(1, name="new\x00name")
+
+
+def test_unpaired_surrogate_in_name_refused(core):
+    # \ud800 is not valid UTF-8; SQLite can't encode it -> must be refused loudly.
+    with pytest.raises(ValidationError):
+        core.add("\ud800")
+
+
+def test_diamond_traversal_dedup(core):
+    # T4 reaches T1 by two paths (T4->T2->T1 and T4->T3->T1); exercises the `seen`
+    # dedup in both _stale_upstream (close) and _reaches (cycle check).
+    core.add("base")  # T1
+    core.add("left")
+    core.dep_add(2, 1)  # T2 -> T1
+    core.add("right")
+    core.dep_add(3, 1)  # T3 -> T1
+    core.add("apex")
+    core.dep_add(4, 2)
+    core.dep_add(4, 3)  # T4 -> T2, T4 -> T3
+    assert core.close(4).task.status == "closed"  # walks the diamond, nothing stale
+    with pytest.raises(InvariantError):
+        core.dep_add(1, 4)  # T1 depends_on T4 -> T4 already reaches T1 -> cycle
