@@ -43,28 +43,32 @@ single-source-of-truth store:
 
 ## Install
 
-Two parts. A human pulls the package; then the **driving agent** wires it in — that
-second step is what actually registers the MCP server and the skill. `pip install`
-alone does **not** make tackit usable by your agent.
+Two parts: a human pulls the package, then **hands off to the coding agent**, which
+wires it in. That second step is what actually registers the MCP server and the
+skill — `pip install` alone does **not** make tackit usable by your agent.
 
-**1. Human — pull the package:**
+**1. Human — pull the package, then tell your agent to set it up:**
 
 ```bash
 pip install tackit
 ```
 
-**2. Agent — register it:**
+Then paste this to your coding agent (Claude Code, etc.):
 
-```bash
-tackit setup     # prints the post-install steps; does NOT edit any config
-```
+> I've installed the `tackit` Python package. Run `tackit setup` and carry out the
+> steps it prints to register it (MCP server + skill) for this project.
 
-`tackit setup` *emits* contextualized steps for the agent to carry out: register the
-stdio MCP server in the agent's own config, drop the bundled `SKILL.md` into the
-skills path, and run `tackit init`. The agent does the wiring because it knows where
-its own config lives. **🤖 Agents:** also do [Configure your agent's
-settings](#configure-your-agents-settings), and read [For agents: start
-here](#for-agents-start-here) while you install.
+You don't need to explain more than that — naming `tackit setup` is enough, because
+the command is self-documenting: it prints everything the agent needs.
+
+**2. Agent — register it.**
+
+Running `tackit setup` *prints* contextualized post-install steps (it edits no config
+itself): the MCP registration snippet to add to the agent's own config, where to drop
+the bundled `SKILL.md`, and `tackit init`. The agent carries them out — it does the
+wiring because it knows where its own config lives — and should also do [Configure
+your agent's settings](#configure-your-agents-settings) and read [For agents: start
+here](#for-agents-start-here) while installing.
 
 ## For humans: the CLI
 
