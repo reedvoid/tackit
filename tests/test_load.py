@@ -80,3 +80,12 @@ def test_load_is_a_single_version_bump(core):
     v0 = sync.get_version(core.conn)
     core.load(parse_plan(PLAN))  # 3 tasks + 3 edges
     assert sync.get_version(core.conn) == v0 + 1  # atomic: one bump for the whole plan
+
+
+def test_load_reports_new_labels(core):  # T67 anti-sprawl summary
+    core.add("seed", labels=["existing"])
+    core.last_label_nudge = None
+    core.load(parse_plan("[a] one\n  labels: existing, brandnew\n[b] two\n  labels: another\n"))
+    assert core.last_label_nudge is not None
+    assert "brandnew" in core.last_label_nudge and "another" in core.last_label_nudge
+    assert "existing" not in core.last_label_nudge  # already existed -> not reported as new

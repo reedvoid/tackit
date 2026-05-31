@@ -36,6 +36,15 @@ def test_cli_load(cli, tmp_path, capsys):
     assert "T1" in capsys.readouterr().out  # T2 depends on T1
 
 
+def test_cli_load_reports_new_labels_on_stderr(cli, tmp_path, capsys):
+    plan = tmp_path / "p.txt"
+    plan.write_text("[a] one\n  labels: freshlabel\n")
+    capsys.readouterr()
+    main(["load", str(plan)])
+    err = capsys.readouterr().err
+    assert "freshlabel" in err and "label" in err.lower()  # T67 batch summary on stderr
+
+
 def test_cli_add_and_show(cli, capsys):
     assert main(["add", "parse FTS query", "--desc", "body"]) == 0
     capsys.readouterr()

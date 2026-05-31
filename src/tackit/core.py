@@ -253,6 +253,16 @@ class Core:
                         f"task '{s['key']}' depends_on unknown key '{dep}' "
                         f"(not defined in this plan)."
                     )
+        # D23: which labels the import will newly create (before they exist), for the
+        # post-load anti-sprawl summary (T67 — bulk load is the one path the per-op
+        # creation-nudge misses, and a migration is when sprawl floods in).
+        batch_labels: list[str] = []
+        for s in specs:
+            for lab in s["labels"]:
+                if lab not in batch_labels:
+                    batch_labels.append(lab)
+        new_labels = self._new_labels(batch_labels)
+        self.last_label_nudge = None
         keymap: dict[str, int] = {}
         with self._mutate():
             for s in specs:  # pass 1: tasks + labels
@@ -275,6 +285,12 @@ class Core:
                 frm = keymap[s["key"]]
                 for dep in s["depends_on"]:
                     self._add_edge(frm, keymap[dep])
+        if new_labels:  # T67: surface the new labels so the agent can collapse in one pass
+            self.last_label_nudge = (
+                f"🏷 Bulk load created {len(new_labels)} new label(s): "
+                f"{', '.join(new_labels)}. Review (`labels`) and collapse near-duplicates "
+                f"in ONE pass — a migration is when label sprawl floods in."
+            )
         return keymap
 
     def get(self, task_id: int) -> Task:

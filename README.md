@@ -16,7 +16,7 @@ and a reconcile-on-change discipline surfaces what each change invalidates.
 ## Contents
 
 **Everyone:**
-[Why it exists](#why-it-exists) · [Install](#install) · [Using it](#using-tackit-through-your-agent) · [Examples](#examples-the-full-surface) · [CLI for humans](#for-humans-the-cli) · [Testing](#testing) · [License](#license)
+[Why it exists](#why-it-exists) · [Install](#install) · [Using it](#using-tackit-through-your-agent) · [Workflows](#the-rhythm-a-few-real-workflows) · [Examples](#examples-the-full-surface) · [CLI for humans](#for-humans-the-cli) · [Migrating a project](#bringing-in-an-existing-project) · [Testing](#testing) · [License](#license)
 
 **🤖 Agents — read these, especially during install (a critical juncture):**
 [Start here](#for-agents-start-here) · [Configure your agent's settings](#configure-your-agents-settings) · [MCP tools](#mcp-tools)
@@ -92,6 +92,29 @@ language and it drives the tools. Common asks:
 After any change, the agent reports back what it did and what's outstanding, so you
 rarely have to ask. For the complete set, see
 [Examples: the full surface](#examples-the-full-surface).
+
+## The rhythm: a few real workflows
+
+Concrete loops, so the discipline reads as habits, not rules:
+
+- **Start a piece of work.** *"Add a task to rate-limit the login endpoint; it depends
+  on the redis-session task."* → the agent `search`es for the prerequisite, creates the
+  task, wires the dependency, and echoes the task's vocabulary in the code it writes —
+  so later, `search "rate-limit"` lands on both the task and the code.
+- **Pick up after a break.** *"What's outstanding?"* → `board` / `stale` shows the open
+  work and anything flagged, in one screen — **without re-reading a plan document.**
+  (The whole point, if your "plan" is a 4000-line file today.)
+- **A change ripples.** *"Update the auth-token task — the format changed."* → the agent
+  edits it; tackit marks everything that depends on it **stale**, and you walk each one
+  against what changed and either fix or reconcile it. You can't leave a downstream task
+  quietly wrong — that's the core guarantee.
+- **Wrap up.** Nothing is "done" while the stale list is non-empty; an empty `stale` is
+  the only safe stopping point.
+
+> **A convention, only if you keep design/schema docs** (most projects don't): number
+> design slices `D#`, schema items `S#`, and let tackit number tasks `T#`, then cite the
+> right one in code so a reader jumps to the right artifact. It's just naming — tackit
+> ids are one flat `T#` space. Skip it otherwise.
 
 ## For humans: the CLI
 
@@ -240,6 +263,41 @@ Everything you can drive through your agent — it maps your request to tackit's
 | "When did task 12 change status?" | `history` |
 
 (The same verbs are available as `tackit <verb>` on the CLI — see below.)
+
+## Bringing in an existing project
+
+If your tracking already lives in a sprawling plan doc, scattered TODOs, or a 4000-line
+file you dread re-reading, you migrate it into tackit with `tackit load`:
+
+1. **The agent reads the source** — in sections, if it's too big to hold at once.
+2. **It slices it into tasks** — what's a right-sized task, what depends on what. *This
+   is the judgment, and it's the actual work* — the tool can't do it for you. A clean,
+   structured doc converts almost mechanically; a messy one takes real reading.
+3. **It writes one plan file** — a compact `[key] Name` + fields format (far smaller
+   than the source, so you can review it before committing):
+
+   ```
+   [redis-session] Add a Redis-backed session store
+     labels: auth
+
+   [rate-limit] Rate-limit the login endpoint
+     desc: token bucket, per-IP
+     labels: auth
+     depends_on: redis-session
+   ```
+4. **`tackit load plan.txt`** — creates everything in one atomic pass, resolving
+   `depends_on` by key. A malformed line or an unknown key fails loud and rolls back the
+   *whole* import — never a half-loaded plan.
+5. **One collapse pass** — review the labels the import created (`load` reports them) and
+   merge near-duplicates. A migration is exactly when label sprawl floods in.
+
+Honest notes:
+- **Every project is different.** There's no universal recipe — the threshold for "what's
+  a task" is yours, and you'll feel it out as you go.
+- **Prefer one plan file.** `depends_on` resolves by key *within a file*; if you split a
+  huge project across several `load`s, wire the cross-file links afterward with `dep_add`.
+- **It's append-mostly.** tackit has no delete (only `close`); your undo for a bad import
+  is `restore` from a backup or `import` an older `tackit.sql`. Eyeball the plan first.
 
 ## Testing
 

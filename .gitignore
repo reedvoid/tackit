@@ -19,9 +19,18 @@ htmlcov/
 # Scratch dir holding the parked pre-publish wheel (local only)
 .build-stale/
 
-# A tackit store dogfooded inside this repo (the binary db is local; if we ever
-# track our own plan in tackit, tackit.sql would be committed and the db ignored).
-.tackit/tackit.db
-.tackit/tackit.db-wal
-.tackit/tackit.db-shm
-.tackit/backups/
+# tackit dogfoods on itself locally, but this is a PUBLIC tool repo — the dogfood
+# store is the maintainer's own task history (self-referential noise to anyone using
+# tackit), so the whole .tackit/ stays LOCAL. (A USER's project commits its own
+# tackit.sql alongside its code; a tool's own repo should not ship its store.)
+.tackit/
+
+# Local dogfood install artifacts — not shipped (the canonical skill lives at
+# src/tackit/data/SKILL.md; contributors run `tackit setup` themselves):
+.mcp.json
+.agents/
+.claude/skills/
+
+# Scratch board exports
+tackit-board.html
+tackit-board.png

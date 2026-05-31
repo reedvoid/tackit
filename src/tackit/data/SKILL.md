@@ -75,6 +75,16 @@ Treat a vague task title or a code↔task vocabulary mismatch as a **defect**, n
 style nit. The system's ability to recover intent across context resets depends
 entirely on this.
 
+**Identifier prefixes (only if the project keeps design / schema docs).** When a
+project has design and/or schema documents, number their items distinctly so code can
+cite the right *kind*: **D#** for design slices, **S#** for schema items, **T#** for
+tackit tasks (tackit assigns `T#` automatically). This is a naming *convention*, not a
+tackit feature — tackit ids are one flat `T#` space, and `D#`/`S#` live in their docs.
+If you backfill design/schema docs *into* tackit, keep the original `D#`/`S#` at the
+front of the task **name** (e.g. `"D21 — Label-usage view"`) so `search` still finds
+it. Then code can cite `D21`/`S2`/`T28` and a reader jumps straight to the right
+artifact. (Most projects have no design/schema docs and use only `T#` — skip this.)
+
 ## Working effectively
 - **Search before you create — targeted, not exhaustive.** `search` for the concepts
   your new task touches (its component, table, function, feature) and inspect the
@@ -123,6 +133,10 @@ memorable** — a chunk of work you'd refer to *by name*. Do **not** create a la
 Before creating, run **`labels`** to see what exists and what each means (by its tasks);
 **reuse** an existing label if it fits, and prefer a few broad labels over many narrow
 ones. ("fix bug," "misc," "task" are worthless — they sort nothing.)
+
+After a **bulk `load`**, it reports the new labels it created — review them and collapse
+near-duplicates in **one pass** (a migration is when sprawl floods in, and `load` is the
+one path the per-creation nudge doesn't catch).
 
 **The epic pattern:** when an under-defined question explodes into many tasks, don't write
 a new doc — make the question itself a task, give the whole cluster one label, and wire the
