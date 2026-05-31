@@ -17,6 +17,7 @@ from contextlib import contextmanager
 from mcp.server.fastmcp import FastMCP
 
 from .core import Core, stale_alert_payload
+from .plan import parse_plan
 
 
 @contextmanager
@@ -173,6 +174,30 @@ def build_server() -> FastMCP:
             for h in c.history(id):
                 hist.append(h.model_dump(mode="json"))
             return _wrap(c, hist)
+
+    @mcp.tool()
+    def load(plan: str) -> dict:
+        """Bulk-import a plan (D24) given as TEXT: `[key] Name` lines with indented
+        `desc:` / `labels:` / `depends_on:` (depends_on references other keys). Creates
+        all tasks in one atomic pass, resolving keys -> ids; a malformed line or unknown
+        key fails loud and rolls back the whole import. Returns the key->id map."""
+        with _core() as c:
+            keymap = c.load(parse_plan(plan))
+            return _wrap(c, {"loaded": keymap})
+
+    @mcp.tool()
+    def board(
+        status: str | None = None, label: str | None = None, stale: bool = False
+    ) -> dict:
+        """Dependency-aware board (D22): the filtered tasks, each as a full slice (task +
+        dependencies + dependents + labels), so you see the whole graph's structure in
+        ONE call (richer than `ls`). Filters: status (open/closed), label, stale."""
+        with _core() as c:
+            stale_filter = True if stale else None
+            cards = []
+            for t in c.ls(status=status, label=label, stale=stale_filter):
+                cards.append(c.show(t.id).model_dump(mode="json"))
+            return _wrap(c, cards)
 
     return mcp
 

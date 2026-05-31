@@ -41,9 +41,33 @@ def test_mcp_registers_all_tools(tmp_path, monkeypatch):
         return [t.name for t in listing.tools]
 
     names = _drive(tmp_path, monkeypatch, scenario)
-    assert len(names) == 16
-    expected = {"add", "show", "search", "edit", "close", "reconcile", "dep_add", "stale", "labels"}
+    assert len(names) == 18
+    expected = {"add", "show", "search", "edit", "close", "reconcile", "dep_add",
+                "stale", "labels", "load", "board"}
     assert expected <= set(names)
+
+
+def test_mcp_load(tmp_path, monkeypatch):
+    async def scenario(s):
+        return await s.call_tool("load", {"plan": "[a] first\n[b] second\n  depends_on: a\n"})
+
+    env = _envelope(_drive(tmp_path, monkeypatch, scenario))
+    keymap = env["result"]["loaded"]
+    assert set(keymap) == {"a", "b"}
+
+
+def test_mcp_board_returns_slices_with_edges(tmp_path, monkeypatch):
+    async def scenario(s):
+        await s.call_tool("add", {"name": "base"})
+        await s.call_tool("add", {"name": "dep"})
+        await s.call_tool("dep_add", {"from_task": 2, "to_task": 1})
+        return await s.call_tool("board", {"status": "open"})
+
+    env = _envelope(_drive(tmp_path, monkeypatch, scenario))
+    cards = env["result"]
+    assert len(cards) == 2
+    t2 = next(c for c in cards if c["task"]["id"] == 2)
+    assert [n["id"] for n in t2["dependencies"]] == [1]  # board carries each task's edges
 
 
 def test_mcp_success_wraps_result_in_envelope(tmp_path, monkeypatch):

@@ -111,11 +111,6 @@ Concrete loops, so the discipline reads as habits, not rules:
 - **Wrap up.** Nothing is "done" while the stale list is non-empty; an empty `stale` is
   the only safe stopping point.
 
-> **A convention, only if you keep design/schema docs** (most projects don't): number
-> design slices `D#`, schema items `S#`, and let tackit number tasks `T#`, then cite the
-> right one in code so a reader jumps to the right artifact. It's just naming — tackit
-> ids are one flat `T#` space. Skip it otherwise.
-
 ## For humans: the CLI
 
 The CLI is the human door — debugging, scripting, and a fallback for the agent.

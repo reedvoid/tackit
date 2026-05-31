@@ -75,16 +75,6 @@ Treat a vague task title or a code↔task vocabulary mismatch as a **defect**, n
 style nit. The system's ability to recover intent across context resets depends
 entirely on this.
 
-**Identifier prefixes (only if the project keeps design / schema docs).** When a
-project has design and/or schema documents, number their items distinctly so code can
-cite the right *kind*: **D#** for design slices, **S#** for schema items, **T#** for
-tackit tasks (tackit assigns `T#` automatically). This is a naming *convention*, not a
-tackit feature — tackit ids are one flat `T#` space, and `D#`/`S#` live in their docs.
-If you backfill design/schema docs *into* tackit, keep the original `D#`/`S#` at the
-front of the task **name** (e.g. `"D21 — Label-usage view"`) so `search` still finds
-it. Then code can cite `D21`/`S2`/`T28` and a reader jumps straight to the right
-artifact. (Most projects have no design/schema docs and use only `T#` — skip this.)
-
 ## Working effectively
 - **Search before you create — targeted, not exhaustive.** `search` for the concepts
   your new task touches (its component, table, function, feature) and inspect the
