@@ -24,6 +24,7 @@ from . import sync
 from .core import Core, stale_alert_text
 from .db import init_store, require_store
 from .errors import TackitError
+from .plan import parse_plan
 
 
 # --- human-readable formatters (──> CLI default output) ---------------------
@@ -101,7 +102,55 @@ def _core_session():
         after = core.stale_worklist()
         if _stale_ids(after) != _stale_ids(entry):
             _print_stale_banner(after, changed=True)
+        if core.last_label_nudge:  # D23 anti-sprawl nudge
+            print(core.last_label_nudge, file=sys.stderr)
         core.close_conn()
+
+
+# --- D22: board view (rich, grouped, dependency-aware CLI rendering) ----------
+
+def _board_paint(text: str, codes) -> str:
+    """Wrap text in ANSI codes, but only when stdout is a real terminal — so piped/
+    redirected output, `--json`, and tests stay plain."""
+    if not sys.stdout.isatty():
+        return text
+    prefix = ""
+    for c in codes:
+        prefix += f"\033[{c}m"
+    return prefix + text + "\033[0m"
+
+
+def _render_board(core, tasks) -> str:
+    ACC, STALE, DIM, LAB, TXT, BOLD = "38;5;154", "38;5;203", "38;5;240", "38;5;244", "38;5;253", "1"
+    lines: list[str] = []
+
+    def section(title, group, base):
+        if not group:
+            return
+        lines.append("")
+        lines.append(_board_paint(f"{title} ({len(group)})", [base, BOLD]))
+        for t in group:
+            s = core.show(t.id)
+            bar = STALE if t.stale else base
+            tid = _board_paint(f"T{t.id}", [bar, BOLD])
+            name_color = STALE if t.stale else (DIM if t.status == "closed" else TXT)
+            name = _board_paint(t.name, [name_color])
+            tag = _board_paint(" [STALE]", [STALE, BOLD]) if t.stale else ""
+            labs = ("  " + _board_paint(" ".join(s.labels), [LAB])) if s.labels else ""
+            lines.append(f" {_board_paint('▌', [bar])} {tid}  {name}{tag}{labs}")
+            edges = []
+            if s.dependencies:
+                edges.append(_board_paint("needs→ ", [DIM]) + " ".join(f"T{n.id}" for n in s.dependencies))
+            if s.dependents:
+                edges.append(_board_paint("unblocks→ ", [DIM]) + " ".join(f"T{n.id}" for n in s.dependents))
+            if edges:
+                lines.append("     " + "   ".join(edges))
+
+    opens = [t for t in tasks if t.status == "open"]
+    dones = [t for t in tasks if t.status == "closed"]
+    section("IN FLIGHT", opens, ACC)
+    section("DONE", dones, DIM)
+    return "\n".join(lines).lstrip("\n")
 
 
 # --- command handlers -------------------------------------------------------
@@ -128,6 +177,18 @@ def _cmd_show(args) -> int:
     with _core_session() as core:
         s = core.show(args.id)
         _emit(_fmt_slice(s), _dump(s), args.json)
+    return 0
+
+
+def _cmd_load(args) -> int:
+    text = Path(args.file).read_text() if args.file else sys.stdin.read()
+    specs = parse_plan(text)  # fail loud on a bad plan BEFORE touching the store
+    with _core_session() as core:
+        keymap = core.load(specs)
+        lines = [f"loaded {len(keymap)} task(s):"]
+        for key, tid in keymap.items():
+            lines.append(f"  {key} → T{tid}")
+        _emit("\n".join(lines), {"loaded": keymap}, args.json)
     return 0
 
 
@@ -237,6 +298,38 @@ def _cmd_render(args) -> int:
     return 0
 
 
+def _cmd_board(args) -> int:
+    with _core_session() as core:
+        stale = True if args.stale else None
+        tasks = core.ls(status=args.status, label=args.label, stale=stale)
+        if args.json:
+            _emit("", [_dump(core.show(t.id)) for t in tasks], True)
+            return 0
+        allt = core.ls()
+        n_open = sum(1 for t in allt if t.status == "open")
+        n_done = sum(1 for t in allt if t.status == "closed")
+        n_stale = sum(1 for t in allt if t.stale)
+        head = _board_paint("tackit", ["38;5;154", "1"]) + f"   {n_open} open · {n_done} done · {n_stale} stale"
+        body = _render_board(core, tasks)
+        print(head + ("\n" + body if body else "\n(no matching tasks)"))
+    return 0
+
+
+def _cmd_labels(args) -> int:
+    with _core_session() as core:
+        infos = core.labels_summary()
+        if infos:
+            lines = []
+            for i in infos:
+                ex = "  " + " · ".join(i.samples) if i.samples else ""
+                lines.append(f"{i.label}  ({i.count}){ex}")
+            text = "\n".join(lines)
+        else:
+            text = "(no labels yet)"
+        _emit(text, [_dump(i) for i in infos], args.json)
+    return 0
+
+
 def _cmd_history(args) -> int:
     with _core_session() as core:
         rows = core.history(args.id)
@@ -340,6 +433,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp = add("search", _cmd_search, "ranked FTS keyword search -> ids (D17)")
     sp.add_argument("terms")
 
+    sp = add("load", _cmd_load, "bulk-import a plan: [key] tasks + depends_on by key (D24)")
+    sp.add_argument("file", nargs="?", help="plan file (omit to read stdin)")
+
     sp = add("show", _cmd_show, "slice fetch: task + deps + dependents + labels (D9)")
     sp.add_argument("id", type=int)
 
@@ -379,6 +475,13 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--stale", action="store_true", help="only stale tasks")
 
     add("stale", _cmd_stale, "reconciliation worklist: all stale tasks (D11)")
+
+    add("labels", _cmd_labels, "list all labels with usage: count + sample tasks (D21)")
+
+    sp = add("board", _cmd_board, "rich board view (open/label/stale) with dependency edges (D22)")
+    sp.add_argument("--status", choices=["open", "closed"])
+    sp.add_argument("--label")
+    sp.add_argument("--stale", action="store_true", help="only stale tasks")
 
     sp = add("render", _cmd_render, "narrative render of a label -> markdown (D16)")
     sp.add_argument("--label", required=True)

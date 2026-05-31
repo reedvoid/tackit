@@ -16,7 +16,7 @@ and a reconcile-on-change discipline surfaces what each change invalidates.
 ## Contents
 
 **Everyone:**
-[Why it exists](#why-it-exists) · [Install](#install) · [CLI for humans](#for-humans-the-cli) · [Testing](#testing) · [License](#license)
+[Why it exists](#why-it-exists) · [Install](#install) · [Using it](#using-tackit-through-your-agent) · [Examples](#examples-the-full-surface) · [CLI for humans](#for-humans-the-cli) · [Testing](#testing) · [License](#license)
 
 **🤖 Agents — read these, especially during install (a critical juncture):**
 [Start here](#for-agents-start-here) · [Configure your agent's settings](#configure-your-agents-settings) · [MCP tools](#mcp-tools)
@@ -64,11 +64,34 @@ the command is self-documenting: it prints everything the agent needs.
 **2. Agent — register it.**
 
 Running `tackit setup` *prints* contextualized post-install steps (it edits no config
-itself): the MCP registration snippet to add to the agent's own config, where to drop
-the bundled `SKILL.md`, and `tackit init`. The agent carries them out — it does the
-wiring because it knows where its own config lives — and should also do [Configure
-your agent's settings](#configure-your-agents-settings) and read [For agents: start
-here](#for-agents-start-here) while installing.
+itself): the MCP registration snippet (a portable, committable command) to add to the
+agent's own config, where to drop the bundled `SKILL.md`, a reminder to add the
+always-on discipline to its config (see [Configure your agent's
+settings](#configure-your-agents-settings)), and `tackit init`. The agent carries them
+out — it does the wiring because it knows where its own config lives — and should read
+[For agents: start here](#for-agents-start-here) while installing.
+
+## Using tackit (through your agent)
+
+Day to day you don't touch tackit directly — you tell your coding agent in plain
+language and it drives the tools. Common asks:
+
+- **"Add a task to rotate the JWT signing keys; it depends on the auth-token-endpoint
+  task."** → the agent searches for the prerequisite, creates the task, and wires the
+  dependency.
+- **"What's open right now?"** / **"What's still outstanding?"** → it lists the open
+  tasks and flags anything stale.
+- **"I changed the token format — update that task."** → it edits the task, and tackit
+  marks everything that depends on it *stale* for review.
+- **"What did that change affect?"** / **"What's stale?"** → it shows the reconciliation
+  worklist.
+- **"Mark the parser task done."** → it closes the task — *refused* if the task is stale
+  or sits on unreconciled work, so you can't silently mark broken work complete.
+- **"Show me everything under the `testing` label."** → it lists that group.
+
+After any change, the agent reports back what it did and what's outstanding, so you
+rarely have to ask. For the complete set, see
+[Examples: the full surface](#examples-the-full-surface).
 
 ## For humans: the CLI
 
@@ -172,6 +195,13 @@ point:
 - Reconcile on change: a change marks dependents stale. Review each stale task
   against its `depends_on` neighbors, then `edit` or `reconcile`. Never end a turn
   while anything is stale.
+- Reuse labels before creating new ones (run `labels` first). A label must earn its
+  name — a phase, epic, or use case — never an implementation detail or a one-off.
+- After any task change, report back in a scannable, verb-grouped layout
+  (Added/Edited/Closed/…): per task show the id + name, then two short lines —
+  `what:` (enough to recall it) and `did:` (roughly what changed); end with the state
+  (N open/done/stale) and any worry up front (stale ids, refused ops). Not prose, not
+  a bare id.
 ```
 
 ### MCP tools
@@ -189,6 +219,27 @@ generated from the Python type hints, so they can't drift from the real interfac
 Every result is wrapped as `{stale_alert, result}` so the outstanding stale set rides
 along on every call; refusals (e.g. closing a stale task) come back as errors that
 state the reason.
+
+## Examples: the full surface
+
+Everything you can drive through your agent — it maps your request to tackit's verbs:
+
+| Ask your agent… | tackit does |
+|---|---|
+| "Add task X (depends on Y, label Z)" | `add` + `dep_add` + `label_add` |
+| "Find the task about the FTS query" | `search` (ranked keyword) |
+| "Show me task 12 and what it touches" | `show` — task + dependencies + dependents + labels |
+| "Update task 12's description" | `edit` — and stales its dependents |
+| "Task 12 depends on task 7" / "remove that link" | `dep_add` / `dep_rm` |
+| "Tag task 12 `smoke-test`" / "untag it" | `label_add` / `label_rm` |
+| "What's open / closed / stale?" | `ls` / `stale` |
+| "What labels exist?" | `labels` — each with its usage |
+| "Close task 12" / "reopen it" | `close` (refused if stale) / `reopen` |
+| "I reviewed task 9 — still fine" | `reconcile` (clears stale, no cascade) |
+| "Write up the design-labelled tasks" | `render` — markdown narrative |
+| "When did task 12 change status?" | `history` |
+
+(The same verbs are available as `tackit <verb>` on the CLI — see below.)
 
 ## Testing
 

@@ -111,3 +111,15 @@ class SearchHit(BaseModel):
     id: int
     name: str
     score: float
+
+
+class LabelUsage(BaseModel):
+    """D21 - one label with its usage: how many tasks wear it + a few example task
+    names. Labels are self-documenting through their tasks (no description field;
+    meaning is derived from usage, so it can't drift)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    label: str
+    count: int
+    samples: list[str]  # a few example task names, to disambiguate the label's meaning

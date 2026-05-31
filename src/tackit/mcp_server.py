@@ -37,6 +37,7 @@ def _wrap(core: Core, result):
     ``edit``) returns them right here in the same result."""
     return {
         "stale_alert": stale_alert_payload(core.stale_worklist()),
+        "label_nudge": core.last_label_nudge,  # D23: set iff a new label was created
         "result": result,
     }
 
@@ -146,6 +147,17 @@ def build_server() -> FastMCP:
             for t in c.stale_worklist():
                 tasks.append(t.model_dump(mode="json"))
             return _wrap(c, tasks)
+
+    @mcp.tool()
+    def labels() -> dict:
+        """List every label with its usage -- count + a few example task titles, so
+        a label's meaning is clear from its tasks (D21). RUN THIS BEFORE creating a
+        new label: reuse an existing one if it fits, to avoid label sprawl."""
+        with _core() as c:
+            out = []
+            for i in c.labels_summary():
+                out.append(i.model_dump(mode="json"))
+            return _wrap(c, out)
 
     @mcp.tool()
     def render(label: str) -> dict:

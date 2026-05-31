@@ -23,6 +23,7 @@ from .errors import InvariantError, NotFoundError, ValidationError
 from .models import (
     ChangeResult,
     CloseResult,
+    LabelUsage,
     NeighborRef,
     SearchHit,
     Slice,
@@ -111,6 +112,24 @@ def stale_alert_payload(stale_tasks: list[Task]) -> dict | None:
     }
 
 
+# --- D23: label-discipline creation nudge ------------------------------------
+def label_nudge_text(created: list[str], existing: list[str]) -> str | None:
+    """Anti-sprawl nudge, surfaced when a brand-new label is created: name it and list
+    the labels that already exist, so reuse-before-create is in the agent's face (not
+    only in the skill). None when nothing new was created (label-discipline)."""
+    if not created:
+        return None
+    new = ", ".join(created)
+    if not existing:
+        return f"🏷 New label created: {new} (the first label in this store)."
+    ex = ", ".join(existing)
+    return (
+        f"🏷 New label created: {new}. {len(existing)} label(s) already exist: {ex}. "
+        f"If one of those fits, prefer it — a label should earn its name (a phase, "
+        f"epic, or use case), not multiply. Run `labels` to see their usage."
+    )
+
+
 class Core:
     """The operation surface. Open via :meth:`open` for normal use (runs the D18
     startup sync first); construct directly only in tests with a ready store."""
@@ -118,6 +137,10 @@ class Core:
     def __init__(self, store: Store, conn: sqlite3.Connection):
         self.store = store
         self.conn = conn
+        # D23 label-discipline nudge: set when an op creates a brand-new label, so the
+        # adapters can surface the anti-sprawl nudge (CLI stderr / MCP envelope).
+        # Lives for the single op's lifetime (each command/tool call is a fresh Core).
+        self.last_label_nudge: str | None = None
 
     @classmethod
     def open(cls, start: Path | None = None) -> "Core":
@@ -195,6 +218,8 @@ class Core:
             raise ValidationError("task name must be a non-empty string (D3/S1).")
         _validate_text(name, "task name")
         _validate_text(description, "task description")
+        self.last_label_nudge = None  # D23: reflect only this op
+        new_labels = self._new_labels(labels or [])  # D23: detect before they exist
         ts = _now()
         with self._mutate():
             cur = self.conn.execute(
@@ -208,7 +233,49 @@ class Core:
                 self._attach_label(task_id, label)
             for dep in deps or []:
                 self._add_edge(task_id, dep)  # new task depends_on dep
+        if new_labels:
+            self._set_label_nudge(new_labels)  # D23 anti-sprawl nudge
         return self.get(task_id)
+
+    def load(self, specs: list[dict]) -> dict[str, int]:
+        """D24 - bulk-create tasks from parsed plan specs (see :mod:`tackit.plan`) in
+        ONE transaction, resolving ``depends_on`` by key. Returns ``{key: task_id}``.
+        Atomic: any error (bad name, unknown dep key, self-edge, cycle) rolls the
+        whole import back -- never a partial plan -- and is a single version bump."""
+        keys: set[str] = set()
+        for s in specs:
+            keys.add(s["key"])
+        # Validate all depends_on resolve within the plan BEFORE mutating (fail loud).
+        for s in specs:
+            for dep in s["depends_on"]:
+                if dep not in keys:
+                    raise ValidationError(
+                        f"task '{s['key']}' depends_on unknown key '{dep}' "
+                        f"(not defined in this plan)."
+                    )
+        keymap: dict[str, int] = {}
+        with self._mutate():
+            for s in specs:  # pass 1: tasks + labels
+                if not s["name"] or not s["name"].strip():
+                    raise ValidationError(f"task '{s['key']}' has an empty name.")
+                _validate_text(s["name"], "task name")
+                _validate_text(s["desc"], "task description")
+                ts = _now()
+                cur = self.conn.execute(
+                    "INSERT INTO tasks(name, description, status, stale, created_at, updated_at) "
+                    "VALUES (?, ?, 'open', 0, ?, ?)",
+                    (s["name"].strip(), s["desc"], ts, ts),
+                )
+                tid = int(cur.lastrowid)
+                self._record_transition(tid, None, "open")
+                keymap[s["key"]] = tid
+                for label in s["labels"]:
+                    self._attach_label(tid, label)
+            for s in specs:  # pass 2: edges (all keys now have ids)
+                frm = keymap[s["key"]]
+                for dep in s["depends_on"]:
+                    self._add_edge(frm, keymap[dep])
+        return keymap
 
     def get(self, task_id: int) -> Task:
         """D3 - read a task back."""
@@ -228,19 +295,25 @@ class Core:
 
     def label_add(self, task_id: int, label: str) -> Task:
         """D4 - tag a task. (Pure tagging is not a content change, so it does NOT
-        stale dependents -- D10 fires only on edits that can invalidate them.)"""
+        stale dependents -- D10 fires only on edits that can invalidate them.)
+        Creating a brand-new label sets the D23 anti-sprawl nudge."""
         self._require_row(task_id)
         if not label or not label.strip():
             raise ValidationError("label must be a non-empty string (D4/S2).")
+        _validate_text(label, "label")
+        self.last_label_nudge = None  # D23: reflect only this op
         clean = label.strip()
+        new_labels = self._new_labels([clean])  # D23: [clean] iff brand-new, else []
         # No-op guard (D20): re-adding a label the task already carries changes nothing,
         # so it must not bump version / re-dump tackit.sql.
-        existing = self.conn.execute(
+        on_this_task = self.conn.execute(
             "SELECT 1 FROM task_labels WHERE task_id = ? AND label = ?", (task_id, clean)
         ).fetchone()
-        if existing is None:
+        if on_this_task is None:
             with self._mutate():
                 self._attach_label(task_id, clean)
+        if new_labels:
+            self._set_label_nudge(new_labels)  # D23 anti-sprawl nudge
         return self.get(task_id)
 
     def label_rm(self, task_id: int, label: str) -> Task:
@@ -258,6 +331,30 @@ class Core:
                     (task_id, clean),
                 )
         return self.get(task_id)
+
+    def _new_labels(self, labels: list[str]) -> list[str]:
+        """D23 - of ``labels``, the cleaned ones that don't yet exist on ANY task
+        (i.e. are about to be created). De-duplicated, order-preserving."""
+        out: list[str] = []
+        for lab in labels:
+            clean = lab.strip() if lab else ""
+            if not clean or clean in out:
+                continue
+            exists = self.conn.execute(
+                "SELECT 1 FROM task_labels WHERE label = ?", (clean,)
+            ).fetchone()
+            if exists is None:
+                out.append(clean)
+        return out
+
+    def _set_label_nudge(self, created: list[str]) -> None:
+        """D23 - record the anti-sprawl nudge for ``created`` new labels, listing the
+        labels that already exist (everything except the just-created ones)."""
+        existing: list[str] = []
+        for usage in self.labels_summary():
+            if usage.label not in created:
+                existing.append(usage.label)
+        self.last_label_nudge = label_nudge_text(created, existing)
 
     def labels_of(self, task_id: int) -> list[str]:
         rows = self.conn.execute(
@@ -652,3 +749,29 @@ class Core:
             )
             for r in rows
         ]
+
+    # ====================================================================
+    # D21 - label usage view (label-discipline)
+    # ====================================================================
+    def labels_summary(self, samples: int = 3) -> list[LabelUsage]:
+        """D21 - every label with its usage: task count + a few example task names,
+        so a label is self-documenting through its tasks (its meaning is DERIVED
+        from usage -- there is no description column to drift). Ordered most-used
+        first. This is the 'what labels exist and what do they mean' primitive that
+        makes reuse-before-create possible (label-discipline)."""
+        rows = self.conn.execute(
+            "SELECT label, COUNT(*) AS n FROM task_labels "
+            "GROUP BY label ORDER BY n DESC, label"
+        ).fetchall()
+        out: list[LabelUsage] = []
+        for r in rows:
+            sample_rows = self.conn.execute(
+                "SELECT t.name FROM task_labels l JOIN tasks t ON t.id = l.task_id "
+                "WHERE l.label = ? ORDER BY t.id LIMIT ?",
+                (r["label"], samples),
+            ).fetchall()
+            names: list[str] = []
+            for sr in sample_rows:
+                names.append(sr["name"])
+            out.append(LabelUsage(label=r["label"], count=r["n"], samples=names))
+        return out

@@ -1,0 +1,83 @@
+"""D24 - bulk plan import: parse a lightweight, dependency-by-key plan into task
+specs that ``core.load()`` creates atomically.
+
+Format (no external dependency; the design.md D#/S# slices nearly conform):
+
+    # comments and blank lines are ignored
+    [token-endpoint] Build the auth token endpoint
+      labels: auth
+
+    [key-rotation] Rotate JWT signing keys on the token endpoint
+      desc: replace the static signing key with rotating keys
+      labels: auth, security
+      depends_on: token-endpoint
+
+A ``[key] Name`` line starts a task; indented ``desc:`` / ``labels:`` /
+``depends_on:`` lines are its fields. ``depends_on`` references other keys in the same
+plan. Anything malformed fails loud (D2) before the store is touched.
+"""
+
+from __future__ import annotations
+
+import re
+
+from .errors import ValidationError
+
+_KEY_LINE = re.compile(r"^\[([A-Za-z0-9_.-]+)\]\s*(.*)$")
+_FIELD_LINE = re.compile(r"^\s+([A-Za-z_]+):\s*(.*)$")
+_FIELDS = {"desc", "labels", "depends_on"}
+
+
+def _split_csv(value: str) -> list[str]:
+    out: list[str] = []
+    for part in value.split(","):
+        p = part.strip()
+        if p:
+            out.append(p)
+    return out
+
+
+def parse_plan(text: str) -> list[dict]:
+    """Parse plan text into ordered task specs:
+    ``{"key", "name", "desc", "labels": [...], "depends_on": [...]}``. Fails loud on
+    a bad line, a duplicate key, a field outside a task, or an unknown field."""
+    items: list[dict] = []
+    seen_keys: set[str] = set()
+    current: dict | None = None
+    for lineno, raw in enumerate(text.splitlines(), start=1):
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        key_match = _KEY_LINE.match(raw.rstrip())
+        if key_match:
+            key = key_match.group(1)
+            name = key_match.group(2).strip()
+            if not name:
+                raise ValidationError(f"plan line {lineno}: task [{key}] has no name.")
+            if key in seen_keys:
+                raise ValidationError(f"plan line {lineno}: duplicate key '{key}'.")
+            seen_keys.add(key)
+            current = {"key": key, "name": name, "desc": "", "labels": [], "depends_on": []}
+            items.append(current)
+            continue
+        field_match = _FIELD_LINE.match(raw)
+        if field_match:
+            field = field_match.group(1)
+            value = field_match.group(2).strip()
+            if current is None:
+                raise ValidationError(f"plan line {lineno}: '{field}:' before any [key] task.")
+            if field not in _FIELDS:
+                raise ValidationError(
+                    f"plan line {lineno}: unknown field '{field}' "
+                    f"(expected one of desc, labels, depends_on)."
+                )
+            if field == "desc":
+                current["desc"] = value
+            elif field == "labels":
+                current["labels"] = _split_csv(value)
+            else:
+                current["depends_on"] = _split_csv(value)
+            continue
+        raise ValidationError(f"plan line {lineno}: cannot parse: {raw.strip()!r}")
+    if not items:
+        raise ValidationError("plan is empty (no [key] task lines found).")
+    return items

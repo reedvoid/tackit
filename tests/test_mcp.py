@@ -41,8 +41,8 @@ def test_mcp_registers_all_tools(tmp_path, monkeypatch):
         return [t.name for t in listing.tools]
 
     names = _drive(tmp_path, monkeypatch, scenario)
-    assert len(names) == 15
-    expected = {"add", "show", "search", "edit", "close", "reconcile", "dep_add", "stale"}
+    assert len(names) == 16
+    expected = {"add", "show", "search", "edit", "close", "reconcile", "dep_add", "stale", "labels"}
     assert expected <= set(names)
 
 
@@ -52,9 +52,20 @@ def test_mcp_success_wraps_result_in_envelope(tmp_path, monkeypatch):
         return await s.call_tool("show", {"id": 1})
 
     env = _envelope(_drive(tmp_path, monkeypatch, scenario))
-    assert set(env.keys()) == {"stale_alert", "result"}
-    assert env["stale_alert"] is None  # nothing stale yet
+    assert set(env.keys()) == {"stale_alert", "label_nudge", "result"}
+    assert env["stale_alert"] is None and env["label_nudge"] is None  # nothing stale, no new label
     assert env["result"]["task"]["id"] == 1
+
+
+def test_mcp_label_nudge_on_new_label(tmp_path, monkeypatch):
+    async def scenario(s):
+        await s.call_tool("add", {"name": "a", "labels": ["existing"]})
+        await s.call_tool("add", {"name": "b"})  # T2
+        return await s.call_tool("label_add", {"id": 2, "label": "brandnew"})
+
+    env = _envelope(_drive(tmp_path, monkeypatch, scenario))
+    assert env["label_nudge"] is not None
+    assert "brandnew" in env["label_nudge"] and "existing" in env["label_nudge"]
 
 
 def test_mcp_stale_alert_rides_in_envelope(tmp_path, monkeypatch):
@@ -135,3 +146,16 @@ def test_mcp_remaining_tools_all_work(tmp_path, monkeypatch):
     assert out["stale"]["result"] == []  # nothing stale
     assert isinstance(out["render"]["result"], str)
     assert len(out["history"]["result"]) >= 1
+
+
+def test_mcp_labels(tmp_path, monkeypatch):
+    async def scenario(s):
+        await s.call_tool("add", {"name": "a", "labels": ["core"]})
+        await s.call_tool("add", {"name": "b", "labels": ["core", "docs"]})
+        return await s.call_tool("labels", {})
+
+    env = _envelope(_drive(tmp_path, monkeypatch, scenario))
+    names = [l["label"] for l in env["result"]]
+    assert "core" in names and "docs" in names
+    core_info = next(l for l in env["result"] if l["label"] == "core")
+    assert core_info["count"] == 2 and len(core_info["samples"]) >= 1

@@ -105,3 +105,51 @@ entirely on this.
   not one line of code, not a whole subsystem. If you can't describe it without
   listing implementation steps, it's too small; if it has many independent parts,
   split it.
+
+## Labels — when one earns its existence
+A label groups tasks along a meaningful project axis — the kind of grouping you'd name
+out loud: a **phase/milestone** (design, hardening, 0.3 release), an **epic/theme** (a
+large body of work spawned by one question — "the auth overhaul," "bulk-import"), or a
+**use case** (offline mode, the mobile client). These axes are illustrative, not a fixed
+list. Labels are dumb tags — no behavior, no rules.
+
+Create a new label only when it would be **distinct, sizeable, consequential, and
+memorable** — a chunk of work you'd refer to *by name*. Do **not** create a label that is:
+- an implementation detail of one task (`regex`, `utf8`, `ascii-text`);
+- already something tackit tracks — time is `created_at`, done-ness is `status`, reopened
+  is in `history` (a "closed-but-reopened" label just duplicates state that exists);
+- a one-or-two-task one-off that will never group more.
+
+Before creating, run **`labels`** to see what exists and what each means (by its tasks);
+**reuse** an existing label if it fits, and prefer a few broad labels over many narrow
+ones. ("fix bug," "misc," "task" are worthless — they sort nothing.)
+
+**The epic pattern:** when an under-defined question explodes into many tasks, don't write
+a new doc — make the question itself a task, give the whole cluster one label, and wire the
+spawned tasks to `depends_on` that anchor. The theme is then grouped (label) and anchored
+(dependency), and can't drift.
+
+## Always report what changed
+After you create, alter, or remove tasks, report it back — but make it **scannable**, not a
+wall of prose. Use a sectioned, verb-grouped layout, and for each task give just enough to
+**(a) recall what it is and (b) roughly grasp what you did** — no step-by-step play-by-play.
+Format:
+
+    ━━━ changes ━━━━━━━━━━━━━━━━━━━━━━━━
+    ✓ Closed
+       T30 · label-discipline guidance
+            what: when a new label is worth creating (anti-sprawl)
+            did:  wrote the rules into SKILL.md
+    + Added
+       T33 · <task name>
+            what: <one line — enough to recall the task>
+            did:  <one line — roughly what happened>
+    ━━━ state ━━━━━━━━━━━━━━━━━━━━━━━━━━
+       N open · N done · ⚠ N stale
+       <worry first: stale ids + what they await, refused ops, new labels>
+
+- Group by verb: Added / Edited / Closed / Reopened / Reconciled / Linked / Tagged.
+- Per task: one short line each for `what:` (the task — enough to recall it) and `did:`
+  (the change — roughly, not blow-by-blow). A clause each, not a paragraph.
+- End with the state line; surface anything worrying first. If nothing is stale and
+  nothing was refused, say so — silence is not reassurance.

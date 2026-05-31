@@ -24,6 +24,18 @@ def test_cli_init_creates_store(tmp_path, monkeypatch):
     assert (tmp_path / ".tackit" / "tackit.db").exists()
 
 
+def test_cli_load(cli, tmp_path, capsys):
+    plan = tmp_path / "plan.txt"
+    plan.write_text("[a] first task\n[b] second task\n  depends_on: a\n")
+    capsys.readouterr()
+    assert main(["load", str(plan)]) == 0
+    out = capsys.readouterr().out
+    assert "loaded 2" in out and "T1" in out and "T2" in out
+    capsys.readouterr()
+    main(["show", "2"])
+    assert "T1" in capsys.readouterr().out  # T2 depends on T1
+
+
 def test_cli_add_and_show(cli, capsys):
     assert main(["add", "parse FTS query", "--desc", "body"]) == 0
     capsys.readouterr()
@@ -103,6 +115,15 @@ def test_cli_label_add_then_rm(cli):
     main(["add", "a"])
     assert main(["label", "add", "1", "tag"]) == 0
     assert main(["label", "rm", "1", "tag"]) == 0
+
+
+def test_cli_new_label_nudge_on_stderr(cli, capsys):
+    main(["add", "a", "--label", "existing"])
+    main(["add", "b"])
+    capsys.readouterr()
+    assert main(["label", "add", "2", "brandnew"]) == 0
+    err = capsys.readouterr().err
+    assert "brandnew" in err and "New label" in err  # nudge surfaced to stderr
 
 
 def test_cli_reopen_then_reconcile_clears_worklist(cli, capsys):
@@ -185,6 +206,41 @@ def test_cli_restore_bad_backup_exit_1(cli, capsys):
 def test_cli_no_store_fails_loud(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)  # no `tackit init` here
     assert main(["show", "1"]) == 1  # require_store -> NotFoundError -> exit 1
+
+
+def test_cli_board_groups_and_shows_edges(cli, capsys):
+    main(["add", "base"])
+    main(["add", "dep"])
+    main(["dep", "add", "2", "1"])
+    main(["close", "1"])
+    capsys.readouterr()
+    assert main(["board"]) == 0
+    out = capsys.readouterr().out
+    assert "open" in out and "done" in out  # header counts
+    assert "IN FLIGHT" in out and "DONE" in out  # both status sections
+    assert "T1" in out and "T2" in out
+    assert "needs→" in out or "unblocks→" in out  # dependency edges rendered
+
+
+def test_cli_board_stale_filter(cli, capsys):
+    main(["add", "base"])
+    main(["add", "dep"])
+    main(["dep", "add", "2", "1"])
+    main(["edit", "1", "--desc", "x"])  # stales T2
+    capsys.readouterr()
+    assert main(["board", "--stale"]) == 0
+    out = capsys.readouterr().out
+    assert "T2" in out and "STALE" in out and "IN FLIGHT" in out
+    assert "DONE" not in out  # no closed tasks match -> that section is omitted
+
+
+def test_cli_labels(cli, capsys):
+    main(["add", "thing", "--label", "core"])
+    main(["add", "other", "--label", "core"])
+    capsys.readouterr()
+    assert main(["labels"]) == 0
+    out = capsys.readouterr().out
+    assert "core" in out and "(2)" in out and "thing" in out
 
 
 def test_cli_stale_lists_nonempty_worklist(cli, capsys):
