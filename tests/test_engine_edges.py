@@ -53,6 +53,28 @@ def test_meta_to_meta_link_allowed(core):
     assert n == 1
 
 
+# --- T118: edit refused on closed tasks (use supersede) --------------------
+
+
+def test_edit_closed_task_refused(core):
+    core.add("a")
+    core.close(1)
+    with pytest.raises(InvariantError, match="closed"):
+        core.edit(1, description="changed", delta="trying to edit a closed")
+
+
+def test_edit_closed_task_error_names_supersede(core):
+    core.add("a")
+    core.add("b")  # potential successor
+    core.close(1)
+    try:
+        core.edit(1, description="changed", delta="testing the message")
+    except InvariantError as e:
+        assert "supersede" in str(e).lower()
+    else:
+        raise AssertionError("expected InvariantError")
+
+
 # --- T117: delta required on edit / supersede / link_add / link_rm --------
 
 

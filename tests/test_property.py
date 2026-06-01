@@ -69,7 +69,10 @@ class TackitMachine(RuleBasedStateMachine):
     @precondition(lambda self: self.ids)
     @rule(i=_pick, name=_names)
     def edit(self, i, name):
-        self.core.edit(self._id(i), name=name, delta="property test")
+        try:
+            self.core.edit(self._id(i), name=name, delta="property test")
+        except InvariantError:
+            pass  # T118: edit refused on closed -- a valid outcome here
 
     @precondition(lambda self: self.ids)
     @rule(i=_pick)

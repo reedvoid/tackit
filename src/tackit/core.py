@@ -787,6 +787,20 @@ class Core:
         _require_delta(delta, "edit")
         self.last_delta = delta.strip()
         row = self._require_row(task_id)
+        # T118 / cascade-ergonomics C: closed tasks are frozen. Any change is a
+        # supersede (D25 / T92), not an edit. No "trivial fix" carve-out --
+        # the cost of a polluted history outweighs the cost of one unnecessary
+        # supersede, and edge `because` rationales pointing at closed tasks
+        # stay stable by construction once this rule is enforced.
+        if row["status"] == "closed":
+            raise InvariantError(
+                f"REFUSED: T{task_id} is closed -- edit is not allowed on closed "
+                f"tasks (T118). Any change to a closed task's premise is a "
+                f"supersede: create a new task with the replacement content and "
+                f"call `supersede(T{task_id}, T<new>)`. Reopen+edit+close-again "
+                f"would log a misleading status transition; supersede captures "
+                f"the displacement honestly."
+            )
         if name is not None and not name.strip():
             raise ValidationError("task name cannot be set empty (D3/S1).")
         _validate_text(name, "task name")
