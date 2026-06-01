@@ -145,10 +145,15 @@ class Core:
     @classmethod
     def open(cls, start: Path | None = None) -> "Core":
         """Resolve the store (D1 walk-up), run the D18 startup sync (build on a
-        fresh clone, refuse on ambiguous divergence), then open the connection."""
+        fresh clone, refuse on ambiguous divergence), apply any pending schema
+        migrations (T83), then open the connection."""
+        from . import migrations
+
         store = require_store(start)
         sync.startup_sync(store)  # may raise SyncError; may rebuild the db
-        return cls(store, connect(store.db_path))
+        conn = connect(store.db_path)
+        migrations.run_pending_migrations(conn, store)
+        return cls(store, conn)
 
     def close_conn(self) -> None:
         self.conn.close()
