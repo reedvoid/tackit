@@ -89,10 +89,11 @@ def test_ls_stale_filter(core):
 
 
 def test_render_shows_deps_and_extra_labels(core):
-    core.add("base", labels=["design"])  # T1
-    core.add("feature", labels=["design", "core"])  # T2
+    # "design" is reserved for the kind property since T84 -- use a non-reserved label.
+    core.add("base", labels=["spec"])  # T1
+    core.add("feature", labels=["spec", "core"])  # T2
     core.dep_add(2, 1)  # T2 depends_on T1
-    md = core.render("design")
+    md = core.render("spec")
     assert "depends on" in md.lower()  # T2's dependency edge is rendered
     assert "core" in md  # the non-rendered extra label is listed
 

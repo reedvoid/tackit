@@ -2,7 +2,15 @@
 
 Pins that labels are self-documenting through their tasks: count + sample names,
 most-used first. Underpins reuse-before-create (label-discipline).
+
+Also pins T84 / D26 reserved-label refusal (the four kind values cannot be used
+as freeform labels because S1.kind absorbs that distinction).
 """
+
+import pytest
+
+from tackit.errors import ValidationError
+from tackit.schema import RESERVED_LABELS
 
 
 def test_labels_summary_counts_samples_and_order(core):
@@ -47,3 +55,38 @@ def test_no_nudge_when_reusing_existing_label(core):
     core.add("b")  # T2
     core.label_add(2, "x")  # reuse existing -> no nudge
     assert core.last_label_nudge is None
+
+
+# --- T84 / D26: reserved-label refusal -------------------------------------
+
+
+@pytest.mark.parametrize("reserved", RESERVED_LABELS)
+def test_label_add_refuses_reserved(core, reserved):
+    """label_add refuses each of the four kind values; the error names the kind
+    property as the absorber so the agent knows where to put it instead."""
+    core.add("alpha")
+    with pytest.raises(ValidationError, match="reserved"):
+        core.label_add(1, reserved)
+
+
+@pytest.mark.parametrize("reserved", RESERVED_LABELS)
+def test_add_with_reserved_label_refused(core, reserved):
+    """add() that passes a reserved label is refused; the partial insert rolls
+    back so no task survives the attempt."""
+    with pytest.raises(ValidationError, match="reserved"):
+        core.add("alpha", labels=[reserved])
+    rows = core.conn.execute("SELECT * FROM tasks").fetchall()
+    assert rows == []
+
+
+@pytest.mark.parametrize("reserved", RESERVED_LABELS)
+def test_load_with_reserved_label_refused_and_rollback(core, reserved):
+    """load() with any reserved label rolls back the WHOLE plan (D24 fail-loud)."""
+    specs = [
+        {"key": "a", "name": "alpha", "desc": "", "labels": [], "depends_on": []},
+        {"key": "b", "name": "beta", "desc": "", "labels": [reserved], "depends_on": ["a"]},
+    ]
+    with pytest.raises(ValidationError, match="reserved"):
+        core.load(specs)
+    rows = core.conn.execute("SELECT * FROM tasks").fetchall()
+    assert rows == []

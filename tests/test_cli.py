@@ -149,9 +149,11 @@ def test_cli_reopen_then_reconcile_clears_worklist(cli, capsys):
 
 
 def test_cli_render_markdown(cli, capsys):
-    main(["add", "thing", "--desc", "body text", "--label", "design"])
+    # Use a non-reserved label string -- design/schema/production/meta are reserved
+    # for the kind property since T84 (D26).
+    main(["add", "thing", "--desc", "body text", "--label", "spec"])
     capsys.readouterr()
-    main(["render", "--label", "design"])
+    main(["render", "--label", "spec"])
     out = capsys.readouterr().out
     assert "thing" in out and "body text" in out
 

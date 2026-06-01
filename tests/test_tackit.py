@@ -185,8 +185,9 @@ def test_d15_filters(core):
 # --- D16: narrative render --------------------------------------------------
 
 def test_d16_render(core):
-    core.add("parse query", description="body text", labels=["design"])
-    md = core.render("design")
+    # "design" is reserved for the kind property since T84 -- use a non-reserved label.
+    core.add("parse query", description="body text", labels=["spec"])
+    md = core.render("spec")
     assert "T1 - parse query" in md and "body text" in md
 
 

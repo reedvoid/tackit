@@ -179,6 +179,7 @@ class Core:
             id=row["id"],
             name=row["name"],
             description=row["description"],
+            kind=row["kind"],
             status=row["status"],
             stale=bool(row["stale"]),
             created_at=row["created_at"],
@@ -309,9 +310,22 @@ class Core:
         if not label or not label.strip():
             raise ValidationError("label must be a non-empty string (D4/S2).")
         _validate_text(label, "label")
+        clean = label.strip()
+        # D14 / D26: the four kind values are reserved label strings. The kind
+        # column on S1 absorbs that distinction; a stray label of the same string
+        # would silently disagree. Refused on every label-attach path -- add(),
+        # label_add(), and load() all route through here.
+        from .schema import RESERVED_LABELS
+
+        if clean in RESERVED_LABELS:
+            raise ValidationError(
+                f"label {clean!r} is reserved for the kind property (S1/D26) and "
+                f"cannot be attached as a label. Reserved: "
+                f"{', '.join(RESERVED_LABELS)}."
+            )
         self.conn.execute(
             "INSERT OR IGNORE INTO task_labels(task_id, label) VALUES (?, ?)",
-            (task_id, label.strip()),
+            (task_id, clean),
         )
 
     def label_add(self, task_id: int, label: str) -> Task:

@@ -18,6 +18,12 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 # design.md D7 / schema.md S1: status is informational, open|closed only.
 Status = Literal["open", "closed"]
 
+# design.md D26 / schema.md S1: kind partitions the graph by "alters running app
+# behavior." Required at create (T94); the default here lets existing call sites
+# omit it until T94 lands and to preserve the DB-level safety net for any caller
+# that slips past the op-layer check.
+Kind = Literal["design", "schema", "production", "meta"]
+
 
 class Task(BaseModel):
     """S1 `tasks` row. The atomic item; every view is derived from it.
@@ -31,6 +37,7 @@ class Task(BaseModel):
     id: int
     name: str = Field(min_length=1)  # S1: NOT NULL, short title
     description: str = ""
+    kind: Kind = "production"
     status: Status = "open"
     stale: bool = False
     created_at: datetime

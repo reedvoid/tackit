@@ -41,9 +41,27 @@ class Migration:
     migrate: Callable[[sqlite3.Connection], None]
 
 
+# --- migration scripts -----------------------------------------------------
+
+def _mig_001_add_kind_column(conn: sqlite3.Connection) -> None:
+    """T84 / D26 -- add the `kind` column to S1 tasks. Existing rows backfill to
+    'production' via the column default (the safe, "this code is shipped" guess);
+    misclassifications get fixed by T87's one-time classification pass."""
+    conn.execute(
+        "ALTER TABLE tasks ADD COLUMN kind TEXT NOT NULL DEFAULT 'production' "
+        "CHECK (kind IN ('design', 'schema', 'production', 'meta'));"
+    )
+
+
 # Ordered registry. Append migrations here in target-version order as they land
-# (T84 -> target_version=2, T85 -> 3, T86 -> 4, ...). Empty until T84.
-MIGRATIONS: list[Migration] = []
+# (T84 -> target_version=2, T85 -> 3, T86 -> 4, ...).
+MIGRATIONS: list[Migration] = [
+    Migration(
+        target_version=2,
+        name="add S1.kind column (T84 / D26)",
+        migrate=_mig_001_add_kind_column,
+    ),
+]
 
 
 def get_schema_version(conn: sqlite3.Connection) -> int:

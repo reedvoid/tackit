@@ -1,12 +1,11 @@
-"""T83 -- migration runner mechanics. Covers the registry walk, schema_version
-progression, rollback on error, contiguity refusal, downgrade refusal, and the
-per-migration D18 finalize (tackit.sql re-dump).
+"""T83 / T84 -- migration runner mechanics + the v0.3.0 migrations themselves.
 
-Per-migration *content* tests live alongside the migrations themselves
-(T84/T85/T86 will add their own). Here we focus on the runner with fake
-injected migrations so the mechanics can be exercised before any real
-migration script exists.
+Runner-mechanics tests use fake injected migrations to exercise the registry
+walk, rollback, downgrade refusal, etc. Per-migration tests build a v1 store
+(hand-coded prior schema) and verify the migration's effect on data and schema.
 """
+
+import sqlite3
 
 import pytest
 
@@ -223,3 +222,110 @@ def test_core_open_runs_migrations(store_path, clean_registry, monkeypatch):
         assert migrations.get_schema_version(c.conn) == target
     finally:
         c.close_conn()
+
+
+# ============================================================================
+# T84 / mig_001: add S1.kind column
+# ============================================================================
+
+_V1_TASKS_DDL = """
+CREATE TABLE tasks (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT    NOT NULL,
+    description TEXT    NOT NULL DEFAULT '',
+    status      TEXT    NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'closed')),
+    stale       INTEGER NOT NULL DEFAULT 0 CHECK (stale IN (0, 1)),
+    created_at  TEXT    NOT NULL,
+    updated_at  TEXT    NOT NULL
+);
+"""
+
+
+def _make_v1_store(tmp_path):
+    """Hand-build a store at the pre-T84 schema (no kind column,
+    schema_version='1'), with a couple of seeded tasks so the migration's
+    backfill is observable. The other tables are unchanged in mig_001 so they
+    use the current DDL strings (effectively v1 = v2 except for tasks)."""
+    store_dir = tmp_path / ".tackit"
+    store_dir.mkdir(parents=True, exist_ok=True)
+    (store_dir / "backups").mkdir(exist_ok=True)
+    db_path = store_dir / "tackit.db"
+    conn = sqlite3.connect(str(db_path), isolation_level=None)
+    conn.execute("PRAGMA journal_mode = WAL;")
+    conn.execute("PRAGMA foreign_keys = ON;")
+    conn.executescript(_V1_TASKS_DDL)
+    for ddl in (
+        schema.S2_TASK_LABELS,
+        schema.S3_DEPENDENCIES,
+        schema.S4_STATUS_TRANSITIONS,
+        schema.S5_TASKS_FTS,
+        schema.S5_FTS_TRIGGERS,
+        schema.S6_META,
+    ):
+        conn.executescript(ddl)
+    conn.execute("INSERT INTO meta(key, value) VALUES ('version', '0');")
+    conn.execute("INSERT INTO meta(key, value) VALUES ('synced_sql_hash', '');")
+    conn.execute("INSERT INTO meta(key, value) VALUES ('schema_version', '1');")
+    conn.execute(
+        "INSERT INTO tasks(name, description, status, stale, created_at, updated_at) "
+        "VALUES ('alpha', 'first', 'open', 0, "
+        "'2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00');"
+    )
+    conn.execute(
+        "INSERT INTO tasks(name, description, status, stale, created_at, updated_at) "
+        "VALUES ('beta', 'second', 'closed', 0, "
+        "'2026-01-02T00:00:00+00:00', '2026-01-02T00:00:00+00:00');"
+    )
+    conn.close()
+    return Store(tmp_path)
+
+
+def test_mig_001_adds_kind_column_and_backfills(tmp_path):
+    """mig_001 backfills existing rows with kind='production' (the safe guess
+    consistent with shipped behavior) and brings schema_version to 2."""
+    _make_v1_store(tmp_path)
+    c = Core.open(start=tmp_path)
+    try:
+        assert migrations.get_schema_version(c.conn) == 2
+        rows = c.conn.execute(
+            "SELECT id, name, kind FROM tasks ORDER BY id"
+        ).fetchall()
+        assert [(r["id"], r["name"], r["kind"]) for r in rows] == [
+            (1, "alpha", "production"),
+            (2, "beta", "production"),
+        ]
+    finally:
+        c.close_conn()
+
+
+def test_mig_001_enforces_kind_check_constraint(tmp_path):
+    """After mig_001, SQLite refuses a row with an out-of-vocabulary kind."""
+    _make_v1_store(tmp_path)
+    c = Core.open(start=tmp_path)
+    try:
+        with pytest.raises(sqlite3.IntegrityError):
+            c.conn.execute(
+                "INSERT INTO tasks(name, description, kind, status, stale, "
+                "created_at, updated_at) VALUES ('bad', '', 'nonsense', 'open', 0, "
+                "'2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00');"
+            )
+    finally:
+        c.close_conn()
+
+
+def test_fresh_init_has_kind_column_with_default(store_path):
+    """A fresh v2 store already has the kind column with the 'production' default
+    -- no migration needed, but the schema must agree with the migrated form."""
+    conn = connect(Store(store_path).db_path)
+    try:
+        conn.execute(
+            "INSERT INTO tasks(name, description, status, stale, created_at, updated_at) "
+            "VALUES ('fresh', '', 'open', 0, "
+            "'2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00');"
+        )
+        row = conn.execute(
+            "SELECT kind FROM tasks WHERE name='fresh'"
+        ).fetchone()
+        assert row["kind"] == "production"
+    finally:
+        conn.close()
