@@ -28,6 +28,7 @@ from .models import (
     SearchHit,
     Slice,
     StatusTransition,
+    SupersedeResult,
     Task,
 )
 
@@ -540,6 +541,29 @@ class Core:
         """D6 -- backward-compatible alias for ``_linked_with``. See
         ``dependencies_of`` for the rationale."""
         return self._linked_with(task_id)
+
+    # ====================================================================
+    # D25 - supersede op (T92)
+    # ====================================================================
+    def supersede(self, old_id: int, by_id: int) -> SupersedeResult:
+        """D25 - mark ``old`` as superseded by ``by`` (sets the superseded_by
+        FK on tasks/S1). Refuses self-supersede. Does **not** auto-close
+        ``old`` -- supersede and close are independent decisions (T101): the
+        agent closes ``old`` separately if retiring it, or leaves it open to
+        track follow-up. Returns both slices so the reviewer sees the
+        relationship without an extra fetch."""
+        if old_id == by_id:
+            raise InvariantError(
+                f"a task cannot supersede itself (T{old_id})."
+            )
+        self._require_row(old_id)
+        self._require_row(by_id)
+        with self._mutate():
+            self.conn.execute(
+                "UPDATE tasks SET superseded_by = ?, updated_at = ? WHERE id = ?",
+                (by_id, _now(), old_id),
+            )
+        return SupersedeResult(old=self.show(old_id), by=self.show(by_id))
 
     # ====================================================================
     # D27 - Link discovery via `links` op (T91)

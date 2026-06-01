@@ -99,6 +99,17 @@ class ChangeResult(BaseModel):
     newly_stale: list[NeighborRef]  # direct dependents just marked stale
 
 
+class SupersedeResult(BaseModel):
+    """D25 / T92 - supersede payload. Marks ``old`` as superseded by ``by``;
+    returns BOTH slices so the agent reviews the relationship without an extra
+    fetch. supersede does NOT auto-close ``old`` (separate decision, T101)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    old: Slice
+    by: Slice
+
+
 class StatusTransition(BaseModel):
     """S4 `status_transitions` row (D8). Append-only history of status changes."""
 
