@@ -16,6 +16,59 @@ def test_edit_empty_name_refused(core):
         core.edit(1, name="   ")
 
 
+# --- T87 / D26: meta-island constraint ------------------------------------
+
+
+def _set_kind(core, task_id, kind):
+    """Test helper -- set a task's kind via raw UPDATE. Once T94 ships, kind
+    will be a required `add` argument and this becomes the proper code path;
+    until then this is the only way to vary kind in tests."""
+    core.conn.execute("UPDATE tasks SET kind = ? WHERE id = ?", (kind, task_id))
+
+
+def test_meta_island_refuses_meta_to_production_link(core):
+    core.add("prod task")  # T1 -- default kind production
+    core.add("meta task")  # T2
+    _set_kind(core, 2, "meta")
+    with pytest.raises(InvariantError, match="meta-island"):
+        core.dep_add(1, 2)
+
+
+def test_meta_island_refuses_meta_to_design_link(core):
+    core.add("design task")  # T1
+    core.add("meta task")  # T2
+    _set_kind(core, 1, "design")
+    _set_kind(core, 2, "meta")
+    with pytest.raises(InvariantError, match="meta-island"):
+        core.dep_add(1, 2)
+
+
+def test_meta_to_meta_link_allowed(core):
+    core.add("meta a")  # T1
+    core.add("meta b")  # T2
+    _set_kind(core, 1, "meta")
+    _set_kind(core, 2, "meta")
+    core.dep_add(1, 2)  # both meta -> allowed
+    n = core.conn.execute("SELECT COUNT(*) FROM links").fetchone()[0]
+    assert n == 1
+
+
+def test_cross_kind_non_meta_link_allowed(core):
+    # The meta-island bounds ONLY the meta vs non-meta boundary. design <->
+    # schema, schema <-> production, design <-> production are all fine.
+    core.add("d task")  # T1
+    core.add("s task")  # T2
+    core.add("p task")  # T3
+    _set_kind(core, 1, "design")
+    _set_kind(core, 2, "schema")
+    # T3 stays production
+    core.dep_add(2, 1)  # schema <-> design
+    core.dep_add(3, 1)  # production <-> design
+    core.dep_add(3, 2)  # production <-> schema
+    n = core.conn.execute("SELECT COUNT(*) FROM links").fetchone()[0]
+    assert n == 3
+
+
 def test_traversal_is_status_blind(core):
     core.add("a")  # T1
     core.add("b")

@@ -426,12 +426,26 @@ class Core:
     def _add_link(self, a: int, b: int) -> None:
         """D5 + D14 - add a symmetric link between ``a`` and ``b``. Invariants:
         both endpoints exist (FK), distinct (CHECK task_a < task_b prevents
-        self-link). Under symmetric semantics there is no cycle invariant --
-        an undirected edge has no cycle in the directed sense."""
+        self-link), and the **meta-island constraint** (D26 / T87): a link
+        between a ``meta``-kind task and a non-``meta``-kind task is refused
+        so the cascade cannot bleed across the kind boundary."""
         if a == b:
             raise InvariantError(f"a task cannot link to itself (T{a}).")
-        self._require_row(a)
-        self._require_row(b)
+        row_a = self._require_row(a)
+        row_b = self._require_row(b)
+        # Meta-island constraint (D26 / T87): refuse cross-kind links between
+        # meta and non-meta. Same-kind links are always allowed (meta<->meta,
+        # production<->production, design<->schema, etc.).
+        kind_a = row_a["kind"]
+        kind_b = row_b["kind"]
+        if (kind_a == "meta") != (kind_b == "meta"):
+            raise InvariantError(
+                f"REFUSED: meta-island constraint (D26). T{a} (kind={kind_a}) and "
+                f"T{b} (kind={kind_b}) cannot be linked because exactly one is meta. "
+                f"Meta tasks may only link other meta tasks; the boundary bounds the "
+                f"cascade so meta work (release tracking, experiments) cannot drag "
+                f"spec/production tasks into a stale review and vice versa."
+            )
         ta, tb = self._canonical(a, b)
         try:
             self.conn.execute(
