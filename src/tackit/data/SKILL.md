@@ -2,8 +2,10 @@
 name: tackit
 description: Use whenever planning, tracking, or executing work in a project that
   uses tackit (a task + dependency tracker). Covers when to record work in tackit,
-  the reconcile-on-change discipline, the verb taxonomy (edit / supersede / close /
-  wont_do), the kind classification rule, and the mandatory code↔task naming convention.
+  the reconcile-on-change discipline, the v0.4 verb taxonomy (edit / close /
+  wont_do — supersede retired), the bounded-obligation cascade (closed-stale is
+  record only), the kind classification rule (design/schema as living spec), and
+  the mandatory code↔task naming convention.
 ---
 
 # Working with tackit
@@ -28,9 +30,13 @@ taxonomy:
 
 - **design** — a decision slice (D# in the design doc). Captures what is decided,
   not how it is built. Editing a design changes what the system means; impl tasks
-  link back to design tasks they realize.
+  link back to design tasks they realize. **Perma-open under v0.4 (D30):**
+  `close()` and `wont_do()` are refused on design slices; updating a decision is
+  edit(), not close. To retire a decision, edit the slice to reflect its current
+  state — the description_revisions audit table (D29) preserves the prior
+  verbatim version, so editing is recoverable.
 - **schema** — a store-shape slice (S# in the schema doc). The DDL contract.
-  Schema changes typically require migrations.
+  Schema changes typically require migrations. **Same perma-open rule as design.**
 - **production** — code that **alters the running app's behavior**. Source under
   `tackit/`, tests that pin behavior contracts, and the README/SKILL.md **count
   as production** because they alter the agent's behavior of the app.
@@ -62,90 +68,121 @@ meta) are also **reserved label strings** — attaching one of them as a label i
 refused, because the `kind` property already encodes that distinction.
 
 ## The verb taxonomy — when to use which
-Tackit has four verbs that change a task's state. They are not interchangeable
-and the mechanism enforces the distinctions.
+Tackit (v0.4) has three verbs that change a task's state. They are not
+interchangeable and the mechanism enforces the distinctions. (v0.3's
+`supersede` verb was retired — it required tasks to be atomic enough that
+"premise replaced" applied to the whole bundle, which broke down in practice
+when only one of several facets was invalidated. The simpler model: edits
+are allowed on any status, and an append-only audit table preserves prior
+verbatim state.)
 
-### edit — sharpen an OPEN task
-Use when a task's premise is unchanged but the description needs sharpening:
-typo fix, clearer wording, added detail, corrected pointer. **Refused on closed
-and wont_do tasks** — for those, supersede instead. `edit` fires the staling
-cascade on linked neighbors. Required `delta` (one sentence) describes the
-semantic shift so reconcilers can FAST-filter via `delta × because`.
+### edit — change a task's content
+Use when a task's content needs to change: typo fix, clearer wording, added
+detail, corrected pointer, premise refinement. **Allowed on any status** —
+open, closed, and wont_do (D29 v0.4 retires the v0.3 "no-edit-closed" rule).
+The wont_do `reason` field is frozen at wont_do() time and has no edit API.
 
-### supersede — replace the premise with a new task
-Use when a task's premise has been replaced or inverted. Create a new task
-with the new direction; supersede the old with the new. The old task stays in
-the graph as historical record; its `superseded_by` marker tags search hits so
-the displaced premise can't mislead silently. Supersede fires the staling
-cascade on **old's** linked neighbors — every link must be walked through the
-migrate-or-stay decision (`link_add(by, neighbor)` to migrate; `link_rm(old,
-neighbor)` if fully replaced; leave both if historical). Required `delta`.
-Allowed on any status (open, closed, wont_do).
+`edit` fires the staling cascade on directly linked neighbors. Required
+`delta` (one sentence) describes the semantic shift so reconcilers can
+FAST-filter via `delta × because`. The prior name+description+delta are
+recorded in the description_revisions audit table (S7) so archaeology can
+recover what the task used to say — editing in place no longer destroys
+history.
+
+If the edited task has kind in {design, schema}, the response envelope
+includes a **code-check reminder** (D31) naming the slice id+name and
+prompting a code drift check. The slice's D#/S# id is referenced in code by
+the code↔task naming convention; grep it and verify the associated files.
 
 ### close — work done
 Use when the task's deliverable has shipped. Refused if the task is stale or
-shares a link with any stale task (the close-gate). Closed tasks are immutable
-(no edit; use supersede if drift surfaces). On close, the obligation payload
-returns one-hop neighbors so you can review whether anything needs follow-up.
+shares a link with any obligation-bearing stale task (close-gate; v0.4
+bounded by D28 — closed/wont_do production neighbors carrying stale=1 are
+record-only and do NOT trip the gate). **Refused on kind in {design, schema}**
+(D30) — those are living spec, not work items; edit() is the right verb. On
+close, the obligation payload returns one-hop neighbors so you can review
+whether anything needs follow-up.
 
 ### wont_do — decided not to do
 Use when the scope is dropped, not delivered. **Distinct from close** — close
 means "we did this," wont_do means "we decided not to do this." Takes a
-durable `reason` (persists forever in the row) plus the standard `delta`.
-**Locked forever** — edit, reopen, close, and wont_do are all refused on a
-wont_do task. The change-of-mind path is supersede with a new task carrying
-the new direction. wont_do does NOT fire the staling cascade (status change,
-not content edit).
+durable `reason` (persists forever in the row, no edit path) plus the
+standard `delta`. **Refused on kind in {design, schema}** (D30) — a design
+decision can't be "not done"; it either holds or is edited to reflect a
+changed state. **Refused on already-closed/already-wont_do tasks** (T132: no
+double-decide). The change-of-mind path on a wont_do task is to create a
+fresh task with the new direction — the old wont_do row stays as historical
+record. wont_do does NOT fire the staling cascade (status change, not
+content edit). Edit IS allowed on wont_do tasks under v0.4 — only the
+`reason` field is frozen.
 
 ### The decision tree
-Task is in flight, content needs sharpening, premise unchanged → **edit**.
-Task's premise has been replaced/inverted → **supersede** (with a new task
-carrying the replacement).
-Task's deliverable has shipped → **close**.
-Task's scope is being dropped, we are not doing this → **wont_do**.
-Closed task's prose is drifting → **supersede** (never reopen+edit+close, that
-logs a misleading history transition).
+Task's content needs to change (any status) → **edit**.
+Task's deliverable has shipped → **close** (production/meta only;
+design/schema are perma-open).
+Task's scope is being dropped, we are not doing this → **wont_do**
+(production/meta only).
+A premise has been replaced and the new direction is too different to
+re-use the task → **create a new task with the new direction**; leave the
+old one as historical record. Link the two if the coupling matters.
 
 ## The reconciliation discipline (the core of using tackit well)
-tackit tracks not just tasks but whether they're still in sync after changes. **The
-app checks for stale tasks itself, on every single call, and puts the outstanding
-list in front of you** — this is not a reminder you can opt out of; it is the tool
-telling you the plan is currently inconsistent. When you see a stale alert, act on it.
+tackit tracks not just tasks but whether they're still in sync after changes.
+**The app checks for stale tasks itself, on every single call, and puts the
+outstanding worklist in front of you** — this is not a reminder you can opt
+out of; it is the tool telling you the plan is currently inconsistent. When
+you see a stale alert, act on it.
 
-- **Cascade-firing ops are edit, supersede, and reclassify.** Each marks the
-  directly linked neighbors stale + records the agent's `delta` for the
-  cascade-ergonomics filter. Other status verbs (close, wont_do, reopen,
-  reconcile) do NOT cascade. Link ops (link_add, link_rm) don't cascade either
-  — they're structural.
-- **Cascade is symmetric.** Every link is bidirectional in the cascade sense —
-  editing either endpoint stales the other. There is no "depends_on direction"
-  to fire the cascade only one way.
-- **Closed and wont_do tasks CAN be stale.** The cascade still marks them
-  stale=True when an upstream changes, but it does NOT force-reopen them.
-  Closed-stale and wont_do-stale mean "the upstream changed; review whether
-  the historical record (or the dropped-scope rationale) still holds." The
-  action menu on terminal-stale tasks: **reconcile** (still correct as
-  record), **supersede** (premise replaced, create successor), or **link_rm
-  + link_add** (relink edges to a replacement). `edit` is refused.
-- **Use delta × because to FAST-filter.** Every link carries a durable `because`
-  (set at link_add time) describing why the two tasks are coupled. Every
-  cascade-firing op carries a `delta` describing the semantic shift. When
-  reconciling, read the link's `because` alongside the upstream's `delta` — if
-  the shift doesn't intersect the coupling, the stale flag is a false positive
-  and you can `reconcile` without opening the downstream task. This is the
-  cascade-ergonomics filter; it depends entirely on rationale quality.
-- **Work the stale set to empty.** The pass is done only when the worklist
-  (`stale`) is empty. Drift propagates only where real changes happen.
-- **Never treat work as done — never end your turn — while any task is stale.**
-  A task left closed while something it depends on changed is the single worst
-  outcome this tool exists to prevent: it is **wrong, and it is invisible**, so
-  it silently corrupts everything downstream and no one discovers it until much
-  later, at far greater cost. An empty stale list is the only safe stopping point.
-- **A stale task cannot be closed (or wont_do'd), and neither can anything in
-  its linked neighborhood.** The tools enforce both: `close` and `wont_do` are
-  refused if the task is stale, *or* if it transitively shares a link with any
-  stale task. Don't fight the refusal — reconcile the named upstream first,
-  then close (or wont_do).
+- **Cascade-firing ops are edit and reclassify.** Each marks the directly
+  linked neighbors stale + records the agent's `delta` for the cascade-
+  ergonomics filter. Other status verbs (close, wont_do, reopen, reconcile)
+  do NOT cascade. Link ops (link_add, link_rm) don't cascade either — they're
+  structural.
+- **Cascade is symmetric.** Every link is bidirectional in the cascade sense
+  — editing either endpoint stales the other. There is no "depends_on
+  direction" to fire the cascade only one way.
+- **Bounded obligation (D28 v0.4): closed and wont_do tasks CAN be stale,
+  but the flag is RECORD ONLY.** The cascade still writes stale=1 on them
+  mechanically (depth-1, unchanged), but they're NOT on the worklist and they
+  do NOT pressure the close-gate. The flag stays as historical signal that
+  an upstream changed; archaeology can see it in `show()`. The worklist
+  filter: `status='open' OR kind in {design,schema}`. Closed-stale
+  production/meta is acceptable and doesn't block anything; you don't have to
+  reconcile it. `reconcile()` is refused on closed/wont_do tasks (clearing a
+  record-only marker would erase the signal without meaning).
+- **Use delta × because to FAST-filter.** Every link carries a durable
+  `because` (set at link_add time) describing why the two tasks are coupled.
+  Every cascade-firing op carries a `delta` describing the semantic shift.
+  When reconciling, read the link's `because` alongside the upstream's
+  `delta` — if the shift doesn't intersect the coupling, the stale flag is a
+  false positive and you can `reconcile` without opening the downstream task.
+  This is the cascade-ergonomics filter; it depends entirely on rationale
+  quality.
+- **Work the obligation-bearing stale set to empty.** The pass is done only
+  when the worklist (`stale`) — already filtered by D28 — is empty. Drift
+  propagates only where real changes happen.
+- **Never treat work as done — never end your turn — while any
+  obligation-bearing stale task remains.** A task left closed while something
+  it depends on changed is the single worst outcome this tool exists to
+  prevent: it is **wrong, and it is invisible**, so it silently corrupts
+  everything downstream and no one discovers it until much later, at far
+  greater cost. An empty filtered stale list is the only safe stopping point.
+  (Closed-stale production/meta tasks DON'T need attention — they're
+  record-only.)
+- **The close-gate is bounded too.** `close` and `wont_do` are refused if the
+  task is itself obligation-bearing-stale, *or* if it transitively shares a
+  link with one. Closed-stale production neighbors don't trip the gate
+  anymore. When the gate refuses, reconcile the named upstream first; if the
+  refusal names a closed/wont_do task that's record-only, you can ignore it
+  (the gate wouldn't have refused on its account).
+
+### Edit on closed/wont_do — safe under v0.4
+v0.3's "no-edit-closed" rule is retired. Editing a closed or wont_do task is
+now a normal edit: it fires the cascade depth-1 (closed/wont_do neighbors
+flagged record-only per D28) and records a row in the description_revisions
+audit table (S7) preserving the prior verbatim name+description+delta. Use
+this for prose fixes on shipped work — fixing a misleading description on a
+closed task no longer destroys history; the audit table is the backstop.
 
 ## Discovering dependencies — use the `links` op, don't just search
 Search is recall-limited. For wiring a new production task to the design/schema
@@ -156,7 +193,10 @@ slices it realizes, use the deterministic `links` op:
    layer (all design + schema tasks). Judge each surfaced candidate — never
    skip one, but also don't force a link if the relationship isn't real.
 3. **Expand one hop**: call `links(anchors_you_picked)` → returns the depth-1
-   neighborhood of those anchors. Iterate the same judge-or-skip pass.
+   neighborhood of those anchors, **filtered to viable link targets**
+   (status='open' OR kind in {design,schema} — D27/D28 v0.4). Closed/wont_do
+   production neighbors are not surfaced; closed design/schema slices still
+   are (living spec). Iterate the same judge-or-skip pass.
 4. **Stop when satisfied**, then `link_add` each chosen edge with a real
    `because` rationale describing the coupling.
 
@@ -188,8 +228,10 @@ and your code doesn't know its task. The bridge is *nothing but how you write bo
   comments should echo the task's distinctive terms, so reading the code and reading
   the task line up and a search for one finds the other. If the task says "token
   rotation," the code says "token rotation" — not "key cycling."
-- **Keep both sides honest.** If coding reveals the task/design is wrong, supersede
-  the task (it's the source of truth); never let the code silently diverge.
+- **Keep both sides honest.** If coding reveals the task/design is wrong,
+  edit the task (it's the source of truth); never let the code silently
+  diverge. Edits on design/schema slices fire the D31 code-check reminder
+  to prompt a grep of the slice id — use it.
 
 Treat a vague task title or a code↔task vocabulary mismatch as a **defect**, not a
 style nit. The system's ability to recover intent across context resets depends
@@ -260,10 +302,6 @@ Format:
        T33 · <task name> (kind=production)
             what: <one line — enough to recall the task>
             did:  <one line — roughly what happened>
-    ~ Superseded
-       T49 · old D7 prose
-            what: D7 status+stale slice
-            did:  replaced by T133 (relaxed-invariant version); old kept as history
     + Linked
        T127 ↔ T122
             because: "T127 measurement needs the rationales T122 backfills"
@@ -272,14 +310,14 @@ Format:
             what: productized link_rationale + batch op
             reason: scope dropped per user — case-by-case backfill instead
     ━━━ state ━━━━━━━━━━━━━━━━━━━━━━━━━━
-       N open · N done · ⚠ N stale
+       N open · N done · ⚠ N stale (open + design/schema only — D28)
        <worry first: stale ids + what they await, refused ops, new labels>
 
-- Group by verb: Added / Edited / Closed / Reopened / Reconciled / Linked / Tagged /
-  Superseded / Wont_do / Reclassified.
+- Group by verb: Added / Edited / Closed / Reopened / Reconciled / Linked /
+  Tagged / Wont_do / Reclassified.
 - Per task: one short line each for `what:` (the task — enough to recall it) and
   `did:` (the change — roughly, not blow-by-blow). A clause each, not a paragraph.
-- For Superseded entries name the successor task id; for Wont_do entries name the
-  durable reason; for Linked entries name the because rationale.
+- For Wont_do entries name the durable reason; for Linked entries name the
+  because rationale.
 - End with the state line; surface anything worrying first. If nothing is stale and
   nothing was refused, say so — silence is not reassurance.

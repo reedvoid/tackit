@@ -86,7 +86,9 @@ language and it drives the tools. Common asks:
 - **"What did that change affect?"** / **"What's stale?"** → it shows the reconciliation
   worklist.
 - **"Mark the parser task done."** → it closes the task — *refused* if the task is stale
-  or sits on unreconciled work, so you can't silently mark broken work complete.
+  or sits on unreconciled work, so you can't silently mark broken work complete. (v0.4
+  bounds the gate to obligation-bearing stale — closed/wont_do production neighbors
+  carrying stale flags as historical record don't trip the gate.)
 - **"Show me everything under the `testing` label."** → it lists that group.
 
 After any change, the agent reports back what it did and what's outstanding, so you
@@ -108,8 +110,10 @@ Concrete loops, so the discipline reads as habits, not rules:
   edits it; tackit marks everything that depends on it **stale**, and you walk each one
   against what changed and either fix or reconcile it. You can't leave a downstream task
   quietly wrong — that's the core guarantee.
-- **Wrap up.** Nothing is "done" while the stale list is non-empty; an empty `stale` is
-  the only safe stopping point.
+- **Wrap up.** Nothing is "done" while the worklist `stale` (filtered to open work +
+  design/schema slices under v0.4) is non-empty; an empty worklist is the only safe
+  stopping point. Closed-stale production tasks are *record-only* and don't pressure
+  the worklist.
 
 ## For humans: the CLI
 
@@ -154,12 +158,17 @@ in parallel.
 - **Single source of truth.** Everything goes in tackit, via its tools — never ad-hoc
   markdown or TODO comments. If it isn't in tackit, it isn't tracked. It is *not* a
   knowledge base; durable learnings live in your memory.
-- **Reconcile on change.** A change marks the task's dependents **stale**. tackit
-  surfaces the outstanding stale set on *every* call (deterministically — it's code in
-  the app, not a reminder you can skip). Review each stale task *together with its
-  `depends_on` neighbors*, then `edit` or `reconcile` it. **Never end a turn while
-  anything is stale** — a task left closed atop a changed dependency is wrong *and*
-  invisible. A stale task (or one that depends on a stale task) can't be closed.
+- **Reconcile on change (bounded under v0.4).** A change marks the task's directly
+  linked neighbors **stale**. tackit surfaces the outstanding worklist on *every*
+  call (deterministically — it's code in the app, not a reminder you can skip).
+  The worklist is filtered: only stale tasks with `status='open'` OR `kind in
+  {design, schema}` carry an obligation. Closed/wont_do production/meta tasks may
+  still carry stale=1 as historical record but they're off the worklist and don't
+  pressure the close-gate. Review each obligation-bearing stale task with its
+  linked neighbors and `edit` or `reconcile` it. **Never end a turn while the
+  worklist is non-empty** — a task left closed atop a changed dependency is wrong
+  *and* invisible. (Edits on closed/wont_do tasks are allowed under v0.4 and
+  preserved verbatim in the description_revisions audit table.)
 - **Find, wire, right-size.** `search` before you create; wire dependencies explicitly
   (including among tasks you add together); keep tasks describable units of work.
 
