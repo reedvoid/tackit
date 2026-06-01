@@ -30,7 +30,9 @@ from .models import (
     StatusTransition,
     SupersedeResult,
     Task,
+    WontDoResult,
 )
+from .schema import KIND_VALUES
 
 
 def _now() -> str:
@@ -53,6 +55,25 @@ def _require_delta(delta: str | None, op: str) -> None:
             f"linked task's `because` rationale to decide relevance."
         )
     _validate_text(delta, f"{op} delta")
+
+
+def _require_kind(kind: str | None, op: str) -> None:
+    """T94 / D26 - kind is required at create-time and must be one of the four
+    taxonomy values. Missing or invalid fails loud at the op boundary (D2) with
+    a message that names the values, so a slipped/typo'd call never silently
+    falls through to the schema's NOT NULL DEFAULT."""
+    if kind is None or (isinstance(kind, str) and not kind.strip()):
+        raise ValidationError(
+            f"{op} requires a `kind` ∈ {{{', '.join(KIND_VALUES)}}} (D26 / T94). "
+            f"Classify by 'alters running app behavior': design = decision slice, "
+            f"schema = store shape, production = changes the app's behavior, "
+            f"meta = bookkeeping / experiments / release tracking."
+        )
+    if kind not in KIND_VALUES:
+        raise ValidationError(
+            f"{op}: kind {kind!r} is not valid; must be one of "
+            f"{{{', '.join(KIND_VALUES)}}} (D26 / T94)."
+        )
 
 
 def _validate_text(value: str | None, field: str) -> None:
@@ -166,6 +187,16 @@ class Core:
         # -- one op's lifetime only; not stored anywhere.
         self.last_delta: str | None = None
 
+    # --- T124: shared prelude for cascade-firing / delta-bearing ops --------
+    def _record_delta(self, delta: str, op_name: str) -> None:
+        """T117/T124 shared prelude - validate the required delta and record
+        it on self for envelope surfacing. Used by every op that takes a
+        required ``delta``: edit, supersede (cascade-firing), link_add,
+        link_rm (edge-mutating). Naming the helper makes "this op carries a
+        delta" explicit at the call site."""
+        _require_delta(delta, op_name)
+        self.last_delta = delta.strip()
+
     @classmethod
     def open(cls, start: Path | None = None) -> "Core":
         """Resolve the store (D1 walk-up); run the D18 sync verdict BEFORE
@@ -224,6 +255,7 @@ class Core:
             status=row["status"],
             stale=bool(row["stale"]),
             superseded_by=row["superseded_by"],
+            wont_do_reason=row["wont_do_reason"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
@@ -255,13 +287,17 @@ class Core:
     def add(
         self,
         name: str,
+        *,
+        kind: str,
         description: str = "",
         labels: list[str] | None = None,
         deps: list[int] | None = None,
     ) -> Task:
-        """D3 - create a task (auto monotonic id). Optionally attach labels (D4)
-        and declare dependencies (D5; the new task depends_on each id). Cycle and
-        FK checks (D14) apply to the deps."""
+        """D3 + T94 - create a task (auto monotonic id). ``kind`` is required
+        (D26 taxonomy: design | schema | production | meta) and refused as
+        missing/invalid via D2. Optionally attach labels (D4) and declare
+        symmetric links via ``deps`` (D5)."""
+        _require_kind(kind, "add")
         if not name or not name.strip():
             raise ValidationError("task name must be a non-empty string (D3/S1).")
         _validate_text(name, "task name")
@@ -271,9 +307,9 @@ class Core:
         ts = _now()
         with self._mutate():
             cur = self.conn.execute(
-                "INSERT INTO tasks(name, description, status, stale, created_at, updated_at) "
-                "VALUES (?, ?, 'open', 0, ?, ?)",
-                (name.strip(), description, ts, ts),
+                "INSERT INTO tasks(name, description, kind, status, stale, created_at, updated_at) "
+                "VALUES (?, ?, ?, 'open', 0, ?, ?)",
+                (name.strip(), description, kind, ts, ts),
             )
             task_id = int(cur.lastrowid)
             self._record_transition(task_id, None, "open")  # D8: creation event
@@ -290,13 +326,19 @@ class Core:
         return self.get(task_id)
 
     def load(self, specs: list[dict]) -> dict[str, int]:
-        """D24 - bulk-create tasks from parsed plan specs (see :mod:`tackit.plan`) in
-        ONE transaction, resolving ``depends_on`` by key. Returns ``{key: task_id}``.
-        Atomic: any error (bad name, unknown dep key, self-edge, cycle) rolls the
-        whole import back -- never a partial plan -- and is a single version bump."""
+        """D24 + T94 - bulk-create tasks from parsed plan specs (see
+        :mod:`tackit.plan`) in ONE transaction, resolving ``depends_on`` by key.
+        Returns ``{key: task_id}``. Every spec must carry a valid ``kind`` (D26),
+        enforced by the parser; re-checked here so a hand-built specs list can't
+        slip past. Atomic: any error (bad name, missing/invalid kind, unknown
+        dep key, self-edge) rolls the whole import back -- never a partial plan
+        -- and is a single version bump."""
         keys: set[str] = set()
         for s in specs:
             keys.add(s["key"])
+        # Pre-validate kind on every spec BEFORE mutating (fail loud, no partial).
+        for s in specs:
+            _require_kind(s.get("kind"), f"load: task '{s['key']}'")
         # Validate all depends_on resolve within the plan BEFORE mutating (fail loud).
         for s in specs:
             for dep in s["depends_on"]:
@@ -324,9 +366,9 @@ class Core:
                 _validate_text(s["desc"], "task description")
                 ts = _now()
                 cur = self.conn.execute(
-                    "INSERT INTO tasks(name, description, status, stale, created_at, updated_at) "
-                    "VALUES (?, ?, 'open', 0, ?, ?)",
-                    (s["name"].strip(), s["desc"], ts, ts),
+                    "INSERT INTO tasks(name, description, kind, status, stale, created_at, updated_at) "
+                    "VALUES (?, ?, ?, 'open', 0, ?, ?)",
+                    (s["name"].strip(), s["desc"], s["kind"], ts, ts),
                 )
                 tid = int(cur.lastrowid)
                 self._record_transition(tid, None, "open")
@@ -534,8 +576,7 @@ class Core:
         ``delta`` (ephemeral, one sentence describing the change). The
         canonicalized row is stored once; no-op on duplicate; no-op does NOT
         overwrite the existing rationale."""
-        _require_delta(delta, "link_add")
-        self.last_delta = delta.strip()
+        self._record_delta(delta, "link_add")
         ta, tb = self._canonical(a, b)
         existing = self.conn.execute(
             "SELECT 1 FROM links WHERE task_a = ? AND task_b = ?", (ta, tb)
@@ -549,8 +590,7 @@ class Core:
         """D5 (T93) + T117 - remove the symmetric link between ``a`` and ``b``;
         required ``delta`` describes the semantic change. Canonical lookup;
         no-op if absent."""
-        _require_delta(delta, "link_rm")
-        self.last_delta = delta.strip()
+        self._record_delta(delta, "link_rm")
         self._require_row(a)
         self._require_row(b)
         ta, tb = self._canonical(a, b)
@@ -593,11 +633,16 @@ class Core:
     # D25 - supersede op (T92)
     # ====================================================================
     def supersede(self, old_id: int, by_id: int, delta: str) -> SupersedeResult:
-        """D25 + T117 - mark ``old`` as superseded by ``by``; required ``delta``
-        names the semantic replacement. Refuses self-supersede. Does **not**
-        auto-close ``old`` (separate decision, T101). Returns both slices."""
-        _require_delta(delta, "supersede")
-        self.last_delta = delta.strip()
+        """D25 + T117 + T124 - mark ``old`` as superseded by ``by`` and fire
+        the staling cascade on ``old``'s direct linked neighbors so the agent
+        is obliged to walk the migrate-or-stay decision per link (link_add(by,
+        neighbor) to migrate / link_rm(old, neighbor) if fully replaced /
+        leave both as historical). Required ``delta`` names the semantic
+        replacement. Refuses self-supersede. Does **not** auto-close ``old``
+        (separate decision, T101). Closed neighbors stay closed + stale=True
+        per T123's relaxed D7. Returns both slices plus ``newly_stale`` --
+        the cascade obligation list."""
+        self._record_delta(delta, "supersede")  # T124: shared prelude
         if old_id == by_id:
             raise InvariantError(
                 f"a task cannot supersede itself (T{old_id})."
@@ -605,11 +650,68 @@ class Core:
         self._require_row(old_id)
         self._require_row(by_id)
         with self._mutate():
+            newly_stale = self._mark_linked_stale(old_id)  # T124: cascade on old's links
             self.conn.execute(
                 "UPDATE tasks SET superseded_by = ?, updated_at = ? WHERE id = ?",
                 (by_id, _now(), old_id),
             )
-        return SupersedeResult(old=self.show(old_id), by=self.show(by_id))
+        return SupersedeResult(
+            old=self.show(old_id), by=self.show(by_id), newly_stale=newly_stale
+        )
+
+    # ====================================================================
+    # T128 - reclassify (change a task's kind after creation)
+    # ====================================================================
+    def reclassify(self, task_id: int, new_kind: str, delta: str) -> ChangeResult:
+        """T128 - change a task's kind after creation. Kind is foundational
+        (D26: it bounds the cascade via meta-island and decides where the
+        task fits in the design/schema/production/meta taxonomy), so the
+        v2 'kind required at create' rule (T94) leaves no way to recover
+        from a creation-time misclassification. reclassify is the explicit
+        recovery verb.
+
+        Discipline: rare in practice -- it should mostly fix a wrong call
+        at creation, not be used as routine ergonomic shuffling. The meta-
+        island guard refuses any reclassify that would create a cross-kind
+        link with an existing neighbor; the agent must rm-or-supersede
+        those links first before crossing the meta boundary.
+
+        Fires the cascade: a kind change is a semantic shift, and every
+        linked neighbor must re-review whether the relationship still makes
+        sense under the new classification. Closed neighbors stay closed +
+        stale=True per T123."""
+        self._record_delta(delta, "reclassify")
+        _require_kind(new_kind, "reclassify")
+        row = self._require_row(task_id)
+        # D20 no-op guard: same kind = nothing to do.
+        if row["kind"] == new_kind:
+            return ChangeResult(task=self.get(task_id), newly_stale=[])
+        # Meta-island guard (D26 / T128): would any existing link become
+        # cross-kind under the new kind? If so, refuse loudly with the
+        # offending neighbors named.
+        offenders = []
+        for n in self._linked_with(task_id):
+            neighbor_row = self._require_row(n.id)
+            neighbor_kind = neighbor_row["kind"]
+            if (new_kind == "meta") != (neighbor_kind == "meta"):
+                offenders.append((n.id, neighbor_kind))
+        if offenders:
+            id_list = ", ".join(f"T{tid} (kind={k})" for tid, k in offenders)
+            raise InvariantError(
+                f"REFUSED: reclassifying T{task_id} to kind={new_kind!r} would "
+                f"create cross-kind link(s) with: {id_list}. The meta-island "
+                f"constraint (D26) refuses cross-kind links between meta and "
+                f"non-meta. Either link_rm the offending edges first, or "
+                f"supersede T{task_id} with a new task carrying the desired "
+                f"kind (the old links stay on the historical row)."
+            )
+        with self._mutate():
+            newly_stale = self._mark_linked_stale(task_id)
+            self.conn.execute(
+                "UPDATE tasks SET kind = ?, updated_at = ? WHERE id = ?",
+                (new_kind, _now(), task_id),
+            )
+        return ChangeResult(task=self.get(task_id), newly_stale=newly_stale)
 
     # ====================================================================
     # D27 - Link discovery via `links` op (T91)
@@ -667,9 +769,18 @@ class Core:
             self._record_transition(task_id, old_status, new_status)  # D8
 
     def reopen(self, task_id: int) -> Task:
-        """D7/D8 - move a closed task back to open (logged). Does not set stale;
-        the history log keeps the earlier 'closed' fact."""
+        """D7/D8 + T132 - move a closed task back to open (logged). Does not
+        set stale; the history log keeps the earlier 'closed' fact. REFUSED
+        on wont_do tasks -- wont_do is terminal forever per T132 design
+        (the change-of-mind path is supersede with a new task, not reopen)."""
         row = self._require_row(task_id)
+        if row["status"] == "wont_do":
+            raise InvariantError(
+                f"REFUSED: T{task_id} is wont_do -- reopen is not allowed "
+                f"(T132: wont_do is terminal forever). If the decision has "
+                f"changed, create a new task with the new direction and call "
+                f"`supersede(T{task_id}, T<new>)`."
+            )
         # No-op guard (D20): reopening an already-open task changes nothing, so it must
         # not bump version / re-dump tackit.sql (which would be spurious git churn
         # and a false "newer" signal for D18 ordering).
@@ -679,18 +790,18 @@ class Core:
         return self.get(task_id)
 
     def _mark_linked_stale(self, task_id: int) -> list[NeighborRef]:
-        """D10 - mark the DIRECT linked neighbors of ``task_id`` stale + open
-        (invariant stale=>open, D7). One hop only; non-transitive. Recorded
+        """D10 + T123 - mark the DIRECT linked neighbors of ``task_id`` stale,
+        leaving status untouched. One hop only; non-transitive. Recorded
         *before* the change so an interrupted reconciliation is crash-safe.
         Symmetric since T86: fires for both endpoints of any link, bounded by
-        the meta-island constraint (D26)."""
+        the meta-island constraint (D26). Closed neighbors stay closed +
+        stale=True per T123's relaxed D7 -- the action menu on closed-stale
+        is reconcile / supersede / link_rm-link_add (edit still refused per
+        T118)."""
         linked = self._linked_with(task_id)
         for n in linked:
-            row = self._require_row(n.id)
-            if row["status"] == "closed":
-                self._record_transition(n.id, "closed", "open")  # forced open by stale
             self.conn.execute(
-                "UPDATE tasks SET stale = 1, status = 'open', updated_at = ? WHERE id = ?",
+                "UPDATE tasks SET stale = 1, updated_at = ? WHERE id = ?",
                 (_now(), n.id),
             )
         # re-read so the returned refs show stale=True
@@ -735,10 +846,20 @@ class Core:
     # D12 - close (with obligation payload) / D14 close-gate
     # ====================================================================
     def close(self, task_id: int) -> CloseResult:
-        """D12 + D14 - close a task and return the one-hop set to review. REFUSED
-        while the task is stale (close-gate, ratified 2026-05-29): a task with
-        unreconciled upstream changes cannot be marked done."""
+        """D12 + D14 + T132 - close a task and return the one-hop set to
+        review. REFUSED while the task is stale (close-gate, ratified
+        2026-05-29). REFUSED on wont_do tasks (T132: already terminal in a
+        different sense -- closed = done; wont_do = decided not to do)."""
         row = self._require_row(task_id)
+        if row["status"] == "wont_do":
+            raise InvariantError(
+                f"REFUSED: T{task_id} is wont_do -- cannot be closed (T132). "
+                f"Closed and wont_do are distinct terminal states; the task is "
+                f"already terminal in the 'decided not to do' sense. If the "
+                f"decision has changed and the work IS being done, supersede "
+                f"T{task_id} with a new task carrying the new direction, then "
+                f"close that one."
+            )
         if bool(row["stale"]):
             raise InvariantError(
                 f"REFUSED: T{task_id} is stale -- it has unreconciled upstream "
@@ -771,6 +892,70 @@ class Core:
         )
 
     # ====================================================================
+    # T132 - wont_do (terminal "decided not to do" status, distinct from close)
+    # ====================================================================
+    def wont_do(self, task_id: int, reason: str, delta: str) -> WontDoResult:
+        """T132 / 2026-06-01 - mark a task as decided-not-to-do, distinct
+        from closed (which means work done). Requires ``reason`` (durable,
+        persists in wont_do_reason column -- the rationale survives forever)
+        and ``delta`` (ephemeral per T117). Locked-forever per T118 pattern:
+        edit / reopen / close / wont_do all REFUSED on wont_do tasks (the
+        change-of-mind path is supersede with a new task). REFUSED if the
+        task is stale or in a linked-stale neighborhood (same gate as
+        close, D14). REFUSED if already wont_do (no double-decide). Does
+        NOT fire the cascade (status change, not content edit; symmetric
+        with close). Returns the standard CloseResult-shaped payload of
+        one-hop neighbors for migrate-or-stay review."""
+        self._record_delta(delta, "wont_do")
+        if not reason or not reason.strip():
+            raise ValidationError(
+                "wont_do requires a non-empty `reason` -- the durable rationale "
+                "for the decision not to do this task (persisted forever in "
+                "wont_do_reason). One sentence is enough; future-you will read "
+                "it to understand why this scope was dropped."
+            )
+        _validate_text(reason, "wont_do reason")
+        row = self._require_row(task_id)
+        if row["status"] == "wont_do":
+            raise InvariantError(
+                f"REFUSED: T{task_id} is already wont_do (T132). The decision "
+                f"is locked; if it has changed, supersede with a new task."
+            )
+        if row["status"] == "closed":
+            raise InvariantError(
+                f"REFUSED: T{task_id} is closed (work done) -- it cannot be "
+                f"reclassified as wont_do (decided not to do) (T132). The two "
+                f"are distinct terminal states. If the close was a mistake "
+                f"and the work shouldn't have been done, supersede with a new "
+                f"task explaining the wont_do decision."
+            )
+        if bool(row["stale"]):
+            raise InvariantError(
+                f"REFUSED: T{task_id} is stale -- it has unreconciled upstream "
+                f"changes. Reconcile (review + `reconcile`) first, then wont_do (T132)."
+            )
+        linked_stale = self._stale_linked_transitive(task_id)
+        if linked_stale:
+            id_list = ", ".join(f"T{uid}" for uid in linked_stale)
+            raise InvariantError(
+                f"REFUSED: T{task_id} is in a linked neighborhood with "
+                f"unreconciled stale task(s) {id_list}. Reconcile {id_list} "
+                f"first, then wont_do (T132)."
+            )
+        with self._mutate():
+            self.conn.execute(
+                "UPDATE tasks SET status = 'wont_do', wont_do_reason = ?, "
+                "updated_at = ? WHERE id = ?",
+                (reason.strip(), _now(), task_id),
+            )
+            self._record_transition(task_id, row["status"], "wont_do")
+        return WontDoResult(
+            task=self.get(task_id),
+            dependencies=self.dependencies_of(task_id),
+            dependents=self.dependents_of(task_id),
+        )
+
+    # ====================================================================
     # D13 - change (with cascade entry) -> D10
     # ====================================================================
     def edit(
@@ -784,22 +969,21 @@ class Core:
         stale+open (D10), then apply the edit, then return the now-stale set.
         ``delta`` (T117) is required and surfaces in the stale_alert envelope
         so reconcilers compare it against each link's `because` rationale."""
-        _require_delta(delta, "edit")
-        self.last_delta = delta.strip()
+        self._record_delta(delta, "edit")
         row = self._require_row(task_id)
-        # T118 / cascade-ergonomics C: closed tasks are frozen. Any change is a
-        # supersede (D25 / T92), not an edit. No "trivial fix" carve-out --
-        # the cost of a polluted history outweighs the cost of one unnecessary
-        # supersede, and edge `because` rationales pointing at closed tasks
-        # stay stable by construction once this rule is enforced.
-        if row["status"] == "closed":
+        # T118 / cascade-ergonomics C + T132: closed and wont_do tasks are
+        # frozen. Any change is a supersede (D25 / T92), not an edit. No
+        # "trivial fix" carve-out -- the cost of a polluted history outweighs
+        # the cost of one unnecessary supersede, and edge `because` rationales
+        # pointing at terminal tasks stay stable by construction.
+        if row["status"] in ("closed", "wont_do"):
             raise InvariantError(
-                f"REFUSED: T{task_id} is closed -- edit is not allowed on closed "
-                f"tasks (T118). Any change to a closed task's premise is a "
-                f"supersede: create a new task with the replacement content and "
-                f"call `supersede(T{task_id}, T<new>)`. Reopen+edit+close-again "
-                f"would log a misleading status transition; supersede captures "
-                f"the displacement honestly."
+                f"REFUSED: T{task_id} is {row['status']} -- edit is not allowed "
+                f"on terminal tasks (T118 / T132). Any change to a terminal "
+                f"task's premise is a supersede: create a new task with the "
+                f"replacement content and call `supersede(T{task_id}, T<new>)`. "
+                f"Reopen+edit+close-again would log a misleading status "
+                f"transition; supersede captures the displacement honestly."
             )
         if name is not None and not name.strip():
             raise ValidationError("task name cannot be set empty (D3/S1).")

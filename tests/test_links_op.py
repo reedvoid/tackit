@@ -12,10 +12,10 @@ def _set_kind(core, task_id, kind):
 
 
 def test_links_no_input_returns_anchor_layer(core):
-    core.add("d-slice")  # T1
-    core.add("s-slice")  # T2
-    core.add("prod task")  # T3
-    core.add("meta task")  # T4
+    core.add("d-slice", kind="production")  # T1
+    core.add("s-slice", kind="production")  # T2
+    core.add("prod task", kind="production")  # T3
+    core.add("meta task", kind="production")  # T4
     _set_kind(core, 1, "design")
     _set_kind(core, 2, "schema")
     _set_kind(core, 4, "meta")
@@ -24,8 +24,8 @@ def test_links_no_input_returns_anchor_layer(core):
 
 
 def test_links_no_input_respects_already_seen(core):
-    core.add("d1")  # T1
-    core.add("d2")  # T2
+    core.add("d1", kind="production")  # T1
+    core.add("d2", kind="production")  # T2
     _set_kind(core, 1, "design")
     _set_kind(core, 2, "design")
     anchors = core.links(already_seen=[1])
@@ -34,9 +34,9 @@ def test_links_no_input_respects_already_seen(core):
 
 def test_links_depth_one_returns_linked_minus_inputs(core):
     # T1 <-> T2, T1 <-> T3
-    core.add("a")  # T1
-    core.add("b")  # T2
-    core.add("c")  # T3
+    core.add("a", kind="production")  # T1
+    core.add("b", kind="production")  # T2
+    core.add("c", kind="production")  # T3
     core.link_add(1, 2, because="test fixture", delta="test")
     core.link_add(1, 3, because="test fixture", delta="test")
     result = core.links(ids=[1])
@@ -46,7 +46,7 @@ def test_links_depth_one_returns_linked_minus_inputs(core):
 def test_links_depth_one_multiple_inputs_unions(core):
     # Star: T1<->T2, T2<->T3, T3<->T4
     for n in "abcd":
-        core.add(n)
+        core.add(n, kind="production")
     core.link_add(1, 2, because="test fixture", delta="test")
     core.link_add(2, 3, because="test fixture", delta="test")
     core.link_add(3, 4, because="test fixture", delta="test")
@@ -57,9 +57,9 @@ def test_links_depth_one_multiple_inputs_unions(core):
 
 
 def test_links_excludes_already_seen(core):
-    core.add("a")  # T1
-    core.add("b")  # T2
-    core.add("c")  # T3
+    core.add("a", kind="production")  # T1
+    core.add("b", kind="production")  # T2
+    core.add("c", kind="production")  # T3
     core.link_add(1, 2, because="test fixture", delta="test")
     core.link_add(1, 3, because="test fixture", delta="test")
     # Caller has already judged T2; expansion from T1 must skip it.
@@ -68,7 +68,7 @@ def test_links_excludes_already_seen(core):
 
 
 def test_links_no_neighbors_returns_empty(core):
-    core.add("solitary")  # T1 -- no links
+    core.add("solitary", kind="production")  # T1 -- no links
     assert core.links(ids=[1]) == []
 
 
@@ -77,7 +77,7 @@ def test_links_iterative_walk_pattern(core):
     `already_seen` so each next call returns only the new frontier."""
     # Chain: T1 <-> T2 <-> T3 <-> T4
     for n in "abcd":
-        core.add(n)
+        core.add(n, kind="production")
     core.link_add(1, 2, because="test fixture", delta="test")
     core.link_add(2, 3, because="test fixture", delta="test")
     core.link_add(3, 4, because="test fixture", delta="test")

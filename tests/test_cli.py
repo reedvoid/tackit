@@ -26,7 +26,13 @@ def test_cli_init_creates_store(tmp_path, monkeypatch):
 
 def test_cli_load(cli, tmp_path, capsys):
     plan = tmp_path / "plan.txt"
-    plan.write_text("[a] first task\n[b] second task\n  depends_on: a\n")
+    plan.write_text(
+        "[a] first task\n"
+        "  kind: production\n"
+        "[b] second task\n"
+        "  kind: production\n"
+        "  depends_on: a\n"
+    )
     capsys.readouterr()
     assert main(["load", str(plan)]) == 0
     out = capsys.readouterr().out
@@ -38,7 +44,7 @@ def test_cli_load(cli, tmp_path, capsys):
 
 def test_cli_load_reports_new_labels_on_stderr(cli, tmp_path, capsys):
     plan = tmp_path / "p.txt"
-    plan.write_text("[a] one\n  labels: freshlabel\n")
+    plan.write_text("[a] one\n  kind: production\n  labels: freshlabel\n")
     capsys.readouterr()
     main(["load", str(plan)])
     err = capsys.readouterr().err
@@ -46,7 +52,7 @@ def test_cli_load_reports_new_labels_on_stderr(cli, tmp_path, capsys):
 
 
 def test_cli_add_and_show(cli, capsys):
-    assert main(["add", "parse FTS query", "--desc", "body"]) == 0
+    assert main(["add", "parse FTS query", "--kind", "production", "--desc", "body"]) == 0
     capsys.readouterr()
     assert main(["show", "1"]) == 0
     out = capsys.readouterr().out
@@ -55,14 +61,14 @@ def test_cli_add_and_show(cli, capsys):
 
 def test_cli_add_json_output(cli, capsys):
     capsys.readouterr()
-    assert main(["add", "json task", "--json"]) == 0
+    assert main(["add", "json task", "--kind", "production", "--json"]) == 0
     data = json.loads(capsys.readouterr().out)
     assert data["task"]["name"] == "json task"
 
 
 def test_cli_edit_surfaces_stale_on_stderr(cli, capsys):
-    main(["add", "base"])
-    main(["add", "dep"])
+    main(["add", "base", "--kind", "production"])
+    main(["add", "dep", "--kind", "production"])
     main(["link", "add", "2", "1", "--because", "test", "--delta", "test"])
     capsys.readouterr()
     assert main(["edit", "1", "--desc", "changed", "--delta", "test"]) == 0
@@ -71,8 +77,8 @@ def test_cli_edit_surfaces_stale_on_stderr(cli, capsys):
 
 
 def test_cli_close_stale_refused_exit_1(cli, capsys):
-    main(["add", "base"])
-    main(["add", "dep"])
+    main(["add", "base", "--kind", "production"])
+    main(["add", "dep", "--kind", "production"])
     main(["link", "add", "2", "1", "--because", "test", "--delta", "test"])
     main(["edit", "1", "--desc", "x", "--delta", "test"])
     capsys.readouterr()
@@ -81,7 +87,7 @@ def test_cli_close_stale_refused_exit_1(cli, capsys):
 
 
 def test_cli_close_clean_succeeds(cli):
-    main(["add", "a"])
+    main(["add", "a", "--kind", "production"])
     assert main(["close", "1"]) == 0
 
 
@@ -91,22 +97,22 @@ def test_cli_not_found_exit_1(cli, capsys):
 
 
 def test_cli_empty_name_exit_1(cli):
-    assert main(["add", "   "]) == 1
+    assert main(["add", "   ", "--kind", "production"]) == 1
 
 
 def test_cli_dep_add_reverse_args_is_idempotent(cli):
     # Under v0.3.0 symmetric semantics (T86), "1 -> 2" and "2 -> 1" are the
     # same link {1, 2}; reversed arguments hit the same canonical row and the
     # second dep_add is a successful no-op (exit 0), not a cycle refusal.
-    main(["add", "a"])
-    main(["add", "b"])
+    main(["add", "a", "--kind", "production"])
+    main(["add", "b", "--kind", "production"])
     main(["link", "add", "1", "2", "--because", "test", "--delta", "test"])
     assert main(["link", "add", "2", "1", "--because", "test", "--delta", "test"]) == 0  # idempotent, exit 0
 
 
 def test_cli_ls_status_filter(cli, capsys):
-    main(["add", "a", "--label", "x"])
-    main(["add", "b", "--label", "y"])
+    main(["add", "a", "--kind", "production", "--label", "x"])
+    main(["add", "b", "--kind", "production", "--label", "y"])
     main(["close", "2"])
     capsys.readouterr()
     main(["ls", "--status", "open"])
@@ -115,8 +121,8 @@ def test_cli_ls_status_filter(cli, capsys):
 
 
 def test_cli_search_ranks(cli, capsys):
-    main(["add", "rotate JWT signing keys"])
-    main(["add", "unrelated colour palette"])
+    main(["add", "rotate JWT signing keys", "--kind", "production"])
+    main(["add", "unrelated colour palette", "--kind", "production"])
     capsys.readouterr()
     main(["search", "JWT"])
     out = capsys.readouterr().out
@@ -124,14 +130,14 @@ def test_cli_search_ranks(cli, capsys):
 
 
 def test_cli_label_add_then_rm(cli):
-    main(["add", "a"])
+    main(["add", "a", "--kind", "production"])
     assert main(["label", "add", "1", "tag"]) == 0
     assert main(["label", "rm", "1", "tag"]) == 0
 
 
 def test_cli_new_label_nudge_on_stderr(cli, capsys):
-    main(["add", "a", "--label", "existing"])
-    main(["add", "b"])
+    main(["add", "a", "--kind", "production", "--label", "existing"])
+    main(["add", "b", "--kind", "production"])
     capsys.readouterr()
     assert main(["label", "add", "2", "brandnew"]) == 0
     err = capsys.readouterr().err
@@ -139,8 +145,8 @@ def test_cli_new_label_nudge_on_stderr(cli, capsys):
 
 
 def test_cli_reopen_then_reconcile_clears_worklist(cli, capsys):
-    main(["add", "base"])
-    main(["add", "dep"])
+    main(["add", "base", "--kind", "production"])
+    main(["add", "dep", "--kind", "production"])
     main(["link", "add", "2", "1", "--because", "test", "--delta", "test"])
     main(["close", "2"])
     main(["reopen", "2"])
@@ -154,7 +160,7 @@ def test_cli_reopen_then_reconcile_clears_worklist(cli, capsys):
 def test_cli_render_markdown(cli, capsys):
     # Use a non-reserved label string -- design/schema/production/meta are reserved
     # for the kind property since T84 (D26).
-    main(["add", "thing", "--desc", "body text", "--label", "spec"])
+    main(["add", "thing", "--kind", "production", "--desc", "body text", "--label", "spec"])
     capsys.readouterr()
     main(["render", "--label", "spec"])
     out = capsys.readouterr().out
@@ -162,7 +168,7 @@ def test_cli_render_markdown(cli, capsys):
 
 
 def test_cli_history(cli, capsys):
-    main(["add", "a"])
+    main(["add", "a", "--kind", "production"])
     main(["close", "1"])
     capsys.readouterr()
     main(["history", "1"])
@@ -170,7 +176,7 @@ def test_cli_history(cli, capsys):
 
 
 def test_cli_status_export_import(cli, capsys):
-    main(["add", "a"])
+    main(["add", "a", "--kind", "production"])
     capsys.readouterr()
     assert main(["status"]) == 0
     assert "version" in capsys.readouterr().out.lower()
@@ -179,7 +185,7 @@ def test_cli_status_export_import(cli, capsys):
 
 
 def test_cli_restore_list_empty(cli, capsys):
-    main(["add", "a"])
+    main(["add", "a", "--kind", "production"])
     capsys.readouterr()
     assert main(["restore", "--list"]) == 0
     assert "backup" in capsys.readouterr().out.lower()
@@ -193,14 +199,14 @@ def test_cli_setup_emits_install_steps(cli, capsys):
 
 
 def test_cli_dep_rm(cli):
-    main(["add", "a"])
-    main(["add", "b"])
+    main(["add", "a", "--kind", "production"])
+    main(["add", "b", "--kind", "production"])
     main(["link", "add", "2", "1", "--because", "test", "--delta", "test"])
     assert main(["link", "rm", "2", "1", "--delta", "test"]) == 0
 
 
 def test_cli_restore_by_index(cli, capsys):
-    main(["add", "a"])
+    main(["add", "a", "--kind", "production"])
     main(["import", "--force"])  # the override path snapshots the db into backups/
     capsys.readouterr()
     main(["restore", "--list"])
@@ -211,7 +217,7 @@ def test_cli_restore_by_index(cli, capsys):
 
 
 def test_cli_restore_bad_backup_exit_1(cli, capsys):
-    main(["add", "a"])
+    main(["add", "a", "--kind", "production"])
     main(["import", "--force"])
     capsys.readouterr()
     assert main(["restore", "--backup", "no-such-backup"]) == 1
@@ -223,8 +229,8 @@ def test_cli_no_store_fails_loud(tmp_path, monkeypatch):
 
 
 def test_cli_board_groups_and_shows_edges(cli, capsys):
-    main(["add", "base"])
-    main(["add", "dep"])
+    main(["add", "base", "--kind", "production"])
+    main(["add", "dep", "--kind", "production"])
     main(["link", "add", "2", "1", "--because", "test", "--delta", "test"])
     main(["close", "1"])
     capsys.readouterr()
@@ -237,8 +243,8 @@ def test_cli_board_groups_and_shows_edges(cli, capsys):
 
 
 def test_cli_board_stale_filter(cli, capsys):
-    main(["add", "base"])
-    main(["add", "dep"])
+    main(["add", "base", "--kind", "production"])
+    main(["add", "dep", "--kind", "production"])
     main(["link", "add", "2", "1", "--because", "test", "--delta", "test"])
     main(["edit", "1", "--desc", "x", "--delta", "test"])  # stales T2
     capsys.readouterr()
@@ -249,8 +255,8 @@ def test_cli_board_stale_filter(cli, capsys):
 
 
 def test_cli_labels(cli, capsys):
-    main(["add", "thing", "--label", "core"])
-    main(["add", "other", "--label", "core"])
+    main(["add", "thing", "--kind", "production", "--label", "core"])
+    main(["add", "other", "--kind", "production", "--label", "core"])
     capsys.readouterr()
     assert main(["labels"]) == 0
     out = capsys.readouterr().out
@@ -258,8 +264,8 @@ def test_cli_labels(cli, capsys):
 
 
 def test_cli_stale_lists_nonempty_worklist(cli, capsys):
-    main(["add", "base"])
-    main(["add", "dep"])
+    main(["add", "base", "--kind", "production"])
+    main(["add", "dep", "--kind", "production"])
     main(["link", "add", "2", "1", "--because", "test", "--delta", "test"])
     main(["edit", "1", "--desc", "x", "--delta", "test"])  # stales T2
     capsys.readouterr()
@@ -269,7 +275,7 @@ def test_cli_stale_lists_nonempty_worklist(cli, capsys):
 
 
 def test_cli_edit_no_dependents(cli, capsys):
-    main(["add", "solo"])
+    main(["add", "solo", "--kind", "production"])
     capsys.readouterr()
     assert main(["edit", "1", "--desc", "changed", "--delta", "test"]) == 0
     assert "no dependents" in capsys.readouterr().out.lower()
@@ -278,7 +284,7 @@ def test_cli_edit_no_dependents(cli, capsys):
 def test_cli_restore_by_filename(cli, capsys):
     import re
 
-    main(["add", "a"])
+    main(["add", "a", "--kind", "production"])
     main(["import", "--force"])
     capsys.readouterr()
     main(["restore", "--list"])

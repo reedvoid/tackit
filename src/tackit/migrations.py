@@ -77,6 +77,29 @@ def _mig_004_add_because_column(conn: sqlite3.Connection) -> None:
     )
 
 
+def _mig_005_add_wont_do_status_and_reason(conn: sqlite3.Connection) -> None:
+    """T132 / 2026-06-01 -- add 'wont_do' as a third terminal status,
+    distinct from 'closed' (which was overloaded between 'work done' and
+    'scope dropped, never doing this'). Adds the wont_do_reason TEXT column
+    (nullable in DDL; the op layer enforces non-null on wont_do rows so the
+    decision-not-to-do always carries a durable rationale). Extends the
+    tasks.status CHECK to include 'wont_do' via the writable_schema pragma
+    -- the SQLite escape hatch for adding to a CHECK enum without the
+    heavyweight 12-step table rebuild. The pragma path is safe for this
+    narrow case (string-replace inside a known CHECK clause) and avoids
+    touching FK and FTS5 triggers."""
+    conn.execute("ALTER TABLE tasks ADD COLUMN wont_do_reason TEXT;")
+    old_check = "CHECK (status IN ('open', 'closed'))"
+    new_check = "CHECK (status IN ('open', 'closed', 'wont_do'))"
+    conn.execute("PRAGMA writable_schema=ON;")
+    conn.execute(
+        "UPDATE sqlite_master SET sql = REPLACE(sql, ?, ?) "
+        "WHERE type='table' AND name='tasks';",
+        (old_check, new_check),
+    )
+    conn.execute("PRAGMA writable_schema=OFF;")
+
+
 def _mig_003_dependencies_to_links_symmetric(conn: sqlite3.Connection) -> None:
     """T86 / D5 / D27 -- rebuild the directional `dependencies` table as the
     symmetric `links` table. Each existing (from_task, to_task) edge becomes
@@ -123,6 +146,11 @@ MIGRATIONS: list[Migration] = [
         target_version=5,
         name="add S3.because rationale column (T116 / cascade-ergonomics A)",
         migrate=_mig_004_add_because_column,
+    ),
+    Migration(
+        target_version=6,
+        name="add S1.wont_do_reason column + extend status CHECK (T132)",
+        migrate=_mig_005_add_wont_do_status_and_reason,
     ),
 ]
 

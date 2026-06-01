@@ -170,7 +170,13 @@ def _cmd_init(args) -> int:
 
 def _cmd_add(args) -> int:
     with _core_session() as core:
-        task = core.add(args.name, description=args.desc or "", labels=args.label, deps=args.dep)
+        task = core.add(
+            args.name,
+            kind=args.kind,
+            description=args.desc or "",
+            labels=args.label,
+            deps=args.dep,
+        )
         _emit("created " + _fmt_slice(core.show(task.id)), _dump(core.show(task.id)), args.json)
     return 0
 
@@ -229,10 +235,37 @@ def _cmd_close(args) -> int:
     return 0
 
 
+def _cmd_wont_do(args) -> int:
+    with _core_session() as core:
+        result = core.wont_do(args.id, reason=args.reason, delta=args.delta)
+        text = [
+            f"marked wont_do " + _fmt_task(result.task),
+            f"  reason: {result.task.wont_do_reason}",
+            "  review obligations (one hop):",
+        ]
+        text += _fmt_neighbors("depends on", result.dependencies)
+        text += _fmt_neighbors("depended on by", result.dependents)
+        _emit("\n".join(text), _dump(result), args.json)
+    return 0
+
+
 def _cmd_reopen(args) -> int:
     with _core_session() as core:
         t = core.reopen(args.id)
         _emit("reopened " + _fmt_task(t), _dump(t), args.json)
+    return 0
+
+
+def _cmd_reclassify(args) -> int:
+    with _core_session() as core:
+        result = core.reclassify(args.id, args.kind, delta=args.delta)
+        text = [f"reclassified " + _fmt_task(result.task) + f" -> kind={result.task.kind}"]
+        if result.newly_stale:
+            text.append("  ⚠ now STALE (review/reconcile these dependents):")
+            text += [f"    - T{n.id} {n.name}" for n in result.newly_stale]
+        else:
+            text.append("  no dependents to review.")
+        _emit("\n".join(text), _dump(result), args.json)
     return 0
 
 
@@ -428,6 +461,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = add("add", _cmd_add, "create a task (D3)")
     sp.add_argument("name")
+    sp.add_argument(
+        "--kind",
+        required=True,
+        choices=list(("design", "schema", "production", "meta")),
+        help="task kind (D26 / T94): design (decision slice), schema (store shape), "
+        "production (alters running-app behavior), meta (bookkeeping/experiments). "
+        "Classify by the 'alters app behavior' rule.",
+    )
     sp.add_argument("--desc", default="", help="task description/body")
     sp.add_argument("--label", action="append", default=[], help="attach a label (repeatable, D4)")
     sp.add_argument("--dep", action="append", type=int, default=[], help="depends_on this id (repeatable, D5)")
@@ -457,11 +498,46 @@ def build_parser() -> argparse.ArgumentParser:
     sp = add("close", _cmd_close, "close (refused if stale) + print neighbors (D12/D14)")
     sp.add_argument("id", type=int)
 
-    sp = add("reopen", _cmd_reopen, "closed -> open, logged (D7/D8)")
+    sp = add("reopen", _cmd_reopen, "closed -> open, logged (D7/D8); refused on wont_do (T132)")
     sp.add_argument("id", type=int)
+
+    sp = add(
+        "wont-do",
+        _cmd_wont_do,
+        "mark task as decided-not-to-do; locked forever, distinct from closed (T132)",
+    )
+    sp.add_argument("id", type=int)
+    sp.add_argument(
+        "--reason",
+        required=True,
+        help="durable rationale for not doing this task (persists forever)",
+    )
+    sp.add_argument(
+        "--delta",
+        required=True,
+        help="one-sentence semantic-change description (T117)",
+    )
 
     sp = add("reconcile", _cmd_reconcile, "clear stale without changing (reviewed-OK, D11)")
     sp.add_argument("id", type=int)
+
+    sp = add(
+        "reclassify",
+        _cmd_reclassify,
+        "change a task's kind (T128); refuses if it would create cross-kind link",
+    )
+    sp.add_argument("id", type=int)
+    sp.add_argument(
+        "--kind",
+        required=True,
+        choices=list(("design", "schema", "production", "meta")),
+        help="new kind (D26 / T128)",
+    )
+    sp.add_argument(
+        "--delta",
+        required=True,
+        help="one-sentence semantic-change description (T117 / T124)",
+    )
 
     sp = add("link", _cmd_link, "add/remove a symmetric link (D5)")
     link_sub = sp.add_subparsers(dest="link_action", required=True)

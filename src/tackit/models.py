@@ -15,8 +15,10 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-# design.md D7 / schema.md S1: status is informational, open|closed only.
-Status = Literal["open", "closed"]
+# design.md D7 / schema.md S1: status is informational. T132 added 'wont_do' as
+# a third terminal status distinct from 'closed' -- 'closed' = work done;
+# 'wont_do' = decided not to do, locked forever per T118 semantics.
+Status = Literal["open", "closed", "wont_do"]
 
 # design.md D26 / schema.md S1: kind partitions the graph by "alters running app
 # behavior." Required at create (T94); the default here lets existing call sites
@@ -28,8 +30,12 @@ Kind = Literal["design", "schema", "production", "meta"]
 class Task(BaseModel):
     """S1 `tasks` row. The atomic item; every view is derived from it.
 
-    Invariant (D7/D14): ``stale=True`` implies ``status="open"``. Enforced in
-    core logic and re-checked here so a malformed row can never round-trip.
+    T123 (2026-06-01): the v0.2.0 invariant ``stale=True => status='open'`` is
+    retired. Cascade-staling no longer force-opens closed neighbors -- a closed
+    task can carry ``stale=True`` to signal "an upstream changed; review for
+    supersede / link migration" while remaining closed and immutable per T118.
+    The Pydantic validator is gone; both (open, stale) and (closed, stale) are
+    valid.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -41,15 +47,9 @@ class Task(BaseModel):
     status: Status = "open"
     stale: bool = False
     superseded_by: Optional[int] = None  # D25 / T85: nullable FK to tasks.id
+    wont_do_reason: Optional[str] = None  # T132: non-null iff status='wont_do'
     created_at: datetime
     updated_at: datetime
-
-    @field_validator("stale")
-    @classmethod
-    def _stale_implies_open(cls, v: bool, info):  # D7 invariant: stale => open
-        if v and info.data.get("status") == "closed":
-            raise ValueError("invariant violated: stale=True requires status='open' (D7)")
-        return v
 
 
 class NeighborRef(BaseModel):
@@ -89,6 +89,19 @@ class CloseResult(BaseModel):
     dependents: list[NeighborRef]
 
 
+class WontDoResult(BaseModel):
+    """T132 / 2026-06-01 - wont_do obligation payload. Mirrors CloseResult
+    shape (task + one-hop neighbors) since both are terminal-status verbs
+    returning the same review obligation. wont_do does NOT fire the staling
+    cascade (status change, not content edit; symmetric with close)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    task: Task
+    dependencies: list[NeighborRef]
+    dependents: list[NeighborRef]
+
+
 class ChangeResult(BaseModel):
     """D13 - change cascade-entry payload. Editing a task that others depend on
     marks those dependents stale+open (D10) and returns the now-stale set."""
@@ -100,14 +113,18 @@ class ChangeResult(BaseModel):
 
 
 class SupersedeResult(BaseModel):
-    """D25 / T92 - supersede payload. Marks ``old`` as superseded by ``by``;
-    returns BOTH slices so the agent reviews the relationship without an extra
-    fetch. supersede does NOT auto-close ``old`` (separate decision, T101)."""
+    """D25 / T92 / T124 - supersede payload. Marks ``old`` as superseded by
+    ``by`` and FIRES the staling cascade on ``old``'s direct linked neighbors
+    (T124). Returns BOTH slices so the agent reviews the relationship without
+    an extra fetch, plus ``newly_stale`` -- the cascade obligation list, mirror
+    of ChangeResult.newly_stale. supersede does NOT auto-close ``old`` (separate
+    decision, T101)."""
 
     model_config = ConfigDict(extra="forbid")
 
     old: Slice
     by: Slice
+    newly_stale: list[NeighborRef] = []  # T124: old's linked neighbors, now stale
 
 
 class StatusTransition(BaseModel):

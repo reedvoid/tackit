@@ -10,14 +10,17 @@ from tackit.plan import parse_plan
 PLAN = """\
 # a small plan
 [base] Build the base thing
+  kind: production
   labels: core
 
 [mid] Build the middle thing
+  kind: production
   desc: sits on the base
   labels: core, feature
   depends_on: base
 
 [top] Build the top thing
+  kind: production
   depends_on: mid, base
 """
 
@@ -37,6 +40,7 @@ def test_parse_multiline_desc_folds_continuations():
     # Deeper-indented lines after `desc:` are continuation lines, joined with \n.
     plan = (
         "[a] Task A\n"
+        "  kind: production\n"
         "  desc: First paragraph of the body.\n"
         "    Second paragraph, its own line.\n"
         "    Third paragraph.\n"
@@ -54,9 +58,11 @@ def test_parse_multiline_desc_folds_continuations():
 def test_parse_multiline_desc_block_ends_at_next_key():
     plan = (
         "[a] Task A\n"
+        "  kind: production\n"
         "  desc: line one\n"
         "    line two\n"
         "[b] Task B\n"
+        "  kind: production\n"
         "  desc: just me\n"
     )
     specs = parse_plan(plan)
@@ -67,27 +73,41 @@ def test_parse_multiline_desc_block_ends_at_next_key():
 def test_parse_multiline_desc_block_ends_at_blank_line():
     # A blank line terminates the desc block; an equal-indent garbage line after it
     # is no longer a continuation and so still fails loud.
-    plan = "[a] Task A\n  desc: line one\n    line two\n\n  loose garbage\n"
+    plan = (
+        "[a] Task A\n"
+        "  kind: production\n"
+        "  desc: line one\n"
+        "    line two\n"
+        "\n"
+        "  loose garbage\n"
+    )
     with pytest.raises(ValidationError):
         parse_plan(plan)
 
 
 def test_parse_multiline_desc_at_eof():
-    specs = parse_plan("[a] Task A\n  desc: line one\n    line two\n")
+    specs = parse_plan(
+        "[a] Task A\n  kind: production\n  desc: line one\n    line two\n"
+    )
     assert specs[0]["desc"] == "line one\nline two"
 
 
 def test_parse_desc_continuation_may_contain_colon_word():
     # A continuation line that looks like `word:` is desc text, NOT a field — the
     # deeper-indent check wins, so it is not mistaken for an unknown field.
-    plan = "[a] Task A\n  desc: intro\n    note: this is still description\n"
+    plan = (
+        "[a] Task A\n"
+        "  kind: production\n"
+        "  desc: intro\n"
+        "    note: this is still description\n"
+    )
     specs = parse_plan(plan)
     assert specs[0]["desc"] == "intro\nnote: this is still description"
 
 
 def test_parse_empty_desc_line_then_continuation():
     # `desc:` with no inline value, then continuation lines.
-    plan = "[a] Task A\n  desc:\n    only paragraph\n"
+    plan = "[a] Task A\n  kind: production\n  desc:\n    only paragraph\n"
     specs = parse_plan(plan)
     assert specs[0]["desc"] == "only paragraph"
 
@@ -124,7 +144,7 @@ def test_load_creates_tasks_and_edges(core):
 
 def test_load_unknown_dep_key_fails_before_mutating(core):
     with pytest.raises(ValidationError):
-        core.load(parse_plan("[a] one\n  depends_on: nope\n"))
+        core.load(parse_plan("[a] one\n  kind: production\n  depends_on: nope\n"))
     assert core.ls() == []  # nothing created (validated before the transaction)
 
 
@@ -134,7 +154,10 @@ def test_load_mutual_depends_on_creates_single_link(core):
     # the canonical pair once (no cycle to refuse). The plan parser still
     # accepts the v0.2.0 `depends_on:` keyword; T113 updates D24 prose to use
     # `links:` and tightens the parser.
-    cyc = "[a] one\n  depends_on: b\n[b] two\n  depends_on: a\n"
+    cyc = (
+        "[a] one\n  kind: production\n  depends_on: b\n"
+        "[b] two\n  kind: production\n  depends_on: a\n"
+    )
     core.load(parse_plan(cyc))
     assert [t.id for t in core.ls()] == [1, 2]
     n = core.conn.execute("SELECT COUNT(*) FROM links").fetchone()[0]
@@ -148,9 +171,12 @@ def test_load_is_a_single_version_bump(core):
 
 
 def test_load_reports_new_labels(core):  # T67 anti-sprawl summary
-    core.add("seed", labels=["existing"])
+    core.add("seed", kind="production", labels=["existing"])
     core.last_label_nudge = None
-    core.load(parse_plan("[a] one\n  labels: existing, brandnew\n[b] two\n  labels: another\n"))
+    core.load(parse_plan(
+        "[a] one\n  kind: production\n  labels: existing, brandnew\n"
+        "[b] two\n  kind: production\n  labels: another\n"
+    ))
     assert core.last_label_nudge is not None
     assert "brandnew" in core.last_label_nudge and "another" in core.last_label_nudge
     assert "existing" not in core.last_label_nudge  # already existed -> not reported as new

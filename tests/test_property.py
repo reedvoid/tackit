@@ -63,7 +63,7 @@ class TackitMachine(RuleBasedStateMachine):
 
     @rule(name=_names)
     def add(self, name):
-        t = self.core.add(name)
+        t = self.core.add(name, kind="production")
         self.ids.append(t.id)
 
     @precondition(lambda self: self.ids)
@@ -113,10 +113,15 @@ class TackitMachine(RuleBasedStateMachine):
     # ---- invariants (checked after every rule) ----
 
     @invariant()
-    def stale_implies_open(self):
-        for t in self.core.ls():
-            if t.stale:
-                assert t.status == "open", f"T{t.id} is stale but {t.status}"
+    def stale_neighbor_was_linked_or_marked(self):
+        """T123 (2026-06-01) retired the v0.2.0 'stale => open' invariant. A
+        closed task may now carry stale=True (cascade-staling no longer
+        force-opens closed neighbors per the relaxed D7). This invariant has
+        been removed; closed-stale is a valid state. We keep an empty hook
+        here as a marker so the removed invariant's intent is recorded in
+        the property suite."""
+        # Intentionally empty: no invariant on (stale, status) under T123.
+        return
 
     @invariant()
     def version_never_decreases(self):

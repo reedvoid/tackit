@@ -5,16 +5,20 @@ Format (no external dependency; the design.md D#/S# slices nearly conform):
 
     # comments and blank lines are ignored
     [token-endpoint] Build the auth token endpoint
+      kind: production
       labels: auth
 
     [key-rotation] Rotate JWT signing keys on the token endpoint
+      kind: production
       desc: replace the static signing key with rotating keys
       labels: auth, security
       depends_on: token-endpoint
 
-A ``[key] Name`` line starts a task; indented ``desc:`` / ``labels:`` /
-``depends_on:`` lines are its fields. ``depends_on`` references other keys in the same
-plan. Anything malformed fails loud (D2) before the store is touched.
+A ``[key] Name`` line starts a task; indented ``kind:`` / ``desc:`` / ``labels:`` /
+``depends_on:`` lines are its fields. ``kind`` is required (D26: design | schema |
+production | meta); a row missing it is refused, the whole import rolls back (T94).
+``depends_on`` references other keys in the same plan. Anything malformed fails loud
+(D2) before the store is touched.
 
 Multi-line ``desc``: a ``desc:`` field may span several lines. Lines indented
 *deeper* than the ``desc:`` keyword are **continuation lines** of the description;
@@ -37,10 +41,11 @@ from __future__ import annotations
 import re
 
 from .errors import ValidationError
+from .schema import KIND_VALUES
 
 _KEY_LINE = re.compile(r"^\[([A-Za-z0-9_.-]+)\]\s*(.*)$")
 _FIELD_LINE = re.compile(r"^\s+([A-Za-z_]+):\s*(.*)$")
-_FIELDS = {"desc", "labels", "depends_on"}
+_FIELDS = {"kind", "desc", "labels", "depends_on"}
 
 
 def _split_csv(value: str) -> list[str]:
@@ -91,7 +96,14 @@ def parse_plan(text: str) -> list[dict]:
             if key in seen_keys:
                 raise ValidationError(f"plan line {lineno}: duplicate key '{key}'.")
             seen_keys.add(key)
-            current = {"key": key, "name": name, "desc": "", "labels": [], "depends_on": []}
+            current = {
+                "key": key,
+                "name": name,
+                "kind": None,
+                "desc": "",
+                "labels": [],
+                "depends_on": [],
+            }
             items.append(current)
             continue
         field_match = _FIELD_LINE.match(raw)
@@ -103,9 +115,18 @@ def parse_plan(text: str) -> list[dict]:
             if field not in _FIELDS:
                 raise ValidationError(
                     f"plan line {lineno}: unknown field '{field}' "
-                    f"(expected one of desc, labels, depends_on)."
+                    f"(expected one of kind, desc, labels, depends_on)."
                 )
-            if field == "desc":
+            if field == "kind":
+                # T94 / D26: validate per-row at parse time so a bad plan never
+                # touches the store. The op layer re-checks (defense in depth).
+                if value not in KIND_VALUES:
+                    raise ValidationError(
+                        f"plan line {lineno}: kind {value!r} is not valid; "
+                        f"must be one of {{{', '.join(KIND_VALUES)}}} (D26 / T94)."
+                    )
+                current["kind"] = value
+            elif field == "desc":
                 current["desc"] = value
                 desc_indent = indent  # subsequent deeper-indented lines continue it
             elif field == "labels":
@@ -116,4 +137,13 @@ def parse_plan(text: str) -> list[dict]:
         raise ValidationError(f"plan line {lineno}: cannot parse: {raw.strip()!r}")
     if not items:
         raise ValidationError("plan is empty (no [key] task lines found).")
+    # T94 / D26: every task must declare a kind. Refused after parse so the
+    # error names the specific [key] missing the field (vs a generic "kind
+    # required" at the op layer with no key context).
+    for item in items:
+        if item["kind"] is None:
+            raise ValidationError(
+                f"task '{item['key']}' is missing required `kind:` field. "
+                f"Add a `kind: <design|schema|production|meta>` line (D26 / T94)."
+            )
     return items

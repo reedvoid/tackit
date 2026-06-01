@@ -41,15 +41,18 @@ def test_mcp_registers_all_tools(tmp_path, monkeypatch):
         return [t.name for t in listing.tools]
 
     names = _drive(tmp_path, monkeypatch, scenario)
-    assert len(names) == 18
+    assert len(names) == 20  # T128: + reclassify; T132: + wont_do
     expected = {"add", "show", "search", "edit", "close", "reconcile", "link_add",
-                "stale", "labels", "load", "board"}
+                "stale", "labels", "load", "board", "reclassify", "wont_do"}
     assert expected <= set(names)
 
 
 def test_mcp_load(tmp_path, monkeypatch):
     async def scenario(s):
-        return await s.call_tool("load", {"plan": "[a] first\n[b] second\n  depends_on: a\n"})
+        return await s.call_tool(
+            "load",
+            {"plan": "[a] first\n  kind: production\n[b] second\n  kind: production\n  depends_on: a\n"},
+        )
 
     env = _envelope(_drive(tmp_path, monkeypatch, scenario))
     keymap = env["result"]["loaded"]
@@ -58,8 +61,8 @@ def test_mcp_load(tmp_path, monkeypatch):
 
 def test_mcp_board_returns_slices_with_edges(tmp_path, monkeypatch):
     async def scenario(s):
-        await s.call_tool("add", {"name": "base"})
-        await s.call_tool("add", {"name": "dep"})
+        await s.call_tool("add", {"name": "base", "kind": "production"})
+        await s.call_tool("add", {"name": "dep", "kind": "production"})
         await s.call_tool("link_add", {"a": 2, "b": 1, "because": "test fixture", "delta": "test"})
         return await s.call_tool("board", {"status": "open"})
 
@@ -72,7 +75,7 @@ def test_mcp_board_returns_slices_with_edges(tmp_path, monkeypatch):
 
 def test_mcp_success_wraps_result_in_envelope(tmp_path, monkeypatch):
     async def scenario(s):
-        await s.call_tool("add", {"name": "base"})
+        await s.call_tool("add", {"name": "base", "kind": "production"})
         return await s.call_tool("show", {"id": 1})
 
     env = _envelope(_drive(tmp_path, monkeypatch, scenario))
@@ -84,8 +87,8 @@ def test_mcp_success_wraps_result_in_envelope(tmp_path, monkeypatch):
 
 def test_mcp_label_nudge_on_new_label(tmp_path, monkeypatch):
     async def scenario(s):
-        await s.call_tool("add", {"name": "a", "labels": ["existing"]})
-        await s.call_tool("add", {"name": "b"})  # T2
+        await s.call_tool("add", {"name": "a", "kind": "production", "labels": ["existing"]})
+        await s.call_tool("add", {"name": "b", "kind": "production"})  # T2
         return await s.call_tool("label_add", {"id": 2, "label": "brandnew"})
 
     env = _envelope(_drive(tmp_path, monkeypatch, scenario))
@@ -95,8 +98,8 @@ def test_mcp_label_nudge_on_new_label(tmp_path, monkeypatch):
 
 def test_mcp_stale_alert_rides_in_envelope(tmp_path, monkeypatch):
     async def scenario(s):
-        await s.call_tool("add", {"name": "base"})
-        await s.call_tool("add", {"name": "dep"})
+        await s.call_tool("add", {"name": "base", "kind": "production"})
+        await s.call_tool("add", {"name": "dep", "kind": "production"})
         await s.call_tool("link_add", {"a": 2, "b": 1, "because": "test fixture", "delta": "test"})
         return await s.call_tool("edit", {"id": 1, "description": "x", "delta": "test edit"})  # stales T2
 
@@ -108,8 +111,8 @@ def test_mcp_stale_alert_rides_in_envelope(tmp_path, monkeypatch):
 
 def test_mcp_close_stale_refusal_is_error(tmp_path, monkeypatch):
     async def scenario(s):
-        await s.call_tool("add", {"name": "base"})
-        await s.call_tool("add", {"name": "dep"})
+        await s.call_tool("add", {"name": "base", "kind": "production"})
+        await s.call_tool("add", {"name": "dep", "kind": "production"})
         await s.call_tool("link_add", {"a": 2, "b": 1, "because": "test fixture", "delta": "test"})
         await s.call_tool("edit", {"id": 1, "description": "x", "delta": "test edit"})  # stales T2
         return await s.call_tool("close", {"id": 2})
@@ -121,10 +124,10 @@ def test_mcp_close_stale_refusal_is_error(tmp_path, monkeypatch):
 
 def test_mcp_dependency_aware_gate(tmp_path, monkeypatch):
     async def scenario(s):
-        await s.call_tool("add", {"name": "base"})  # T1
-        await s.call_tool("add", {"name": "mid"})  # T2
+        await s.call_tool("add", {"name": "base", "kind": "production"})  # T1
+        await s.call_tool("add", {"name": "mid", "kind": "production"})  # T2
         await s.call_tool("link_add", {"a": 2, "b": 1, "because": "test fixture", "delta": "test"})
-        await s.call_tool("add", {"name": "top"})  # T3
+        await s.call_tool("add", {"name": "top", "kind": "production"})  # T3
         await s.call_tool("link_add", {"a": 3, "b": 2, "because": "test fixture", "delta": "test"})
         await s.call_tool("edit", {"id": 1, "description": "x", "delta": "test edit"})  # stales T2
         return await s.call_tool("close", {"id": 3})  # T3 depends on stale T2
@@ -136,8 +139,8 @@ def test_mcp_dependency_aware_gate(tmp_path, monkeypatch):
 
 def test_mcp_search_returns_ranked_hits(tmp_path, monkeypatch):
     async def scenario(s):
-        await s.call_tool("add", {"name": "rotate JWT signing keys"})
-        await s.call_tool("add", {"name": "unrelated palette"})
+        await s.call_tool("add", {"name": "rotate JWT signing keys", "kind": "production"})
+        await s.call_tool("add", {"name": "unrelated palette", "kind": "production"})
         return await s.call_tool("search", {"terms": "JWT"})
 
     env = _envelope(_drive(tmp_path, monkeypatch, scenario))
@@ -150,8 +153,8 @@ def test_mcp_remaining_tools_all_work(tmp_path, monkeypatch):
     # reconcile, ls, stale, render, history — each through the envelope.
     async def scenario(s):
         out = {}
-        await s.call_tool("add", {"name": "alpha widget"})  # T1
-        await s.call_tool("add", {"name": "beta widget"})  # T2
+        await s.call_tool("add", {"name": "alpha widget", "kind": "production"})  # T1
+        await s.call_tool("add", {"name": "beta widget", "kind": "production"})  # T2
         await s.call_tool("link_add", {"a": 2, "b": 1, "because": "test fixture", "delta": "test"})
         out["link_rm"] = _envelope(await s.call_tool("link_rm", {"a": 2, "b": 1, "delta": "test"}))
         await s.call_tool("label_add", {"id": 1, "label": "tag"})
@@ -175,8 +178,8 @@ def test_mcp_remaining_tools_all_work(tmp_path, monkeypatch):
 
 def test_mcp_labels(tmp_path, monkeypatch):
     async def scenario(s):
-        await s.call_tool("add", {"name": "a", "labels": ["core"]})
-        await s.call_tool("add", {"name": "b", "labels": ["core", "docs"]})
+        await s.call_tool("add", {"name": "a", "kind": "production", "labels": ["core"]})
+        await s.call_tool("add", {"name": "b", "kind": "production", "labels": ["core", "docs"]})
         return await s.call_tool("labels", {})
 
     env = _envelope(_drive(tmp_path, monkeypatch, scenario))

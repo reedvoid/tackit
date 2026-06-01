@@ -5,7 +5,7 @@ schema doc. Acyclicity (S3) and the stale=>open invariant (S1) are NOT expressed
 in DDL -- they live in core logic (D14/D7), as the doc notes.
 """
 
-SCHEMA_VERSION = "5"
+SCHEMA_VERSION = "6"
 
 # D26 task kind taxonomy. The four values are also reserved label strings (D14):
 # label_add / load refuse a label equal to any of them, because S1.kind absorbs
@@ -17,15 +17,16 @@ RESERVED_LABELS = KIND_VALUES
 # The atomic item; single source of truth a task's every view is derived from.
 S1_TASKS = """
 CREATE TABLE IF NOT EXISTS tasks (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    name          TEXT    NOT NULL,
-    description   TEXT    NOT NULL DEFAULT '',
-    kind          TEXT    NOT NULL DEFAULT 'production' CHECK (kind IN ('design', 'schema', 'production', 'meta')),
-    status        TEXT    NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'closed')),
-    stale         INTEGER NOT NULL DEFAULT 0 CHECK (stale IN (0, 1)),
-    superseded_by INTEGER REFERENCES tasks(id) CHECK (superseded_by IS NULL OR superseded_by <> id),
-    created_at    TEXT    NOT NULL,
-    updated_at    TEXT    NOT NULL
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    name            TEXT    NOT NULL,
+    description     TEXT    NOT NULL DEFAULT '',
+    kind            TEXT    NOT NULL DEFAULT 'production' CHECK (kind IN ('design', 'schema', 'production', 'meta')),
+    status          TEXT    NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'closed', 'wont_do')),
+    stale           INTEGER NOT NULL DEFAULT 0 CHECK (stale IN (0, 1)),
+    superseded_by   INTEGER REFERENCES tasks(id) CHECK (superseded_by IS NULL OR superseded_by <> id),
+    wont_do_reason  TEXT,
+    created_at      TEXT    NOT NULL,
+    updated_at      TEXT    NOT NULL
 );
 """
 

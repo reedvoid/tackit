@@ -17,8 +17,8 @@ def test_d19_alert_empty_when_nothing_stale():
 
 
 def test_d19_alert_names_tasks_and_required_action(core):
-    core.add("base")  # T1
-    core.add("dep")  # T2
+    core.add("base", kind="production")  # T1
+    core.add("dep", kind="production")  # T2
     core.link_add(2, 1, because="test fixture", delta="test")
     core.edit(1, description="x", delta="test")  # stales T2
     stale = core.stale_worklist()
@@ -33,10 +33,10 @@ def test_d19_alert_names_tasks_and_required_action(core):
 
 
 def test_d19_alert_lists_all_stale_in_id_order(core):
-    core.add("base")  # T1
-    core.add("d2")
+    core.add("base", kind="production")  # T1
+    core.add("d2", kind="production")
     core.link_add(2, 1, because="test fixture", delta="test")
-    core.add("d3")
+    core.add("d3", kind="production")
     core.link_add(3, 1, because="test fixture", delta="test")
     core.edit(1, description="x", delta="test")  # stales T2 and T3
     payload = stale_alert_payload(core.stale_worklist())
@@ -45,10 +45,10 @@ def test_d19_alert_lists_all_stale_in_id_order(core):
 
 def test_d14_close_refused_when_upstream_transitively_stale(core):
     # chain T3 -> T2 -> T1 ; editing T1 stales its DIRECT dependent T2 only.
-    core.add("base")  # T1
-    core.add("mid")
+    core.add("base", kind="production")  # T1
+    core.add("mid", kind="production")
     core.link_add(2, 1, because="test fixture", delta="test")  # T2 depends_on T1
-    core.add("top")
+    core.add("top", kind="production")
     core.link_add(3, 2, because="test fixture", delta="test")  # T3 depends_on T2
     core.edit(1, description="x", delta="test")  # stales T2 (one hop)
     assert core.get(3).stale is False  # T3 itself is NOT stale (non-transitive)
@@ -59,19 +59,25 @@ def test_d14_close_refused_when_upstream_transitively_stale(core):
 
 
 def test_d14_close_allowed_when_upstream_clean(core):
-    core.add("base")  # T1
-    core.add("dep")
+    core.add("base", kind="production")  # T1
+    core.add("dep", kind="production")
     core.link_add(2, 1, because="test fixture", delta="test")  # T2 -> T1, nothing stale
     assert core.close(2).task.status == "closed"
 
 
-def test_d7_staling_closed_dependent_forces_open_and_logs(core):
-    core.add("base")  # T1
-    core.add("dep")
-    core.link_add(2, 1, because="test fixture", delta="test")  # T2 depends_on T1
+def test_d7_relaxed_staling_closed_dependent_stays_closed(core):
+    """T123 (2026-06-01): cascade-staling a closed neighbor no longer
+    force-opens it. The closed task carries stale=True with status='closed',
+    and no spurious closed->open transition is logged. Action menu on
+    closed-stale: reconcile / supersede / link_rm-link_add (edit still
+    refused per T118)."""
+    core.add("base", kind="production")  # T1
+    core.add("dep", kind="production")
+    core.link_add(2, 1, because="test fixture", delta="test")  # T2 linked to T1
     core.close(2)  # T2 closed
-    core.edit(1, description="x", delta="test")  # stales T2 -> must force it back open
+    core.edit(1, description="x", delta="test")  # stales T2 without force-reopen
     t2 = core.get(2)
-    assert t2.stale is True and t2.status == "open"  # invariant stale => open
+    assert t2.stale is True and t2.status == "closed"  # T123: stays closed
+    # Status-transitions log does NOT carry a spurious closed->open event.
     seq = [(h.from_status, h.to_status) for h in core.history(2)]
-    assert seq == [(None, "open"), ("open", "closed"), ("closed", "open")]
+    assert seq == [(None, "open"), ("open", "closed")]

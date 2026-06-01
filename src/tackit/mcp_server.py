@@ -50,14 +50,22 @@ def build_server() -> FastMCP:
     @mcp.tool()
     def add(
         name: str,
+        kind: str,
         description: str = "",
         labels: list[str] | None = None,
         deps: list[int] | None = None,
     ) -> dict:
-        """Create a task (D3). Optionally attach labels (D4) and depends_on edges
-        (D5). Returns the new task's slice (under `result`) plus any `stale_alert`."""
+        """Create a task (D3 + T94). ``kind`` is REQUIRED -- one of
+        design | schema | production | meta (D26). Classify by the 'alters
+        running-app behavior' rule: design = a decision slice, schema = the
+        store's shape, production = changes the app's behavior (source, tests
+        that pin contracts, README/SKILL), meta = bookkeeping / release tracking
+        / experiments. The kind boundary bounds the cascade (D26 meta-island);
+        a stray choice silently corrupts cascade reach, so refuse missing/invalid
+        loudly via D2. Optionally attach labels (D4) and symmetric links via
+        ``deps`` (D5). Returns the new task's slice plus any ``stale_alert``."""
         with _core() as c:
-            t = c.add(name, description=description, labels=labels, deps=deps)
+            t = c.add(name, kind=kind, description=description, labels=labels, deps=deps)
             return _wrap(c, c.show(t.id).model_dump(mode="json"))
 
     @mcp.tool()
@@ -100,9 +108,25 @@ def build_server() -> FastMCP:
 
     @mcp.tool()
     def reopen(id: int) -> dict:
-        """Move a closed task back to open (D7/D8, logged)."""
+        """Move a closed task back to open (D7/D8, logged). REFUSED on
+        wont_do tasks (T132: terminal forever; change-of-mind path is
+        supersede with a new task)."""
         with _core() as c:
             return _wrap(c, c.reopen(id).model_dump(mode="json"))
+
+    @mcp.tool()
+    def wont_do(id: int, reason: str, delta: str) -> dict:
+        """Mark a task as decided-not-to-do, distinct from closed=done (T132).
+        ``reason`` is durable (persists forever in wont_do_reason);
+        ``delta`` is ephemeral per T117. Locked-forever per T118: edit /
+        reopen / close / wont_do all refused on wont_do tasks; supersede
+        is the change-of-mind path. REFUSED if task is stale or in a
+        linked-stale neighborhood (D14 close-gate). REFUSED on already-
+        wont_do or closed tasks (no double-decide). Does not fire the
+        staling cascade -- returns one-hop neighbors for migrate-or-stay
+        review like close."""
+        with _core() as c:
+            return _wrap(c, c.wont_do(id, reason=reason, delta=delta).model_dump(mode="json"))
 
     @mcp.tool()
     def reconcile(id: int) -> dict:
@@ -110,6 +134,19 @@ def build_server() -> FastMCP:
         Does not cascade (no content changed)."""
         with _core() as c:
             return _wrap(c, c.reconcile(id).model_dump(mode="json"))
+
+    @mcp.tool()
+    def reclassify(id: int, kind: str, delta: str) -> dict:
+        """Change a task's kind after creation (T128). Required ``delta``
+        names the semantic shift (T117). REFUSED if the new kind would
+        create a cross-kind link with any current neighbor (meta-island,
+        D26) -- the agent must link_rm those edges first or supersede the
+        task with a new one carrying the desired kind. Fires the staling
+        cascade on linked neighbors (kind is a semantic property; the link
+        relationship may need re-review). Closed neighbors stay closed +
+        stale per T123."""
+        with _core() as c:
+            return _wrap(c, c.reclassify(id, kind, delta=delta).model_dump(mode="json"))
 
     @mcp.tool()
     def link_add(a: int, b: int, because: str, delta: str) -> dict:
@@ -194,10 +231,12 @@ def build_server() -> FastMCP:
 
     @mcp.tool()
     def load(plan: str) -> dict:
-        """Bulk-import a plan (D24) given as TEXT: `[key] Name` lines with indented
-        `desc:` / `labels:` / `depends_on:` (depends_on references other keys). Creates
-        all tasks in one atomic pass, resolving keys -> ids; a malformed line or unknown
-        key fails loud and rolls back the whole import. Returns the key->id map."""
+        """Bulk-import a plan (D24 + T94) given as TEXT: `[key] Name` lines with
+        indented `kind:` (REQUIRED, one of design|schema|production|meta) /
+        `desc:` / `labels:` / `depends_on:` (depends_on references other keys).
+        Creates all tasks in one atomic pass, resolving keys -> ids; a malformed
+        line, missing/invalid kind, or unknown dep key fails loud and rolls back
+        the whole import (no partial plan). Returns the key->id map."""
         with _core() as c:
             keymap = c.load(parse_plan(plan))
             return _wrap(c, {"loaded": keymap})

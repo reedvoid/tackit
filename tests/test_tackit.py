@@ -37,14 +37,14 @@ def test_d1_init_creates_store_and_gitignore(tmp_path):
 # --- D3 / D2: task CRUD + typed boundary ------------------------------------
 
 def test_d3_add_and_get(core):
-    t = core.add("parse FTS5 query", description="tokenize MATCH terms")
+    t = core.add("parse FTS5 query", kind="production", description="tokenize MATCH terms")
     assert t.id == 1 and t.status == "open" and t.stale is False
     assert core.get(1).name == "parse FTS5 query"
 
 
 def test_d2_empty_name_refused(core):
     with pytest.raises(ValidationError):
-        core.add("   ")
+        core.add("   ", kind="production")
 
 
 def test_d3_get_missing_fails_loud(core):
@@ -55,7 +55,7 @@ def test_d3_get_missing_fails_loud(core):
 # --- D4 / S2: labels --------------------------------------------------------
 
 def test_d4_labels_add_list_remove(core):
-    core.add("rank results", labels=["search", "core"])
+    core.add("rank results", kind="production", labels=["search", "core"])
     assert core.labels_of(1) == ["core", "search"]
     core.label_rm(1, "core")
     assert core.labels_of(1) == ["search"]
@@ -67,8 +67,8 @@ def test_d5_d6_symmetric_link_traversal(core):
     # Under v0.3.0 symmetric semantics (T86), both `dependencies_of` and
     # `dependents_of` return the same linked-neighbor set; the names are kept
     # for API stability and rename in T93/T96.
-    core.add("a")  # T1
-    core.add("b")  # T2
+    core.add("a", kind="production")  # T1
+    core.add("b", kind="production")  # T2
     core.link_add(2, 1, because="test fixture", delta="test")  # link T1 <-> T2
     assert [n.id for n in core.dependencies_of(2)] == [1]
     assert [n.id for n in core.dependents_of(1)] == [2]
@@ -78,7 +78,7 @@ def test_d5_d6_symmetric_link_traversal(core):
 
 
 def test_d14_self_link_refused(core):
-    core.add("a")
+    core.add("a", kind="production")
     with pytest.raises(InvariantError):
         core.link_add(1, 1, because="test fixture", delta="test")
 
@@ -87,8 +87,8 @@ def test_d5_duplicate_link_is_noop(core):
     # Under symmetric semantics there is no directed cycle; what used to be a
     # "cycle" (T1->T2 then T2->T1) is the same canonical link {T1, T2}, so the
     # second dep_add is a no-op (idempotent), not an error.
-    core.add("a")  # T1
-    core.add("b")  # T2
+    core.add("a", kind="production")  # T1
+    core.add("b", kind="production")  # T2
     core.link_add(1, 2, because="test fixture", delta="test")  # link T1 <-> T2
     core.link_add(2, 1, because="test fixture", delta="test")  # same link, reversed args -> idempotent
     # Exactly one row in the links table.
@@ -97,25 +97,28 @@ def test_d5_duplicate_link_is_noop(core):
 
 
 def test_d14_edge_to_missing_task_refused(core):
-    core.add("a")
+    core.add("a", kind="production")
     with pytest.raises(NotFoundError):
         core.link_add(1, 999, because="test fixture", delta="test")
 
 
 # --- D7 / D8: status, stale invariant, history ------------------------------
 
-def test_d7_invariant_stale_implies_open(core):
-    core.add("a")  # T1
-    core.add("b")  # T2 depends_on T1
+def test_d7_relaxed_closed_can_be_stale(core):
+    """T123: cascade now stales closed neighbors without force-reopening them.
+    The closed task carries stale=True + status='closed' to signal 'review for
+    supersede / link migration' while remaining immutable per T118."""
+    core.add("a", kind="production")  # T1
+    core.add("b", kind="production")  # T2 linked to T1
     core.link_add(2, 1, because="test fixture", delta="test")
     core.close(2)  # T2 closed
-    core.edit(1, description="changed", delta="test")  # stales T2 -> forces it back open
+    core.edit(1, description="changed", delta="test")  # stales T2 but no force-reopen
     t2 = core.get(2)
-    assert t2.stale is True and t2.status == "open"
+    assert t2.stale is True and t2.status == "closed"  # T123: stays closed
 
 
 def test_d8_history_logged_through_reopen(core):
-    core.add("a")
+    core.add("a", kind="production")
     core.close(1)
     core.reopen(1)
     seq = [(h.from_status, h.to_status) for h in core.history(1)]
@@ -128,8 +131,8 @@ def test_d9_slice_fetch(core):
     # Slice still exposes `dependencies` + `dependents` fields for API stability
     # (T93/T96 rename), but under symmetric semantics both return the same
     # linked-neighbor set.
-    core.add("a", labels=["x"])  # T1
-    core.add("b")  # T2
+    core.add("a", kind="production", labels=["x"])  # T1
+    core.add("b", kind="production")  # T2
     core.link_add(1, 2, because="test fixture", delta="test")  # link T1 <-> T2
     s = core.show(1)
     assert s.task.id == 1
@@ -141,9 +144,9 @@ def test_d9_slice_fetch(core):
 # --- D10 / D13: change cascade entry, one-hop (non-transitive) --------------
 
 def test_d10_edit_stales_direct_dependents_only(core):
-    core.add("base")  # T1
-    core.add("mid")  # T2 depends_on T1
-    core.add("top")  # T3 depends_on T2
+    core.add("base", kind="production")  # T1
+    core.add("mid", kind="production")  # T2 depends_on T1
+    core.add("top", kind="production")  # T3 depends_on T2
     core.link_add(2, 1, because="test fixture", delta="test")
     core.link_add(3, 2, because="test fixture", delta="test")
     result = core.edit(1, description="base changed", delta="test")
@@ -155,8 +158,8 @@ def test_d10_edit_stales_direct_dependents_only(core):
 # --- D11: reconciliation worklist -------------------------------------------
 
 def test_d11_worklist_and_reconcile(core):
-    core.add("base")  # T1
-    core.add("dep")  # T2 depends_on T1
+    core.add("base", kind="production")  # T1
+    core.add("dep", kind="production")  # T2 depends_on T1
     core.link_add(2, 1, because="test fixture", delta="test")
     core.edit(1, description="x", delta="test")
     assert [t.id for t in core.stale_worklist()] == [2]
@@ -167,8 +170,8 @@ def test_d11_worklist_and_reconcile(core):
 # --- D12 / D14: close obligation payload + close-gate -----------------------
 
 def test_d12_close_returns_neighbors(core):
-    core.add("a")  # T1
-    core.add("b")  # T2 depends_on T1
+    core.add("a", kind="production")  # T1
+    core.add("b", kind="production")  # T2 depends_on T1
     core.link_add(2, 1, because="test fixture", delta="test")
     result = core.close(2)
     assert result.task.status == "closed"
@@ -176,8 +179,8 @@ def test_d12_close_returns_neighbors(core):
 
 
 def test_d14_close_gate_refuses_stale_then_allows_after_reconcile(core):
-    core.add("base")  # T1
-    core.add("dep")  # T2 depends_on T1
+    core.add("base", kind="production")  # T1
+    core.add("dep", kind="production")  # T2 depends_on T1
     core.link_add(2, 1, because="test fixture", delta="test")
     core.edit(1, description="x", delta="test")  # stales T2
     with pytest.raises(InvariantError):
@@ -189,8 +192,8 @@ def test_d14_close_gate_refuses_stale_then_allows_after_reconcile(core):
 # --- D15: query/board -------------------------------------------------------
 
 def test_d15_filters(core):
-    core.add("a", labels=["x"])  # T1
-    core.add("b", labels=["y"])  # T2
+    core.add("a", kind="production", labels=["x"])  # T1
+    core.add("b", kind="production", labels=["y"])  # T2
     core.close(2)
     assert [t.id for t in core.ls(status="open")] == [1]
     assert [t.id for t in core.ls(label="y")] == [2]
@@ -200,7 +203,7 @@ def test_d15_filters(core):
 
 def test_d16_render(core):
     # "design" is reserved for the kind property since T84 -- use a non-reserved label.
-    core.add("parse query", description="body text", labels=["spec"])
+    core.add("parse query", kind="production", description="body text", labels=["spec"])
     md = core.render("spec")
     assert "T1 - parse query" in md and "body text" in md
 
@@ -208,8 +211,8 @@ def test_d16_render(core):
 # --- D17 / S5: full-text search ---------------------------------------------
 
 def test_d17_search_ranks_matches(core):
-    core.add("rotate JWT signing keys", description="auth token endpoint")
-    core.add("unrelated colour palette")
+    core.add("rotate JWT signing keys", kind="production", description="auth token endpoint")
+    core.add("unrelated colour palette", kind="production")
     hits = core.search("JWT token")
     assert hits and hits[0].id == 1
     assert all(h.id != 2 for h in hits)
@@ -224,14 +227,14 @@ def test_d17_empty_query_refused(core):
 
 def test_d18_mutation_bumps_version_and_dumps(core, store_path):
     store = Store(store_path)
-    core.add("a")
+    core.add("a", kind="production")
     assert store.sql_path.exists()
     assert sync.parse_version_from_sql(store.sql_path.read_text()) >= 1
 
 
 def test_d18_rebuild_on_fresh_clone(core, store_path):
     store = Store(store_path)
-    core.add("recoverable task")
+    core.add("recoverable task", kind="production")
     core.close_conn()
     # simulate a fresh clone: only tackit.sql present, no binary db
     for suffix in ("", "-wal", "-shm"):
@@ -247,9 +250,9 @@ def test_d18_rebuild_on_fresh_clone(core, store_path):
 
 def test_d18_ambiguous_divergence_refused(core, store_path):
     store = Store(store_path)
-    core.add("v1 task")
+    core.add("v1 task", kind="production")
     sql_v1 = store.sql_path.read_text()
-    core.add("v2 task")  # db + sql now newer
+    core.add("v2 task", kind="production")  # db + sql now newer
     core.close_conn()
     store.sql_path.write_text(sql_v1)  # disk reverted to older, db is newer
     with pytest.raises(SyncError):
@@ -258,9 +261,9 @@ def test_d18_ambiguous_divergence_refused(core, store_path):
 
 def test_d18_pull_newer_sql_rebuilds(core, store_path):
     store = Store(store_path)
-    core.add("v1 task")
+    core.add("v1 task", kind="production")
     sql_v1 = store.sql_path.read_text()
-    core.add("v2 task")
+    core.add("v2 task", kind="production")
     sql_v2 = store.sql_path.read_text()
     core.close_conn()
     # make the db match v1 (synced), then drop a strictly-newer v2 .sql on disk
@@ -276,7 +279,7 @@ def test_d18_pull_newer_sql_rebuilds(core, store_path):
 
 def test_d18_export_import_roundtrip(core, store_path):
     store = Store(store_path)
-    core.add("kept across import")
+    core.add("kept across import", kind="production")
     core.close_conn()
     sync.export(store)
     msg = sync.import_sql(store, force=True)
@@ -290,7 +293,7 @@ def test_d18_export_import_roundtrip(core, store_path):
 
 def test_d18_backup_rotation(core, store_path):
     store = Store(store_path)
-    core.add("a")
+    core.add("a", kind="production")
     for _ in range(25):
         sync.backup_db(store)
     assert len(sync.list_backups(store)) <= sync.MAX_BACKUPS

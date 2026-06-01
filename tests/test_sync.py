@@ -15,7 +15,7 @@ def _seed(store_path, n=1):
     c = Core.open(start=store_path)
     try:
         for i in range(n):
-            c.add(f"task {i}")
+            c.add(f"task {i}", kind="production")
     finally:
         c.close_conn()
 
