@@ -154,13 +154,19 @@ class History(BaseModel):
 
 
 class SearchHit(BaseModel):
-    """D17 - one ranked FTS5 result: task id + title + relevance score."""
+    """D17 + D28 (v0.4) - one ranked FTS5 result. ``status`` lets the adapter
+    visually distinguish live work (open) from historical record
+    (closed/wont_do) without opening each hit. ``wont_do_reason`` is set
+    only for wont_do hits, so search results carry their dropped-scope
+    rationale inline."""
 
     model_config = ConfigDict(extra="forbid")
 
     id: int
     name: str
     score: float
+    status: Status
+    wont_do_reason: Optional[str] = None
 
 
 class LabelUsage(BaseModel):

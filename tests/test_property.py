@@ -90,7 +90,13 @@ class TackitMachine(RuleBasedStateMachine):
     @precondition(lambda self: self.ids)
     @rule(i=_pick)
     def reconcile(self, i):
-        self.core.reconcile(self._id(i))
+        try:
+            self.core.reconcile(self._id(i))
+        except InvariantError:
+            # v0.4 (D28): reconcile refuses on closed/wont_do tasks. Their
+            # stale flag is record-only. The property machine doesn't care
+            # which path it takes; the refusal is well-defined behavior.
+            pass
 
     @precondition(lambda self: len(self.ids) >= 2)
     @rule(i=_pick, j=_pick)

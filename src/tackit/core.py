@@ -187,6 +187,12 @@ class Core:
         # the agent's semantic-delta string alongside the stale_alert. Ephemeral
         # -- one op's lifetime only; not stored anywhere.
         self.last_delta: str | None = None
+        # D31 (v0.4): set when edit() succeeds on a design or schema task, so
+        # the adapter can surface a "this slice's number (D#/S#) is referenced
+        # in code by convention; check associated files for drift" reminder.
+        # Sibling to label_nudge / stale_alert: structured envelope field.
+        # Ephemeral.
+        self.last_code_check_reminder: str | None = None
 
     # --- T124: shared prelude for cascade-firing / delta-bearing ops --------
     def _record_delta(self, delta: str, op_name: str) -> None:
@@ -543,10 +549,17 @@ class Core:
 
     def _stale_linked_transitive(self, task_id: int) -> list[int]:
         """All tasks transitively linked to ``task_id`` (in the symmetric graph)
-        that are currently stale, excluding ``task_id`` itself, id-sorted.
-        Underpins the symmetric close-gate (D14): closing a task whose linked
-        neighborhood is unreconciled is refused. Reach is bounded in practice by
-        the meta-island constraint (D26)."""
+        that carry an obligation-bearing stale flag, excluding ``task_id``
+        itself, id-sorted. Underpins the symmetric close-gate (D14): closing
+        a task whose linked neighborhood is unreconciled is refused.
+
+        v0.4 (D28): only stale tasks with status='open' OR kind in
+        {design,schema} count as obligation. Closed/wont_do production/meta
+        neighbors carrying stale=1 are record-only -- they do NOT pressure
+        the close-gate. The walk itself still traverses all neighbors (so
+        an obligation-bearing task on the far side of a closed-stale
+        neighbor is still found), but only obligation-bearing stale tasks
+        end up in the return list."""
         seen: set[int] = {task_id}
         stack: list[int] = [task_id]
         stale_found: list[int] = []
@@ -563,10 +576,12 @@ class Core:
                     continue
                 seen.add(nxt)
                 row = self.conn.execute(
-                    "SELECT stale FROM tasks WHERE id = ?", (nxt,)
+                    "SELECT stale, status, kind FROM tasks WHERE id = ?", (nxt,)
                 ).fetchone()
                 if row is not None and bool(row["stale"]):
-                    stale_found.append(nxt)
+                    # D28: obligation only on open OR design/schema kind.
+                    if row["status"] == "open" or row["kind"] in ("design", "schema"):
+                        stale_found.append(nxt)
                 stack.append(nxt)
         stale_found.sort()
         return stale_found
@@ -704,7 +719,12 @@ class Core:
           is caller-driven: the caller passes its accumulated "judged" set as
           ``already_seen`` so each next layer excludes what it has handled.
 
-        Status-blind in both modes (closed neighbors still returned).
+        v0.4 (D28 + D27 refinement): candidates are filtered to viable link
+        targets -- status='open' OR kind in {design,schema}. The anchor
+        layer already meets this (design+schema are the only kinds it
+        returns). The expansion hop filters closed/wont_do production/meta
+        tasks out (closed/wont_do design/schema slices still surface, since
+        they're living spec).
         """
         excluded: set[int] = set(already_seen or [])
         if not ids:
@@ -721,7 +741,8 @@ class Core:
             f"  SELECT task_b FROM links WHERE task_a IN ({placeholders}) "
             f"  UNION "
             f"  SELECT task_a FROM links WHERE task_b IN ({placeholders})"
-            f") ORDER BY id"
+            f") AND (status = 'open' OR kind IN ('design', 'schema')) "
+            f"ORDER BY id"
         )
         rows = self.conn.execute(sql, tuple(ids) * 2).fetchall()
         return [self._neighbor_from_row(r) for r in rows if r["id"] not in excluded]
@@ -778,17 +799,33 @@ class Core:
         return [self._neighbor_from_row(self._require_row(n.id)) for n in linked]
 
     def stale_worklist(self) -> list[Task]:
-        """D11 - the resumable reconciliation worklist: all stale tasks, id order.
-        Empty list == reconciliation pass complete (termination marker)."""
+        """D11 + D28 (v0.4) - the resumable reconciliation worklist: stale tasks
+        that carry an OBLIGATION. Filters to status='open' OR kind in {design,
+        schema}. Closed/wont_do production/meta tasks may still carry stale=1
+        as a record-only marker (D28), but they're not on the worklist and
+        don't pressure the agent. Empty list == reconciliation pass complete."""
         rows = self.conn.execute(
-            "SELECT * FROM tasks WHERE stale = 1 ORDER BY id"
+            "SELECT * FROM tasks WHERE stale = 1 "
+            "AND (status = 'open' OR kind IN ('design', 'schema')) "
+            "ORDER BY id"
         ).fetchall()
         return [self._task_from_row(r) for r in rows]
 
     def reconcile(self, task_id: int) -> Task:
-        """D11 - clear ``stale`` on a task reviewed and found still-correct, with
-        no content change (so it does NOT cascade to dependents)."""
+        """D11 + D28 (v0.4) - clear ``stale`` on a task reviewed and found
+        still-correct, with no content change (so it does NOT cascade to
+        dependents). REFUSED on closed/wont_do tasks: under v0.4 their stale
+        flag is record-only (D28), not actionable -- clearing it would erase
+        the archaeology marker without corresponding meaning."""
         row = self._require_row(task_id)
+        if row["status"] in ("closed", "wont_do"):
+            raise InvariantError(
+                f"REFUSED: T{task_id} is {row['status']} -- reconcile is not "
+                f"allowed on terminal tasks (D28). Their stale flag is "
+                f"record-only (not on the worklist, not blocking close-gates); "
+                f"it stays as historical signal that an upstream changed. No "
+                f"action needed."
+            )
         # No-op guard (D20): reconciling a task that isn't stale changes nothing.
         if bool(row["stale"]):
             with self._mutate():
@@ -816,11 +853,23 @@ class Core:
     # D12 - close (with obligation payload) / D14 close-gate
     # ====================================================================
     def close(self, task_id: int) -> CloseResult:
-        """D12 + D14 + T132 - close a task and return the one-hop set to
-        review. REFUSED while the task is stale (close-gate, ratified
+        """D12 + D14 + T132 + D30 (v0.4) - close a task and return the one-hop
+        set to review. REFUSED while the task is stale (close-gate, ratified
         2026-05-29). REFUSED on wont_do tasks (T132: already terminal in a
-        different sense -- closed = done; wont_do = decided not to do)."""
+        different sense -- closed = done; wont_do = decided not to do).
+        REFUSED on design/schema kind (D30 v0.4: living spec; updating a
+        decision is edit(), not close())."""
         row = self._require_row(task_id)
+        if row["kind"] in ("design", "schema"):
+            raise InvariantError(
+                f"REFUSED: T{task_id} is kind={row['kind']!r} -- design and "
+                f"schema slices are LIVING SPEC, not work items (D30 v0.4). "
+                f"They are perma-open by design: updating a decision is "
+                f"edit(), not close(). The description_revisions audit table "
+                f"(D29) preserves the prior verbatim state of any edit, so "
+                f"editing in place is recoverable. To retire a decision, "
+                f"edit the slice to reflect its current state."
+            )
         if row["status"] == "wont_do":
             raise InvariantError(
                 f"REFUSED: T{task_id} is wont_do -- cannot be closed (T132). "
@@ -886,6 +935,14 @@ class Core:
             )
         _validate_text(reason, "wont_do reason")
         row = self._require_row(task_id)
+        if row["kind"] in ("design", "schema"):
+            raise InvariantError(
+                f"REFUSED: T{task_id} is kind={row['kind']!r} -- design and "
+                f"schema slices are LIVING SPEC, not work items (D30 v0.4). "
+                f"wont_do is for dropped work; a design decision can't be "
+                f"'not done' -- it either holds, or it's edited to reflect a "
+                f"changed state. To retire a decision, edit the slice."
+            )
         if row["status"] == "wont_do":
             raise InvariantError(
                 f"REFUSED: T{task_id} is already wont_do (T132). The decision "
@@ -946,8 +1003,13 @@ class Core:
         The audit table preserves the verbatim prior state, so edit no longer
         destroys history. (T118's "no-edit-closed" rule is retired.) The
         wont_do reason field is not edited via this op -- it's set once at
-        wont_do() time and is immutable thereafter."""
+        wont_do() time and is immutable thereafter.
+
+        D31 (v0.4): if the edited task is kind in {design,schema}, the
+        adapter envelope includes a code-check reminder pointing the agent
+        at code referencing the slice's D#/S# id."""
         self._record_delta(delta, "edit")
+        self.last_code_check_reminder = None  # D31: reflect only this op
         row = self._require_row(task_id)
         if name is not None and not name.strip():
             raise ValidationError("task name cannot be set empty (D3/S1).")
@@ -987,6 +1049,17 @@ class Core:
             params.append(task_id)
             self.conn.execute(
                 f"UPDATE tasks SET {', '.join(sets)} WHERE id = ?", tuple(params)
+            )
+        # D31 (v0.4): code-check reminder on design/schema edits. tackit
+        # can't introspect which files reference D#/S# -- the agent does the
+        # grep -- so the reminder just names the slice id+name + nudges.
+        if row["kind"] in ("design", "schema"):
+            edited = self.get(task_id)
+            self.last_code_check_reminder = (
+                f"D31: T{task_id} ({row['kind']}) was edited -- "
+                f"{edited.name!r}. The slice's D#/S# id is referenced in "
+                f"code by convention (SKILL.md code↔task naming rule). "
+                f"Grep for the id and check the associated files for drift."
             )
         return ChangeResult(task=self.get(task_id), newly_stale=newly_stale)
 
@@ -1054,14 +1127,18 @@ class Core:
     # D17 - full-text search (FTS5)
     # ====================================================================
     def search(self, query: str, limit: int = 20) -> list[SearchHit]:
-        """D17 - ranked keyword search over name+description via FTS5. Returns
-        ids+titles+scores, best first. ``search -> show`` is tackit's retrieval
-        loop. Score is -bm25 (higher = more relevant)."""
+        """D17 + D28 (v0.4) - ranked keyword search over name+description via
+        FTS5. Returns ids+titles+scores+status (and wont_do_reason for
+        wont_do hits), best first. The status field lets adapters tag
+        historical hits inline so the agent doesn't have to open each
+        result to know whether it's live work or record. ``search -> show``
+        is tackit's retrieval loop. Score is -bm25 (higher = more relevant)."""
         if not query or not query.strip():
             raise ValidationError("search query must be non-empty (D17).")
         try:
             rows = self.conn.execute(
-                "SELECT t.id AS id, t.name AS name, bm25(tasks_fts) AS bm25 "
+                "SELECT t.id AS id, t.name AS name, t.status AS status, "
+                "t.wont_do_reason AS wont_do_reason, bm25(tasks_fts) AS bm25 "
                 "FROM tasks_fts JOIN tasks t ON t.id = tasks_fts.rowid "
                 "WHERE tasks_fts MATCH ? ORDER BY bm25 LIMIT ?",
                 (query, limit),
@@ -1069,7 +1146,16 @@ class Core:
         except sqlite3.OperationalError as exc:
             # malformed FTS5 query syntax -> fail loud at the boundary (D2)
             raise ValidationError(f"invalid search query (FTS5 syntax): {exc}") from exc
-        return [SearchHit(id=r["id"], name=r["name"], score=-float(r["bm25"])) for r in rows]
+        return [
+            SearchHit(
+                id=r["id"],
+                name=r["name"],
+                score=-float(r["bm25"]),
+                status=r["status"],
+                wont_do_reason=r["wont_do_reason"],
+            )
+            for r in rows
+        ]
 
     # ====================================================================
     # D8 - read status history

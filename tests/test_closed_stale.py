@@ -28,15 +28,17 @@ def _stale_closed_setup(core):
     return core
 
 
-def test_closed_stale_reconcile_clears_stale_keeps_closed(core):
-    """Reconcile on a closed-stale task clears stale but preserves status=closed."""
+def test_closed_stale_reconcile_refused_under_v04(core):
+    """v0.4 (D28): reconcile is REFUSED on closed/wont_do tasks. Their stale
+    flag is record-only -- not on the worklist, not blocking close-gates.
+    Clearing it would erase the archaeology marker without a corresponding
+    meaning. The flag stays as historical signal."""
     _stale_closed_setup(core)
-    t2 = core.reconcile(2)
-    assert t2.stale is False
-    assert t2.status == "closed"  # T123: reconcile does NOT touch status
-    # Reconcile should not have logged a spurious transition.
-    seq = [(h.from_status, h.to_status) for h in core.history(2).status_transitions]
-    assert seq == [(None, "open"), ("open", "closed")]
+    with pytest.raises(InvariantError, match="terminal"):
+        core.reconcile(2)
+    # The closed-stale state is preserved.
+    t2 = core.get(2)
+    assert t2.stale is True and t2.status == "closed"
 
 
 def test_closed_stale_edit_allowed_under_v04(core):
@@ -93,11 +95,11 @@ def test_cascade_staling_already_stale_closed_is_idempotent(core):
     assert seq_before == seq_after  # no new transitions on the closed-stale row
 
 
-def test_close_gate_refuses_when_linked_closed_stale(core):
-    """A task in a linked neighborhood with a closed-stale member is still
-    blocked from closing. The closed-stale neighbor signals 'might still be
-    superseded or relinked' — its review obligation gates close on its
-    neighbors too. T123 changes force-reopen, not close-gate semantics."""
+def test_close_gate_does_not_trip_on_closed_stale_under_v04(core):
+    """v0.4 (D28): the close-gate's 'transitively linked to stale' walk
+    filters to obligation-bearing stale tasks (open OR design/schema kind).
+    A closed-stale production neighbor is record-only and does NOT pressure
+    the close-gate -- T3 can close even though T2 is closed+stale."""
     core.add("a", kind="production")  # T1
     core.add("b", kind="production")  # T2
     core.add("c", kind="production")  # T3
@@ -106,5 +108,6 @@ def test_close_gate_refuses_when_linked_closed_stale(core):
     core.close(2)  # T2 closed
     core.edit(1, description="x", delta="a shifted")  # T2 -> closed-stale via cascade
     assert core.get(2).status == "closed" and core.get(2).stale is True
-    with pytest.raises(InvariantError, match="stale"):
-        core.close(3)  # refused: linked-stale-via-T2 in neighborhood
+    # T3 can close: T2 is closed-stale (record-only), not on the worklist.
+    result = core.close(3)
+    assert result.task.status == "closed"

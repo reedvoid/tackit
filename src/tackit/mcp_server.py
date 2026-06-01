@@ -40,6 +40,8 @@ def _wrap(core: Core, result):
         "stale_alert": stale_alert_payload(core.stale_worklist()),
         "label_nudge": core.last_label_nudge,  # D23: set iff a new label was created
         "delta": core.last_delta,  # T117: set iff a delta-bearing op just ran
+        # D31 (v0.4): set iff an edit just landed on a design/schema slice.
+        "code_check_reminder": core.last_code_check_reminder,
         "result": result,
     }
 

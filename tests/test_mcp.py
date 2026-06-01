@@ -79,9 +79,16 @@ def test_mcp_success_wraps_result_in_envelope(tmp_path, monkeypatch):
         return await s.call_tool("show", {"id": 1})
 
     env = _envelope(_drive(tmp_path, monkeypatch, scenario))
-    assert set(env.keys()) == {"stale_alert", "label_nudge", "delta", "result"}
+    assert set(env.keys()) == {
+        "stale_alert",
+        "label_nudge",
+        "delta",
+        "code_check_reminder",  # D31 (v0.4)
+        "result",
+    }
     assert env["stale_alert"] is None and env["label_nudge"] is None  # nothing stale, no new label
     assert env["delta"] is None  # T117: show is a read, no delta
+    assert env["code_check_reminder"] is None  # D31: not a design/schema edit
     assert env["result"]["task"]["id"] == 1
 
 

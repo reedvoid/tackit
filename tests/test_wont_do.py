@@ -212,16 +212,18 @@ def test_wont_do_task_cascade_staled_stays_wont_do(core):
     assert t2.status == "wont_do"  # T123 + T132: stays terminal
 
 
-def test_reconcile_a_wont_do_stale_keeps_status(core):
-    """reconcile on a wont_do-stale task clears stale, status stays wont_do."""
+def test_reconcile_refused_on_wont_do_stale_under_v04(core):
+    """v0.4 (D28): reconcile is REFUSED on wont_do tasks (same as closed).
+    Their stale flag is record-only and stays as historical signal."""
     core.add("upstream", kind="production")
     core.add("dropped", kind="production")
     core.link_add(2, 1, because="setup", delta="setup")
     core.wont_do(2, reason="dropped", delta="dropped")
     core.edit(1, description="x", delta="staling")
-    core.reconcile(2)
+    with pytest.raises(InvariantError, match="terminal"):
+        core.reconcile(2)
     t2 = core.get(2)
-    assert t2.stale is False
+    assert t2.stale is True  # preserved as record
     assert t2.status == "wont_do"
 
 

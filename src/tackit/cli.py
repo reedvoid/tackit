@@ -106,6 +106,8 @@ def _core_session():
             print(core.last_label_nudge, file=sys.stderr)
         if core.last_delta:  # T117 cascade-ergonomics delta
             print(f"delta: {core.last_delta}", file=sys.stderr)
+        if core.last_code_check_reminder:  # D31 v0.4 design/schema edit nudge
+            print(core.last_code_check_reminder, file=sys.stderr)
         core.close_conn()
 
 
