@@ -33,6 +33,65 @@ def test_parse_plan_ok():
     assert specs[2]["depends_on"] == ["mid", "base"]
 
 
+def test_parse_multiline_desc_folds_continuations():
+    # Deeper-indented lines after `desc:` are continuation lines, joined with \n.
+    plan = (
+        "[a] Task A\n"
+        "  desc: First paragraph of the body.\n"
+        "    Second paragraph, its own line.\n"
+        "    Third paragraph.\n"
+        "  labels: x\n"  # sibling field at desc indent ends the block
+    )
+    specs = parse_plan(plan)
+    assert specs[0]["desc"] == (
+        "First paragraph of the body.\n"
+        "Second paragraph, its own line.\n"
+        "Third paragraph."
+    )
+    assert specs[0]["labels"] == ["x"]  # the sibling field still parsed
+
+
+def test_parse_multiline_desc_block_ends_at_next_key():
+    plan = (
+        "[a] Task A\n"
+        "  desc: line one\n"
+        "    line two\n"
+        "[b] Task B\n"
+        "  desc: just me\n"
+    )
+    specs = parse_plan(plan)
+    assert specs[0]["desc"] == "line one\nline two"
+    assert specs[1]["desc"] == "just me"
+
+
+def test_parse_multiline_desc_block_ends_at_blank_line():
+    # A blank line terminates the desc block; an equal-indent garbage line after it
+    # is no longer a continuation and so still fails loud.
+    plan = "[a] Task A\n  desc: line one\n    line two\n\n  loose garbage\n"
+    with pytest.raises(ValidationError):
+        parse_plan(plan)
+
+
+def test_parse_multiline_desc_at_eof():
+    specs = parse_plan("[a] Task A\n  desc: line one\n    line two\n")
+    assert specs[0]["desc"] == "line one\nline two"
+
+
+def test_parse_desc_continuation_may_contain_colon_word():
+    # A continuation line that looks like `word:` is desc text, NOT a field — the
+    # deeper-indent check wins, so it is not mistaken for an unknown field.
+    plan = "[a] Task A\n  desc: intro\n    note: this is still description\n"
+    specs = parse_plan(plan)
+    assert specs[0]["desc"] == "intro\nnote: this is still description"
+
+
+def test_parse_empty_desc_line_then_continuation():
+    # `desc:` with no inline value, then continuation lines.
+    plan = "[a] Task A\n  desc:\n    only paragraph\n"
+    specs = parse_plan(plan)
+    assert specs[0]["desc"] == "only paragraph"
+
+
 def test_parse_field_before_key():
     with pytest.raises(ValidationError):
         parse_plan("  labels: x\n[a] name\n")
