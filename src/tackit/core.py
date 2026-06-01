@@ -486,27 +486,26 @@ class Core:
         stale_found.sort()
         return stale_found
 
-    def dep_add(self, from_task: int, to_task: int) -> Slice:
-        """D5 - add a symmetric link between ``from_task`` and ``to_task``;
-        return ``from_task``'s slice. Argument order is preserved in the slice
-        result, but the stored row is canonicalized (T86); both orderings
-        produce the same row. The public name will become `link_add` in T93/T96."""
-        ta, tb = self._canonical(from_task, to_task)
-        # No-op guard (D20): a link that already exists is idempotent. Look up
-        # via the canonical pair so both argument orderings hit the same row.
+    def link_add(self, a: int, b: int) -> Slice:
+        """D5 (T93) - add a symmetric link between ``a`` and ``b``; return
+        ``a``'s slice. The stored row is canonicalized (lower id first) so
+        ``link_add(a, b)`` and ``link_add(b, a)`` produce the same row and
+        are indistinguishable thereafter. No-op if the link already exists."""
+        ta, tb = self._canonical(a, b)
         existing = self.conn.execute(
             "SELECT 1 FROM links WHERE task_a = ? AND task_b = ?", (ta, tb)
         ).fetchone()
         if existing is None:
             with self._mutate():
-                self._add_link(from_task, to_task)
-        return self.show(from_task)
+                self._add_link(a, b)
+        return self.show(a)
 
-    def dep_rm(self, from_task: int, to_task: int) -> Slice:
-        """D5 - remove the symmetric link between ``from_task`` and ``to_task``."""
-        self._require_row(from_task)
-        self._require_row(to_task)
-        ta, tb = self._canonical(from_task, to_task)
+    def link_rm(self, a: int, b: int) -> Slice:
+        """D5 (T93) - remove the symmetric link between ``a`` and ``b``. Arg
+        order doesn't matter (canonical lookup); no-op if the link is absent."""
+        self._require_row(a)
+        self._require_row(b)
+        ta, tb = self._canonical(a, b)
         existing = self.conn.execute(
             "SELECT 1 FROM links WHERE task_a = ? AND task_b = ?", (ta, tb)
         ).fetchone()
@@ -515,7 +514,7 @@ class Core:
                 self.conn.execute(
                     "DELETE FROM links WHERE task_a = ? AND task_b = ?", (ta, tb)
                 )
-        return self.show(from_task)
+        return self.show(a)
 
     def _linked_with(self, task_id: int) -> list[NeighborRef]:
         """D6 - every task that shares a link with ``task_id``, id-sorted. Single

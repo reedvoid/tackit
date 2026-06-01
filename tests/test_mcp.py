@@ -42,7 +42,7 @@ def test_mcp_registers_all_tools(tmp_path, monkeypatch):
 
     names = _drive(tmp_path, monkeypatch, scenario)
     assert len(names) == 18
-    expected = {"add", "show", "search", "edit", "close", "reconcile", "dep_add",
+    expected = {"add", "show", "search", "edit", "close", "reconcile", "link_add",
                 "stale", "labels", "load", "board"}
     assert expected <= set(names)
 
@@ -60,7 +60,7 @@ def test_mcp_board_returns_slices_with_edges(tmp_path, monkeypatch):
     async def scenario(s):
         await s.call_tool("add", {"name": "base"})
         await s.call_tool("add", {"name": "dep"})
-        await s.call_tool("dep_add", {"from_task": 2, "to_task": 1})
+        await s.call_tool("link_add", {"a": 2, "b": 1})
         return await s.call_tool("board", {"status": "open"})
 
     env = _envelope(_drive(tmp_path, monkeypatch, scenario))
@@ -96,7 +96,7 @@ def test_mcp_stale_alert_rides_in_envelope(tmp_path, monkeypatch):
     async def scenario(s):
         await s.call_tool("add", {"name": "base"})
         await s.call_tool("add", {"name": "dep"})
-        await s.call_tool("dep_add", {"from_task": 2, "to_task": 1})
+        await s.call_tool("link_add", {"a": 2, "b": 1})
         return await s.call_tool("edit", {"id": 1, "description": "x"})  # stales T2
 
     env = _envelope(_drive(tmp_path, monkeypatch, scenario))
@@ -109,7 +109,7 @@ def test_mcp_close_stale_refusal_is_error(tmp_path, monkeypatch):
     async def scenario(s):
         await s.call_tool("add", {"name": "base"})
         await s.call_tool("add", {"name": "dep"})
-        await s.call_tool("dep_add", {"from_task": 2, "to_task": 1})
+        await s.call_tool("link_add", {"a": 2, "b": 1})
         await s.call_tool("edit", {"id": 1, "description": "x"})  # stales T2
         return await s.call_tool("close", {"id": 2})
 
@@ -122,9 +122,9 @@ def test_mcp_dependency_aware_gate(tmp_path, monkeypatch):
     async def scenario(s):
         await s.call_tool("add", {"name": "base"})  # T1
         await s.call_tool("add", {"name": "mid"})  # T2
-        await s.call_tool("dep_add", {"from_task": 2, "to_task": 1})
+        await s.call_tool("link_add", {"a": 2, "b": 1})
         await s.call_tool("add", {"name": "top"})  # T3
-        await s.call_tool("dep_add", {"from_task": 3, "to_task": 2})
+        await s.call_tool("link_add", {"a": 3, "b": 2})
         await s.call_tool("edit", {"id": 1, "description": "x"})  # stales T2
         return await s.call_tool("close", {"id": 3})  # T3 depends on stale T2
 
@@ -151,8 +151,8 @@ def test_mcp_remaining_tools_all_work(tmp_path, monkeypatch):
         out = {}
         await s.call_tool("add", {"name": "alpha widget"})  # T1
         await s.call_tool("add", {"name": "beta widget"})  # T2
-        await s.call_tool("dep_add", {"from_task": 2, "to_task": 1})
-        out["dep_rm"] = _envelope(await s.call_tool("dep_rm", {"from_task": 2, "to_task": 1}))
+        await s.call_tool("link_add", {"a": 2, "b": 1})
+        out["link_rm"] = _envelope(await s.call_tool("link_rm", {"a": 2, "b": 1}))
         await s.call_tool("label_add", {"id": 1, "label": "tag"})
         out["label_rm"] = _envelope(await s.call_tool("label_rm", {"id": 1, "label": "tag"}))
         await s.call_tool("close", {"id": 1})

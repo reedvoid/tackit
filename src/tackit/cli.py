@@ -241,16 +241,16 @@ def _cmd_reconcile(args) -> int:
     return 0
 
 
-def _cmd_dep(args) -> int:
+def _cmd_link(args) -> int:
     with _core_session() as core:
-        if args.dep_action == "add":
-            s = core.dep_add(args.from_task, args.to_task)
+        if args.link_action == "add":
+            s = core.link_add(args.a, args.b)
             verb = "added"
         else:
-            s = core.dep_rm(args.from_task, args.to_task)
+            s = core.link_rm(args.a, args.b)
             verb = "removed"
         _emit(
-            f"{verb} edge T{args.from_task} depends_on T{args.to_task}\n" + _fmt_slice(s),
+            f"{verb} link T{args.a} <-> T{args.b}\n" + _fmt_slice(s),
             _dump(s),
             args.json,
         )
@@ -453,13 +453,13 @@ def build_parser() -> argparse.ArgumentParser:
     sp = add("reconcile", _cmd_reconcile, "clear stale without changing (reviewed-OK, D11)")
     sp.add_argument("id", type=int)
 
-    sp = add("dep", _cmd_dep, "add/remove a depends_on edge (D5)")
-    dep_sub = sp.add_subparsers(dest="dep_action", required=True)
+    sp = add("link", _cmd_link, "add/remove a symmetric link (D5)")
+    link_sub = sp.add_subparsers(dest="link_action", required=True)
     for act in ("add", "rm"):
-        dsp = dep_sub.add_parser(act, parents=[common])
-        dsp.add_argument("from_task", type=int, metavar="A")
-        dsp.add_argument("to_task", type=int, metavar="B")
-        dsp.set_defaults(func=_cmd_dep)
+        lsp = link_sub.add_parser(act, parents=[common])
+        lsp.add_argument("a", type=int, metavar="A")
+        lsp.add_argument("b", type=int, metavar="B")
+        lsp.set_defaults(func=_cmd_link)
 
     sp = add("label", _cmd_label, "tag/untag a task (D4)")
     label_sub = sp.add_subparsers(dest="label_action", required=True)

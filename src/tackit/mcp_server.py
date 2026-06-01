@@ -3,7 +3,7 @@
 A thin MCP server: each tool calls the same :mod:`tackit.core` op the CLI command
 does and returns the same obligation payload in its result. No logic lives here.
 Tool names are the bare verbs (``add``, ``show``, ``search``, ``close``,
-``reconcile``, ``dep_add``, ...). The input schema is **auto-generated from the
+``reconcile``, ``link_add``, ...). The input schema is **auto-generated from the
 Python type hints / Pydantic models** by FastMCP, so it cannot drift from the real
 interface (design.md: single-source-of-truth applied to the tool contract). On a
 refusal (e.g. the D14 close-gate) the TackitError message rides in the error
@@ -104,17 +104,20 @@ def build_server() -> FastMCP:
             return _wrap(c, c.reconcile(id).model_dump(mode="json"))
 
     @mcp.tool()
-    def dep_add(from_task: int, to_task: int) -> dict:
-        """Declare `from_task depends_on to_task` (D5). Refused on self-edge or a
-        cycle (D14). Returns from_task's slice."""
+    def link_add(a: int, b: int) -> dict:
+        """Add a symmetric link between tasks ``a`` and ``b`` (D5/T93). Argument
+        order doesn't matter -- the row is stored canonically. Refused on
+        self-link (D14) and on cross-kind meta links (D26 meta-island).
+        Returns ``a``'s slice."""
         with _core() as c:
-            return _wrap(c, c.dep_add(from_task, to_task).model_dump(mode="json"))
+            return _wrap(c, c.link_add(a, b).model_dump(mode="json"))
 
     @mcp.tool()
-    def dep_rm(from_task: int, to_task: int) -> dict:
-        """Remove the `from_task depends_on to_task` edge (D5)."""
+    def link_rm(a: int, b: int) -> dict:
+        """Remove the symmetric link between ``a`` and ``b`` (D5/T93). Argument
+        order doesn't matter (canonical lookup)."""
         with _core() as c:
-            return _wrap(c, c.dep_rm(from_task, to_task).model_dump(mode="json"))
+            return _wrap(c, c.link_rm(a, b).model_dump(mode="json"))
 
     @mcp.tool()
     def label_add(id: int, label: str) -> dict:

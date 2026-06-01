@@ -16,7 +16,7 @@ def _v(core) -> int:
 def test_d20_edit_no_field_is_noop(core):
     core.add("base")  # T1
     core.add("dep")  # T2
-    core.dep_add(2, 1)  # T2 depends_on T1
+    core.link_add(2, 1)  # T2 depends_on T1
     v = _v(core)
     result = core.edit(1)  # no name, no description
     assert _v(core) == v  # no version bump
@@ -85,9 +85,9 @@ def test_d20_label_real_add_bumps(core):
 def test_d20_dep_readd_is_noop(core):
     core.add("a")
     core.add("b")
-    core.dep_add(2, 1)
+    core.link_add(2, 1)
     v = _v(core)
-    core.dep_add(2, 1)  # duplicate edge
+    core.link_add(2, 1)  # duplicate edge
     assert _v(core) == v
 
 
@@ -95,5 +95,5 @@ def test_d20_dep_rm_absent_is_noop(core):
     core.add("a")
     core.add("b")
     v = _v(core)
-    core.dep_rm(2, 1)  # no such edge
+    core.link_rm(2, 1)  # no such edge
     assert _v(core) == v
