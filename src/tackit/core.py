@@ -542,6 +542,47 @@ class Core:
         return self._linked_with(task_id)
 
     # ====================================================================
+    # D27 - Link discovery via `links` op (T91)
+    # ====================================================================
+    def links(
+        self,
+        ids: list[int] | None = None,
+        already_seen: list[int] | None = None,
+    ) -> list[NeighborRef]:
+        """D27 - the link-discovery primitive that replaces v0.2.0
+        search-before-create. Two modes:
+
+        * ``ids is None`` (or empty) -> return the ANCHOR LAYER: all design +
+          schema kind tasks, id-sorted. This is the spec layer that production
+          work should link to.
+        * ``ids = [...]`` -> return every task linked at depth=1 to any input
+          id, minus the inputs themselves and minus ``already_seen``. Iteration
+          is caller-driven: the caller passes its accumulated "judged" set as
+          ``already_seen`` so each next layer excludes what it has handled.
+
+        Status-blind in both modes (closed neighbors still returned).
+        """
+        excluded: set[int] = set(already_seen or [])
+        if not ids:
+            rows = self.conn.execute(
+                "SELECT * FROM tasks WHERE kind IN ('design', 'schema') ORDER BY id"
+            ).fetchall()
+            return [
+                self._neighbor_from_row(r) for r in rows if r["id"] not in excluded
+            ]
+        excluded.update(ids)
+        placeholders = ",".join("?" * len(ids))
+        sql = (
+            f"SELECT * FROM tasks WHERE id IN ("
+            f"  SELECT task_b FROM links WHERE task_a IN ({placeholders}) "
+            f"  UNION "
+            f"  SELECT task_a FROM links WHERE task_b IN ({placeholders})"
+            f") ORDER BY id"
+        )
+        rows = self.conn.execute(sql, tuple(ids) * 2).fetchall()
+        return [self._neighbor_from_row(r) for r in rows if r["id"] not in excluded]
+
+    # ====================================================================
     # D7 - status + stale / D8 - transition history / D10/D11 reconciliation
     # ====================================================================
     def _set_status(self, task_id: int, new_status: str, *, clear_stale: bool) -> None:
