@@ -79,8 +79,8 @@ def test_reclassify_fires_cascade(core):
 def test_reclassify_meta_island_violation_refused(core):
     """Refuse the reclassify if the new kind would create a cross-kind link
     with any current neighbor. The error names the offending neighbors so
-    the agent can decide: link_rm those first / supersede the task / pick a
-    different kind."""
+    the agent can decide: link_rm those first / create a new task with the
+    desired kind / pick a different kind."""
     core.add("task", kind="production")  # T1
     core.add("meta_thing_a", kind="meta")  # T2
     core.add("meta_thing_b", kind="meta")  # T3

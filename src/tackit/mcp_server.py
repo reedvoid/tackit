@@ -109,8 +109,8 @@ def build_server() -> FastMCP:
     @mcp.tool()
     def reopen(id: int) -> dict:
         """Move a closed task back to open (D7/D8, logged). REFUSED on
-        wont_do tasks (T132: terminal forever; change-of-mind path is
-        supersede with a new task)."""
+        wont_do tasks (T132: terminal forever; change-of-mind path is a
+        fresh task with the new direction)."""
         with _core() as c:
             return _wrap(c, c.reopen(id).model_dump(mode="json"))
 
@@ -118,10 +118,10 @@ def build_server() -> FastMCP:
     def wont_do(id: int, reason: str, delta: str) -> dict:
         """Mark a task as decided-not-to-do, distinct from closed=done (T132).
         ``reason`` is durable (persists forever in wont_do_reason);
-        ``delta`` is ephemeral per T117. Locked-forever per T118: edit /
-        reopen / close / wont_do all refused on wont_do tasks; supersede
-        is the change-of-mind path. REFUSED if task is stale or in a
-        linked-stale neighborhood (D14 close-gate). REFUSED on already-
+        ``delta`` is ephemeral per T117. Locked-forever per T132: reopen /
+        close / wont_do refused on wont_do tasks (change-of-mind path is a
+        fresh task with the new direction). REFUSED if task is stale or in
+        a linked-stale neighborhood (D14 close-gate). REFUSED on already-
         wont_do or closed tasks (no double-decide). Does not fire the
         staling cascade -- returns one-hop neighbors for migrate-or-stay
         review like close."""
@@ -140,8 +140,8 @@ def build_server() -> FastMCP:
         """Change a task's kind after creation (T128). Required ``delta``
         names the semantic shift (T117). REFUSED if the new kind would
         create a cross-kind link with any current neighbor (meta-island,
-        D26) -- the agent must link_rm those edges first or supersede the
-        task with a new one carrying the desired kind. Fires the staling
+        D26) -- the agent must link_rm those edges first or create a new
+        task carrying the desired kind. Fires the staling
         cascade on linked neighbors (kind is a semantic property; the link
         relationship may need re-review). Closed neighbors stay closed +
         stale per T123."""

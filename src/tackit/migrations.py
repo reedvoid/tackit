@@ -6,8 +6,8 @@ registry, applying each pending migration in its own transaction + D18
 finalize_mutation, so an interrupted run leaves the disk in a consistent state
 at the last-applied version.
 
-Forward-only. The supersede convention + rotating backups (D18) are the
-rollback story; there are no down-migrations.
+Forward-only. Rotating backups (D18) are the rollback story; there are no
+down-migrations.
 
 Register new migrations by appending to :data:`MIGRATIONS` in target-version
 order. The runner refuses non-contiguous registries (missing N between current
@@ -100,6 +100,21 @@ def _mig_005_add_wont_do_status_and_reason(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA writable_schema=OFF;")
 
 
+def _mig_006_drop_superseded_by_column(conn: sqlite3.Connection) -> None:
+    """v0.4 / D29 -- retire the supersede marker. Drops the superseded_by
+    column added by mig_002. The v0.4 simplification replaces the marker's
+    archaeology role with the description_revisions audit table (S7) added
+    by mig_007: prior name/description preserved verbatim under the same
+    task id rather than via an FK pointer to a successor task.
+
+    For the dogfood db expect zero non-null superseded_by values (no
+    supersede was ever wired through MCP/CLI; the core op was only used in
+    tests). Any non-null values, if present, are silently lost on column
+    drop -- the prose they pointed at is still in the new task's row, just
+    no longer linked to the old."""
+    conn.execute("ALTER TABLE tasks DROP COLUMN superseded_by;")
+
+
 def _mig_003_dependencies_to_links_symmetric(conn: sqlite3.Connection) -> None:
     """T86 / D5 / D27 -- rebuild the directional `dependencies` table as the
     symmetric `links` table. Each existing (from_task, to_task) edge becomes
@@ -151,6 +166,11 @@ MIGRATIONS: list[Migration] = [
         target_version=6,
         name="add S1.wont_do_reason column + extend status CHECK (T132)",
         migrate=_mig_005_add_wont_do_status_and_reason,
+    ),
+    Migration(
+        target_version=7,
+        name="drop S1.superseded_by column (v0.4 / D29: supersede retired)",
+        migrate=_mig_006_drop_superseded_by_column,
     ),
 ]
 

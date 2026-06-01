@@ -53,7 +53,7 @@ def test_meta_to_meta_link_allowed(core):
     assert n == 1
 
 
-# --- T118: edit refused on closed tasks (use supersede) --------------------
+# --- T118: edit refused on closed tasks (P2 retires this) ------------------
 
 
 def test_edit_closed_task_refused(core):
@@ -63,19 +63,24 @@ def test_edit_closed_task_refused(core):
         core.edit(1, description="changed", delta="trying to edit a closed")
 
 
-def test_edit_closed_task_error_names_supersede(core):
+def test_edit_closed_task_error_directs_to_new_task(core):
+    """Under P1 the refusal stays, but the error message no longer names
+    supersede (the verb is gone). P2 will remove this refusal entirely once
+    the description_revisions audit table lands as the archaeology backstop."""
     core.add("a", kind="production")
     core.add("b", kind="production")  # potential successor
     core.close(1)
     try:
         core.edit(1, description="changed", delta="testing the message")
     except InvariantError as e:
-        assert "supersede" in str(e).lower()
+        msg = str(e).lower()
+        assert "new task" in msg
+        assert "supersede" not in msg  # verb retired
     else:
         raise AssertionError("expected InvariantError")
 
 
-# --- T117: delta required on edit / supersede / link_add / link_rm --------
+# --- T117: delta required on edit / link_add / link_rm --------------------
 
 
 def test_edit_empty_delta_refused(core):
@@ -99,13 +104,6 @@ def test_link_rm_empty_delta_refused(core):
     core.link_add(1, 2, because="real", delta="seed")
     with pytest.raises(ValidationError, match="delta"):
         core.link_rm(1, 2, delta="")
-
-
-def test_supersede_empty_delta_refused(core):
-    core.add("a", kind="production")
-    core.add("b", kind="production")
-    with pytest.raises(ValidationError, match="delta"):
-        core.supersede(1, 2, delta="")
 
 
 def test_core_last_delta_set_after_edit(core):

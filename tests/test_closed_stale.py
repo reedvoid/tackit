@@ -42,25 +42,14 @@ def test_closed_stale_reconcile_clears_stale_keeps_closed(core):
 def test_closed_stale_edit_still_refused(core):
     """T118 (no-edit-closed) is unchanged by T123. The relaxed D7 just lets
     closed tasks be stale; it does not unlock editing them. Drift must still
-    be addressed via supersede / link migration."""
+    be addressed via a new task carrying the new direction. P2 retires the
+    refusal once the description_revisions audit table lands."""
     _stale_closed_setup(core)
     with pytest.raises(InvariantError, match="closed"):
         core.edit(2, description="trying to fix it", delta="should be refused")
     # State unchanged.
     t2 = core.get(2)
     assert t2.stale is True and t2.status == "closed"
-
-
-def test_closed_stale_supersede_allowed(core):
-    """Supersede is the right action when a closed-stale task's premise has
-    been replaced. T119 cascade obligation is a different question (T124);
-    here we just verify supersede works on the closed-stale state."""
-    _stale_closed_setup(core)
-    core.add("replacement", kind="production")  # T3
-    result = core.supersede(2, 3, delta="downstream replaced by new design")
-    assert result.old.task.superseded_by == 3
-    # T2 still closed (supersede does not auto-close/open).
-    assert result.old.task.status == "closed"
 
 
 def test_closed_stale_link_add_allowed(core):

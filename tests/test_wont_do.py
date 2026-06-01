@@ -112,19 +112,22 @@ def test_wont_do_on_closed_refused(core):
         core.wont_do(1, reason="changing my mind", delta="this should refuse")
 
 
-# --- supersede IS the change-of-mind path ----------------------------------
+# --- change-of-mind path is a fresh task -----------------------------------
 
-def test_supersede_a_wont_do_task_works(core):
-    """supersede is content-immutable (only sets superseded_by marker); a
-    wont_do task can be superseded with a new task carrying the new
-    direction. T132 explicitly intends supersede as the change-of-mind path."""
+def test_wont_do_then_fresh_task_for_changed_mind(core):
+    """v0.4 retires supersede. The change-of-mind path on a wont_do task is
+    simply to create a new task with the new direction; the old wont_do row
+    stays as historical record. No FK marker linking the two; if a coupling
+    matters, link_add records it."""
     core.add("dropped_originally", kind="production")
-    core.add("now_doing_it", kind="production")
     core.wont_do(1, reason="not doing", delta="dropped")
-    result = core.supersede(1, 2, delta="changed our mind; new task carries the work")
-    assert result.old.task.superseded_by == 2
-    # T1 stays wont_do as the historical record.
-    assert result.old.task.status == "wont_do"
+    # Change of mind: spawn a new task with the new direction.
+    core.add("now_doing_it", kind="production")
+    # The wont_do row is untouched.
+    assert core.get(1).status == "wont_do"
+    assert core.get(1).wont_do_reason == "not doing"
+    # The new task exists alongside.
+    assert core.get(2).status == "open"
 
 
 # --- close-gate symmetric with wont_do -------------------------------------

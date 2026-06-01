@@ -339,79 +339,10 @@ def test_mig_001_enforces_kind_check_constraint(tmp_path):
 # ============================================================================
 # T85 / mig_002: add S1.superseded_by column
 # ============================================================================
-
-
-def test_mig_002_adds_superseded_by_column_null_on_existing(tmp_path):
-    """mig_002 adds the nullable FK column; existing rows default to NULL."""
-    _make_v1_store(tmp_path)
-    c = Core.open(start=tmp_path)
-    try:
-        rows = c.conn.execute(
-            "SELECT id, name, superseded_by FROM tasks ORDER BY id"
-        ).fetchall()
-        assert [(r["id"], r["name"], r["superseded_by"]) for r in rows] == [
-            (1, "alpha", None),
-            (2, "beta", None),
-        ]
-    finally:
-        c.close_conn()
-
-
-def test_mig_002_self_supersede_refused(tmp_path):
-    """After mig_002, the CHECK constraint refuses a row whose superseded_by
-    equals its own id. Exercised via INSERT with an explicit id rather than
-    UPDATE -- on UPDATE, SQLite's FTS5-content-trigger column-resolution path
-    masks the CHECK with a confusing OperationalError. The CHECK fires
-    identically; INSERT just keeps the failure surface readable."""
-    _make_v1_store(tmp_path)
-    c = Core.open(start=tmp_path)
-    try:
-        with pytest.raises(sqlite3.IntegrityError, match="superseded_by"):
-            c.conn.execute(
-                "INSERT INTO tasks(id, name, description, kind, status, stale, "
-                "superseded_by, created_at, updated_at) "
-                "VALUES (777, 'x', '', 'meta', 'open', 0, 777, "
-                "'2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00');"
-            )
-    finally:
-        c.close_conn()
-
-
-def test_mig_002_fk_enforced(tmp_path):
-    """After mig_002, the FK refuses a superseded_by pointing at a missing task."""
-    _make_v1_store(tmp_path)
-    c = Core.open(start=tmp_path)
-    try:
-        with pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY"):
-            c.conn.execute(
-                "INSERT INTO tasks(name, description, kind, status, stale, "
-                "superseded_by, created_at, updated_at) "
-                "VALUES ('x', '', 'meta', 'open', 0, 999, "
-                "'2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00');"
-            )
-    finally:
-        c.close_conn()
-
-
-def test_mig_002_real_supersede_link_allowed(tmp_path):
-    """A valid superseded_by (NOT NULL, distinct id, target exists) is accepted.
-    The op layer (T92) and surface (T95) come later; here we only prove the
-    column accepts a well-formed link."""
-    _make_v1_store(tmp_path)
-    c = Core.open(start=tmp_path)
-    try:
-        c.conn.execute(
-            "INSERT INTO tasks(name, description, kind, status, stale, "
-            "superseded_by, created_at, updated_at) "
-            "VALUES ('replacer', '', 'meta', 'open', 0, 1, "
-            "'2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00');"
-        )
-        row = c.conn.execute(
-            "SELECT superseded_by FROM tasks WHERE name = 'replacer';"
-        ).fetchone()
-        assert row["superseded_by"] == 1
-    finally:
-        c.close_conn()
+# Note: mig_002 is preserved in the migration chain for historical replay
+# from v1 stores. v0.4 / mig_006 drops the column, so the column-existence
+# behavior the original mig_002 tests verified is now reversed; see the
+# test_mig_006_* tests below for the steady-state check.
 
 
 def test_mig_004_adds_because_with_backfill_placeholder(tmp_path):
@@ -438,10 +369,11 @@ def test_mig_004_adds_because_with_backfill_placeholder(tmp_path):
         c.close_conn()
 
 
-def test_fresh_init_has_kind_and_superseded_by_columns(store_path):
-    """A fresh store at SCHEMA_VERSION already has the new columns with the
-    correct defaults, matching the migrated form (so v1-then-migrate and
-    fresh-init agree on the resulting schema)."""
+def test_fresh_init_has_kind_column_without_superseded_by(store_path):
+    """A fresh store at SCHEMA_VERSION 7 has the kind column (mig 001) but
+    NOT the superseded_by column (mig 002 added it; mig 006 dropped it in
+    v0.4 / D29). Fresh-init and v1-then-migrate-through-006 agree on the
+    resulting schema."""
     conn = connect(Store(store_path).db_path)
     try:
         conn.execute(
@@ -449,10 +381,54 @@ def test_fresh_init_has_kind_and_superseded_by_columns(store_path):
             "VALUES ('fresh', '', 'open', 0, "
             "'2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00');"
         )
-        row = conn.execute(
-            "SELECT kind, superseded_by FROM tasks WHERE name='fresh'"
-        ).fetchone()
+        row = conn.execute("SELECT kind FROM tasks WHERE name='fresh'").fetchone()
         assert row["kind"] == "production"
-        assert row["superseded_by"] is None
+        # superseded_by column does not exist on a fresh v7 store.
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(tasks)").fetchall()}
+        assert "superseded_by" not in cols
+        assert "kind" in cols
+        assert "wont_do_reason" in cols  # mig 005 still applies
     finally:
         conn.close()
+
+
+# ----------------------------------------------------------------------------
+# v0.4 / D29 / mig_006: drop S1.superseded_by column (supersede retired)
+# ----------------------------------------------------------------------------
+
+
+def test_mig_006_drops_superseded_by_column(tmp_path):
+    """After running migrations from v1 forward, the superseded_by column
+    added by mig_002 is gone (dropped by mig_006). The column is absent
+    from PRAGMA table_info; queries referencing it fail with 'no such column'."""
+    _make_v1_store(tmp_path)
+    c = Core.open(start=tmp_path)
+    try:
+        cols = {r[1] for r in c.conn.execute("PRAGMA table_info(tasks)").fetchall()}
+        assert "superseded_by" not in cols
+        with pytest.raises(sqlite3.OperationalError, match="no such column"):
+            c.conn.execute("SELECT superseded_by FROM tasks").fetchone()
+    finally:
+        c.close_conn()
+
+
+def test_mig_006_preserves_existing_task_rows(tmp_path):
+    """A v1 db that runs the full chain through mig_006 keeps its task rows
+    intact -- only the superseded_by column is removed; name/kind/status
+    all survive."""
+    _make_v1_store(tmp_path)
+    c = Core.open(start=tmp_path)
+    try:
+        rows = c.conn.execute(
+            "SELECT id, name, kind, status FROM tasks ORDER BY id"
+        ).fetchall()
+        assert [(r["id"], r["name"], r["kind"], r["status"]) for r in rows] == [
+            (1, "alpha", "production", "open"),
+            (2, "beta", "production", "closed"),
+        ]
+        cols = {r[1] for r in c.conn.execute("PRAGMA table_info(tasks)").fetchall()}
+        assert "superseded_by" not in cols
+        # And the remaining columns are intact:
+        assert "kind" in cols and "wont_do_reason" in cols and "stale" in cols
+    finally:
+        c.close_conn()

@@ -33,9 +33,8 @@ class Task(BaseModel):
     T123 (2026-06-01): the v0.2.0 invariant ``stale=True => status='open'`` is
     retired. Cascade-staling no longer force-opens closed neighbors -- a closed
     task can carry ``stale=True`` to signal "an upstream changed; review for
-    supersede / link migration" while remaining closed and immutable per T118.
-    The Pydantic validator is gone; both (open, stale) and (closed, stale) are
-    valid.
+    link migration" while remaining closed. v0.4 (D28): closed/wont_do stale is
+    record only -- not on the worklist, not blocking close-gates.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -46,7 +45,6 @@ class Task(BaseModel):
     kind: Kind = "production"
     status: Status = "open"
     stale: bool = False
-    superseded_by: Optional[int] = None  # D25 / T85: nullable FK to tasks.id
     wont_do_reason: Optional[str] = None  # T132: non-null iff status='wont_do'
     created_at: datetime
     updated_at: datetime
@@ -110,21 +108,6 @@ class ChangeResult(BaseModel):
 
     task: Task
     newly_stale: list[NeighborRef]  # direct dependents just marked stale
-
-
-class SupersedeResult(BaseModel):
-    """D25 / T92 / T124 - supersede payload. Marks ``old`` as superseded by
-    ``by`` and FIRES the staling cascade on ``old``'s direct linked neighbors
-    (T124). Returns BOTH slices so the agent reviews the relationship without
-    an extra fetch, plus ``newly_stale`` -- the cascade obligation list, mirror
-    of ChangeResult.newly_stale. supersede does NOT auto-close ``old`` (separate
-    decision, T101)."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    old: Slice
-    by: Slice
-    newly_stale: list[NeighborRef] = []  # T124: old's linked neighbors, now stale
 
 
 class StatusTransition(BaseModel):
