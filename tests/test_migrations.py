@@ -280,13 +280,24 @@ def _make_v1_store(tmp_path):
     return Store(tmp_path)
 
 
-def test_mig_001_adds_kind_column_and_backfills(tmp_path):
-    """mig_001 backfills existing rows with kind='production' (the safe guess
-    consistent with shipped behavior) and brings schema_version to 2."""
+def test_v1_store_migrates_through_all_pending(tmp_path):
+    """A v1 store reaches SCHEMA_VERSION after Core.open runs every pending
+    migration in order. (This is the integration-level smoke test for the
+    whole migration chain; per-migration content tests follow.)"""
     _make_v1_store(tmp_path)
     c = Core.open(start=tmp_path)
     try:
-        assert migrations.get_schema_version(c.conn) == 2
+        assert migrations.get_schema_version(c.conn) == int(schema.SCHEMA_VERSION)
+    finally:
+        c.close_conn()
+
+
+def test_mig_001_backfills_kind_production_on_existing_rows(tmp_path):
+    """mig_001 backfills existing rows with kind='production' (the safe guess
+    consistent with shipped behavior). T87 reclassifies in a separate pass."""
+    _make_v1_store(tmp_path)
+    c = Core.open(start=tmp_path)
+    try:
         rows = c.conn.execute(
             "SELECT id, name, kind FROM tasks ORDER BY id"
         ).fetchall()
@@ -313,9 +324,68 @@ def test_mig_001_enforces_kind_check_constraint(tmp_path):
         c.close_conn()
 
 
-def test_fresh_init_has_kind_column_with_default(store_path):
-    """A fresh v2 store already has the kind column with the 'production' default
-    -- no migration needed, but the schema must agree with the migrated form."""
+# ============================================================================
+# T85 / mig_002: add S1.superseded_by column
+# ============================================================================
+
+
+def test_mig_002_adds_superseded_by_column_null_on_existing(tmp_path):
+    """mig_002 adds the nullable FK column; existing rows default to NULL."""
+    _make_v1_store(tmp_path)
+    c = Core.open(start=tmp_path)
+    try:
+        rows = c.conn.execute(
+            "SELECT id, name, superseded_by FROM tasks ORDER BY id"
+        ).fetchall()
+        assert [(r["id"], r["name"], r["superseded_by"]) for r in rows] == [
+            (1, "alpha", None),
+            (2, "beta", None),
+        ]
+    finally:
+        c.close_conn()
+
+
+def test_mig_002_self_supersede_refused(tmp_path):
+    """After mig_002, the CHECK constraint refuses a task marked superseded by
+    itself."""
+    _make_v1_store(tmp_path)
+    c = Core.open(start=tmp_path)
+    try:
+        with pytest.raises(sqlite3.IntegrityError):
+            c.conn.execute("UPDATE tasks SET superseded_by = id WHERE id = 1;")
+    finally:
+        c.close_conn()
+
+
+def test_mig_002_fk_enforced(tmp_path):
+    """After mig_002, the FK refuses a superseded_by pointing at a missing task."""
+    _make_v1_store(tmp_path)
+    c = Core.open(start=tmp_path)
+    try:
+        with pytest.raises(sqlite3.IntegrityError):
+            c.conn.execute("UPDATE tasks SET superseded_by = 999 WHERE id = 1;")
+    finally:
+        c.close_conn()
+
+
+def test_mig_002_real_supersede_link_allowed(tmp_path):
+    """A valid superseded_by (NOT NULL, distinct id, target exists) is accepted.
+    The op layer (T92) and surface (T95) come later; here we only prove the
+    column accepts a well-formed link."""
+    _make_v1_store(tmp_path)
+    c = Core.open(start=tmp_path)
+    try:
+        c.conn.execute("UPDATE tasks SET superseded_by = 2 WHERE id = 1;")
+        row = c.conn.execute("SELECT superseded_by FROM tasks WHERE id = 1;").fetchone()
+        assert row["superseded_by"] == 2
+    finally:
+        c.close_conn()
+
+
+def test_fresh_init_has_kind_and_superseded_by_columns(store_path):
+    """A fresh store at SCHEMA_VERSION already has the new columns with the
+    correct defaults, matching the migrated form (so v1-then-migrate and
+    fresh-init agree on the resulting schema)."""
     conn = connect(Store(store_path).db_path)
     try:
         conn.execute(
@@ -324,8 +394,9 @@ def test_fresh_init_has_kind_column_with_default(store_path):
             "'2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00');"
         )
         row = conn.execute(
-            "SELECT kind FROM tasks WHERE name='fresh'"
+            "SELECT kind, superseded_by FROM tasks WHERE name='fresh'"
         ).fetchone()
         assert row["kind"] == "production"
+        assert row["superseded_by"] is None
     finally:
         conn.close()

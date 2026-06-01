@@ -53,13 +53,29 @@ def _mig_001_add_kind_column(conn: sqlite3.Connection) -> None:
     )
 
 
+def _mig_002_add_superseded_by_column(conn: sqlite3.Connection) -> None:
+    """T85 / D25 -- add the `superseded_by` marker to S1. Nullable FK to tasks.id
+    with a CHECK that refuses self-supersede. Existing rows default to NULL
+    (not superseded). The supersede() op + surface come later (T92, T95)."""
+    conn.execute(
+        "ALTER TABLE tasks ADD COLUMN superseded_by INTEGER "
+        "REFERENCES tasks(id) "
+        "CHECK (superseded_by IS NULL OR superseded_by <> id);"
+    )
+
+
 # Ordered registry. Append migrations here in target-version order as they land
-# (T84 -> target_version=2, T85 -> 3, T86 -> 4, ...).
+# (T84 -> 2, T85 -> 3, T86 -> 4, ...).
 MIGRATIONS: list[Migration] = [
     Migration(
         target_version=2,
         name="add S1.kind column (T84 / D26)",
         migrate=_mig_001_add_kind_column,
+    ),
+    Migration(
+        target_version=3,
+        name="add S1.superseded_by column (T85 / D25)",
+        migrate=_mig_002_add_superseded_by_column,
     ),
 ]
 

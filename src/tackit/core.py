@@ -182,6 +182,7 @@ class Core:
             kind=row["kind"],
             status=row["status"],
             stale=bool(row["stale"]),
+            superseded_by=row["superseded_by"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )

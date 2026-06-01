@@ -40,6 +40,7 @@ class Task(BaseModel):
     kind: Kind = "production"
     status: Status = "open"
     stale: bool = False
+    superseded_by: Optional[int] = None  # D25 / T85: nullable FK to tasks.id
     created_at: datetime
     updated_at: datetime
 
