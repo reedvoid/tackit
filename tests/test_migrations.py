@@ -423,7 +423,7 @@ def test_mig_004_adds_because_with_backfill_placeholder(tmp_path):
         # Seed a link via the runtime API (forces a meaningful because).
         c.add("a")
         c.add("b")
-        c.link_add(1, 2, because="T2 builds on T1")
+        c.link_add(1, 2, because="T2 builds on T1", delta="seed test link")
         row = c.conn.execute(
             "SELECT because FROM links WHERE task_a=1 AND task_b=2"
         ).fetchone()

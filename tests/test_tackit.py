@@ -69,7 +69,7 @@ def test_d5_d6_symmetric_link_traversal(core):
     # for API stability and rename in T93/T96.
     core.add("a")  # T1
     core.add("b")  # T2
-    core.link_add(2, 1, because="test fixture")  # link T1 <-> T2
+    core.link_add(2, 1, because="test fixture", delta="test")  # link T1 <-> T2
     assert [n.id for n in core.dependencies_of(2)] == [1]
     assert [n.id for n in core.dependents_of(1)] == [2]
     # Symmetric: querying from the other endpoint returns the same neighbor set.
@@ -80,7 +80,7 @@ def test_d5_d6_symmetric_link_traversal(core):
 def test_d14_self_link_refused(core):
     core.add("a")
     with pytest.raises(InvariantError):
-        core.link_add(1, 1, because="test fixture")
+        core.link_add(1, 1, because="test fixture", delta="test")
 
 
 def test_d5_duplicate_link_is_noop(core):
@@ -89,8 +89,8 @@ def test_d5_duplicate_link_is_noop(core):
     # second dep_add is a no-op (idempotent), not an error.
     core.add("a")  # T1
     core.add("b")  # T2
-    core.link_add(1, 2, because="test fixture")  # link T1 <-> T2
-    core.link_add(2, 1, because="test fixture")  # same link, reversed args -> idempotent
+    core.link_add(1, 2, because="test fixture", delta="test")  # link T1 <-> T2
+    core.link_add(2, 1, because="test fixture", delta="test")  # same link, reversed args -> idempotent
     # Exactly one row in the links table.
     n = core.conn.execute("SELECT COUNT(*) FROM links").fetchone()[0]
     assert n == 1
@@ -99,7 +99,7 @@ def test_d5_duplicate_link_is_noop(core):
 def test_d14_edge_to_missing_task_refused(core):
     core.add("a")
     with pytest.raises(NotFoundError):
-        core.link_add(1, 999, because="test fixture")
+        core.link_add(1, 999, because="test fixture", delta="test")
 
 
 # --- D7 / D8: status, stale invariant, history ------------------------------
@@ -107,9 +107,9 @@ def test_d14_edge_to_missing_task_refused(core):
 def test_d7_invariant_stale_implies_open(core):
     core.add("a")  # T1
     core.add("b")  # T2 depends_on T1
-    core.link_add(2, 1, because="test fixture")
+    core.link_add(2, 1, because="test fixture", delta="test")
     core.close(2)  # T2 closed
-    core.edit(1, description="changed")  # stales T2 -> forces it back open
+    core.edit(1, description="changed", delta="test")  # stales T2 -> forces it back open
     t2 = core.get(2)
     assert t2.stale is True and t2.status == "open"
 
@@ -130,7 +130,7 @@ def test_d9_slice_fetch(core):
     # linked-neighbor set.
     core.add("a", labels=["x"])  # T1
     core.add("b")  # T2
-    core.link_add(1, 2, because="test fixture")  # link T1 <-> T2
+    core.link_add(1, 2, because="test fixture", delta="test")  # link T1 <-> T2
     s = core.show(1)
     assert s.task.id == 1
     assert s.labels == ["x"]
@@ -144,9 +144,9 @@ def test_d10_edit_stales_direct_dependents_only(core):
     core.add("base")  # T1
     core.add("mid")  # T2 depends_on T1
     core.add("top")  # T3 depends_on T2
-    core.link_add(2, 1, because="test fixture")
-    core.link_add(3, 2, because="test fixture")
-    result = core.edit(1, description="base changed")
+    core.link_add(2, 1, because="test fixture", delta="test")
+    core.link_add(3, 2, because="test fixture", delta="test")
+    result = core.edit(1, description="base changed", delta="test")
     assert [n.id for n in result.newly_stale] == [2]  # direct dependent only
     assert core.get(2).stale is True
     assert core.get(3).stale is False  # NOT transitive (D10)
@@ -157,8 +157,8 @@ def test_d10_edit_stales_direct_dependents_only(core):
 def test_d11_worklist_and_reconcile(core):
     core.add("base")  # T1
     core.add("dep")  # T2 depends_on T1
-    core.link_add(2, 1, because="test fixture")
-    core.edit(1, description="x")
+    core.link_add(2, 1, because="test fixture", delta="test")
+    core.edit(1, description="x", delta="test")
     assert [t.id for t in core.stale_worklist()] == [2]
     core.reconcile(2)
     assert core.stale_worklist() == []
@@ -169,7 +169,7 @@ def test_d11_worklist_and_reconcile(core):
 def test_d12_close_returns_neighbors(core):
     core.add("a")  # T1
     core.add("b")  # T2 depends_on T1
-    core.link_add(2, 1, because="test fixture")
+    core.link_add(2, 1, because="test fixture", delta="test")
     result = core.close(2)
     assert result.task.status == "closed"
     assert [n.id for n in result.dependencies] == [1]
@@ -178,8 +178,8 @@ def test_d12_close_returns_neighbors(core):
 def test_d14_close_gate_refuses_stale_then_allows_after_reconcile(core):
     core.add("base")  # T1
     core.add("dep")  # T2 depends_on T1
-    core.link_add(2, 1, because="test fixture")
-    core.edit(1, description="x")  # stales T2
+    core.link_add(2, 1, because="test fixture", delta="test")
+    core.edit(1, description="x", delta="test")  # stales T2
     with pytest.raises(InvariantError):
         core.close(2)
     core.reconcile(2)

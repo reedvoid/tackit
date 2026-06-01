@@ -16,9 +16,9 @@ def _v(core) -> int:
 def test_d20_edit_no_field_is_noop(core):
     core.add("base")  # T1
     core.add("dep")  # T2
-    core.link_add(2, 1, because="test fixture")  # T2 depends_on T1
+    core.link_add(2, 1, because="test fixture", delta="test")  # T2 depends_on T1
     v = _v(core)
-    result = core.edit(1)  # no name, no description
+    result = core.edit(1, delta="test")  # no name, no description
     assert _v(core) == v  # no version bump
     assert result.newly_stale == []  # did not stale dependents
     assert core.get(2).stale is False
@@ -27,14 +27,14 @@ def test_d20_edit_no_field_is_noop(core):
 def test_d20_edit_same_value_is_noop(core):
     core.add("base", description="body")
     v = _v(core)
-    core.edit(1, name="base", description="body")  # identical to stored
+    core.edit(1, name="base", description="body", delta="test")  # identical to stored
     assert _v(core) == v
 
 
 def test_d20_edit_real_change_bumps(core):
     core.add("base")
     v = _v(core)
-    core.edit(1, description="changed")
+    core.edit(1, description="changed", delta="test")
     assert _v(core) == v + 1
 
 
@@ -85,9 +85,9 @@ def test_d20_label_real_add_bumps(core):
 def test_d20_dep_readd_is_noop(core):
     core.add("a")
     core.add("b")
-    core.link_add(2, 1, because="test fixture")
+    core.link_add(2, 1, because="test fixture", delta="test")
     v = _v(core)
-    core.link_add(2, 1, because="test fixture")  # duplicate edge
+    core.link_add(2, 1, because="test fixture", delta="test")  # duplicate edge
     assert _v(core) == v
 
 
@@ -95,5 +95,5 @@ def test_d20_dep_rm_absent_is_noop(core):
     core.add("a")
     core.add("b")
     v = _v(core)
-    core.link_rm(2, 1)  # no such edge
+    core.link_rm(2, 1, delta="test")  # no such edge
     assert _v(core) == v

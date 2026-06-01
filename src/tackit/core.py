@@ -37,6 +37,24 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _require_delta(delta: str | None, op: str) -> None:
+    """T117 / cascade-ergonomics B - every mutating op that fires the cascade
+    (edit, supersede, link_add, link_rm) requires the agent to provide a short
+    semantic delta. Empty / whitespace / missing is refused loudly so the agent
+    can't slip past the rationale-comparison discipline. Keep it one sentence;
+    "shifted D5 from directed to symmetric link" is the right shape -- you are
+    writing it for future-you to compare against every edge-rationale on the
+    stale list, so don't write a treatise."""
+    if delta is None or not delta.strip():
+        raise ValidationError(
+            f"{op} requires a non-empty `delta` describing what changed "
+            f"semantically (T117). One sentence; describe the semantic shift, "
+            f"not the field bytes. Future-you will compare this against every "
+            f"linked task's `because` rationale to decide relevance."
+        )
+    _validate_text(delta, f"{op} delta")
+
+
 def _validate_text(value: str | None, field: str) -> None:
     """D2 fail-loud: refuse text that cannot be stored AND round-tripped. Two cases
     the property-based test surfaced, both rejected loudly at the boundary so the
@@ -142,6 +160,11 @@ class Core:
         # adapters can surface the anti-sprawl nudge (CLI stderr / MCP envelope).
         # Lives for the single op's lifetime (each command/tool call is a fresh Core).
         self.last_label_nudge: str | None = None
+        # T117 / cascade-ergonomics B: set by the four mutating ops that fire the
+        # cascade (edit, supersede, link_add, link_rm) so adapters can surface
+        # the agent's semantic-delta string alongside the stale_alert. Ephemeral
+        # -- one op's lifetime only; not stored anywhere.
+        self.last_delta: str | None = None
 
     @classmethod
     def open(cls, start: Path | None = None) -> "Core":
@@ -505,13 +528,14 @@ class Core:
         stale_found.sort()
         return stale_found
 
-    def link_add(self, a: int, b: int, because: str) -> Slice:
-        """D5 (T93) + T116 - add a symmetric link between ``a`` and ``b`` with
-        a required ``because`` rationale. The stored row is canonicalized
-        (lower id first) so ``link_add(a, b, ...)`` and ``link_add(b, a, ...)``
-        produce the same row and are indistinguishable thereafter. No-op if
-        the link already exists (the existing rationale stays; the no-op does
-        NOT overwrite it)."""
+    def link_add(self, a: int, b: int, because: str, delta: str) -> Slice:
+        """D5 (T93) + T116 + T117 - add a symmetric link between ``a`` and ``b``
+        with a required ``because`` rationale (durable) and a required
+        ``delta`` (ephemeral, one sentence describing the change). The
+        canonicalized row is stored once; no-op on duplicate; no-op does NOT
+        overwrite the existing rationale."""
+        _require_delta(delta, "link_add")
+        self.last_delta = delta.strip()
         ta, tb = self._canonical(a, b)
         existing = self.conn.execute(
             "SELECT 1 FROM links WHERE task_a = ? AND task_b = ?", (ta, tb)
@@ -521,9 +545,12 @@ class Core:
                 self._add_link(a, b, because)
         return self.show(a)
 
-    def link_rm(self, a: int, b: int) -> Slice:
-        """D5 (T93) - remove the symmetric link between ``a`` and ``b``. Arg
-        order doesn't matter (canonical lookup); no-op if the link is absent."""
+    def link_rm(self, a: int, b: int, delta: str) -> Slice:
+        """D5 (T93) + T117 - remove the symmetric link between ``a`` and ``b``;
+        required ``delta`` describes the semantic change. Canonical lookup;
+        no-op if absent."""
+        _require_delta(delta, "link_rm")
+        self.last_delta = delta.strip()
         self._require_row(a)
         self._require_row(b)
         ta, tb = self._canonical(a, b)
@@ -565,13 +592,12 @@ class Core:
     # ====================================================================
     # D25 - supersede op (T92)
     # ====================================================================
-    def supersede(self, old_id: int, by_id: int) -> SupersedeResult:
-        """D25 - mark ``old`` as superseded by ``by`` (sets the superseded_by
-        FK on tasks/S1). Refuses self-supersede. Does **not** auto-close
-        ``old`` -- supersede and close are independent decisions (T101): the
-        agent closes ``old`` separately if retiring it, or leaves it open to
-        track follow-up. Returns both slices so the reviewer sees the
-        relationship without an extra fetch."""
+    def supersede(self, old_id: int, by_id: int, delta: str) -> SupersedeResult:
+        """D25 + T117 - mark ``old`` as superseded by ``by``; required ``delta``
+        names the semantic replacement. Refuses self-supersede. Does **not**
+        auto-close ``old`` (separate decision, T101). Returns both slices."""
+        _require_delta(delta, "supersede")
+        self.last_delta = delta.strip()
         if old_id == by_id:
             raise InvariantError(
                 f"a task cannot supersede itself (T{old_id})."
@@ -748,12 +774,18 @@ class Core:
     # D13 - change (with cascade entry) -> D10
     # ====================================================================
     def edit(
-        self, task_id: int, name: str | None = None, description: str | None = None
+        self,
+        task_id: int,
+        delta: str,
+        name: str | None = None,
+        description: str | None = None,
     ) -> ChangeResult:
-        """D13 - edit a task: first mark its direct dependents stale+open (D10),
-        then apply the edit, then return the now-stale set. Entry point of the
-        change-time cascade (reconciling each may, if it too changes, stale its
-        own dependents)."""
+        """D13 + T117 - edit a task: first mark its direct linked tasks
+        stale+open (D10), then apply the edit, then return the now-stale set.
+        ``delta`` (T117) is required and surfaces in the stale_alert envelope
+        so reconcilers compare it against each link's `because` rationale."""
+        _require_delta(delta, "edit")
+        self.last_delta = delta.strip()
         row = self._require_row(task_id)
         if name is not None and not name.strip():
             raise ValidationError("task name cannot be set empty (D3/S1).")

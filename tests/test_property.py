@@ -69,7 +69,7 @@ class TackitMachine(RuleBasedStateMachine):
     @precondition(lambda self: self.ids)
     @rule(i=_pick, name=_names)
     def edit(self, i, name):
-        self.core.edit(self._id(i), name=name)
+        self.core.edit(self._id(i), name=name, delta="property test")
 
     @precondition(lambda self: self.ids)
     @rule(i=_pick)
@@ -93,14 +93,14 @@ class TackitMachine(RuleBasedStateMachine):
     @rule(i=_pick, j=_pick)
     def dep_add(self, i, j):
         try:
-            self.core.link_add(self._id(i), self._id(j), because="property test")
+            self.core.link_add(self._id(i), self._id(j), because="property test", delta="property test")
         except InvariantError:
             pass  # refused: self-link is the only invariant under symmetric model
 
     @precondition(lambda self: len(self.ids) >= 2)
     @rule(i=_pick, j=_pick)
     def dep_rm(self, i, j):
-        self.core.link_rm(self._id(i), self._id(j))
+        self.core.link_rm(self._id(i), self._id(j), delta="property test")
 
     @precondition(lambda self: self.ids)
     @rule(i=_pick, label=_labels)

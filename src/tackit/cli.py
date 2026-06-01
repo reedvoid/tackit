@@ -104,6 +104,8 @@ def _core_session():
             _print_stale_banner(after, changed=True)
         if core.last_label_nudge:  # D23 anti-sprawl nudge
             print(core.last_label_nudge, file=sys.stderr)
+        if core.last_delta:  # T117 cascade-ergonomics delta
+            print(f"delta: {core.last_delta}", file=sys.stderr)
         core.close_conn()
 
 
@@ -206,7 +208,7 @@ def _cmd_search(args) -> int:
 
 def _cmd_edit(args) -> int:
     with _core_session() as core:
-        result = core.edit(args.id, name=args.name, description=args.desc)
+        result = core.edit(args.id, delta=args.delta, name=args.name, description=args.desc)
         text = ["edited " + _fmt_task(result.task)]
         if result.newly_stale:
             text.append("  ⚠ now STALE (review/reconcile these dependents):")
@@ -244,10 +246,10 @@ def _cmd_reconcile(args) -> int:
 def _cmd_link(args) -> int:
     with _core_session() as core:
         if args.link_action == "add":
-            s = core.link_add(args.a, args.b, because=args.because)
+            s = core.link_add(args.a, args.b, because=args.because, delta=args.delta)
             verb = "added"
         else:
-            s = core.link_rm(args.a, args.b)
+            s = core.link_rm(args.a, args.b, delta=args.delta)
             verb = "removed"
         _emit(
             f"{verb} link T{args.a} <-> T{args.b}\n" + _fmt_slice(s),
@@ -443,6 +445,14 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("id", type=int)
     sp.add_argument("--name")
     sp.add_argument("--desc")
+    sp.add_argument(
+        "--delta",
+        required=True,
+        help="One-sentence semantic-change description (T117). The cascade "
+        "compares it against each linked task's `because` rationale; future-"
+        "you reads it to decide what's relevant. Describe the SHIFT, not "
+        "the bytes.",
+    )
 
     sp = add("close", _cmd_close, "close (refused if stale) + print neighbors (D12/D14)")
     sp.add_argument("id", type=int)
@@ -463,10 +473,15 @@ def build_parser() -> argparse.ArgumentParser:
             lsp.add_argument(
                 "--because",
                 required=True,
-                help="WHY this pair is coupled. Cascade compares this against "
-                "the change delta to filter relevance -- be specific "
-                "(T116). Describe the coupling, not the implementation.",
+                help="WHY this pair is coupled (durable rationale, T116).",
             )
+        lsp.add_argument(
+            "--delta",
+            required=True,
+            help="One sentence describing what this op changes semantically "
+            "(T117). Future-you will compare it against each linked "
+            "task's --because to decide relevance.",
+        )
         lsp.set_defaults(func=_cmd_link)
 
     sp = add("label", _cmd_label, "tag/untag a task (D4)")

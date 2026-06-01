@@ -39,6 +39,7 @@ def _wrap(core: Core, result):
     return {
         "stale_alert": stale_alert_payload(core.stale_worklist()),
         "label_nudge": core.last_label_nudge,  # D23: set iff a new label was created
+        "delta": core.last_delta,  # T117: set iff a delta-bearing op just ran
         "result": result,
     }
 
@@ -76,11 +77,18 @@ def build_server() -> FastMCP:
             return _wrap(c, hits)
 
     @mcp.tool()
-    def edit(id: int, name: str | None = None, description: str | None = None) -> dict:
-        """Edit a task (D13). First marks its direct dependents stale (D10);
-        returns the task plus the now-stale set you must review/reconcile."""
+    def edit(id: int, delta: str, name: str | None = None, description: str | None = None) -> dict:
+        """Edit a task (D13) + T117. First marks its direct linked tasks stale
+        (D10); returns the task plus the now-stale set you must review.
+
+        Required ``delta`` -- one short sentence describing what changed
+        semantically. The reconciler compares this against each stale link's
+        `because` rationale to filter relevance, so write it for future-you:
+        "shifted D5 from directed to symmetric link" beats "updated the task
+        to reflect the new design." Auto-diff is worthless here -- the agent
+        already knows what it did."""
         with _core() as c:
-            return _wrap(c, c.edit(id, name=name, description=description).model_dump(mode="json"))
+            return _wrap(c, c.edit(id, delta=delta, name=name, description=description).model_dump(mode="json"))
 
     @mcp.tool()
     def close(id: int) -> dict:
@@ -104,26 +112,26 @@ def build_server() -> FastMCP:
             return _wrap(c, c.reconcile(id).model_dump(mode="json"))
 
     @mcp.tool()
-    def link_add(a: int, b: int, because: str) -> dict:
-        """Add a symmetric link between tasks ``a`` and ``b`` with a required
-        ``because`` rationale (D5/T93/T116). Argument order doesn't matter --
-        the row is stored canonically. Refused on self-link (D14), on
-        cross-kind meta links (D26 meta-island), and on empty ``because``.
-
-        The rationale describes WHY the two tasks are coupled -- the cascade
-        compares it against change deltas to filter relevance. Be specific:
-        "T's CRUD writes S1.name and S1.description" is laser-precise; "T uses
-        U" is useless. Describe the coupling, not the implementation.
-        Returns ``a``'s slice."""
+    def link_add(a: int, b: int, because: str, delta: str) -> dict:
+        """Add a symmetric link between tasks ``a`` and ``b`` with required
+        ``because`` (durable per-edge rationale, T116) and ``delta``
+        (ephemeral one-sentence description of this change, T117). Argument
+        order doesn't matter -- the row is stored canonically. Refused on
+        self-link (D14), cross-kind meta links (D26 meta-island), empty
+        ``because``, or empty ``delta``. Returns ``a``'s slice."""
         with _core() as c:
-            return _wrap(c, c.link_add(a, b, because=because).model_dump(mode="json"))
+            return _wrap(
+                c,
+                c.link_add(a, b, because=because, delta=delta).model_dump(mode="json"),
+            )
 
     @mcp.tool()
-    def link_rm(a: int, b: int) -> dict:
-        """Remove the symmetric link between ``a`` and ``b`` (D5/T93). Argument
-        order doesn't matter (canonical lookup)."""
+    def link_rm(a: int, b: int, delta: str) -> dict:
+        """Remove the symmetric link between ``a`` and ``b`` (D5/T93) with
+        required ``delta`` (T117). Argument order doesn't matter (canonical
+        lookup)."""
         with _core() as c:
-            return _wrap(c, c.link_rm(a, b).model_dump(mode="json"))
+            return _wrap(c, c.link_rm(a, b, delta=delta).model_dump(mode="json"))
 
     @mcp.tool()
     def label_add(id: int, label: str) -> dict:

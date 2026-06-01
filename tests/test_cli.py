@@ -63,9 +63,9 @@ def test_cli_add_json_output(cli, capsys):
 def test_cli_edit_surfaces_stale_on_stderr(cli, capsys):
     main(["add", "base"])
     main(["add", "dep"])
-    main(["link", "add", "2", "1", "--because", "test"])
+    main(["link", "add", "2", "1", "--because", "test", "--delta", "test"])
     capsys.readouterr()
-    assert main(["edit", "1", "--desc", "changed"]) == 0
+    assert main(["edit", "1", "--desc", "changed", "--delta", "test"]) == 0
     err = capsys.readouterr().err
     assert "STALE" in err.upper() and "T2" in err
 
@@ -73,8 +73,8 @@ def test_cli_edit_surfaces_stale_on_stderr(cli, capsys):
 def test_cli_close_stale_refused_exit_1(cli, capsys):
     main(["add", "base"])
     main(["add", "dep"])
-    main(["link", "add", "2", "1", "--because", "test"])
-    main(["edit", "1", "--desc", "x"])
+    main(["link", "add", "2", "1", "--because", "test", "--delta", "test"])
+    main(["edit", "1", "--desc", "x", "--delta", "test"])
     capsys.readouterr()
     assert main(["close", "2"]) == 1
     assert "REFUSED" in capsys.readouterr().err
@@ -100,8 +100,8 @@ def test_cli_dep_add_reverse_args_is_idempotent(cli):
     # second dep_add is a successful no-op (exit 0), not a cycle refusal.
     main(["add", "a"])
     main(["add", "b"])
-    main(["link", "add", "1", "2", "--because", "test"])
-    assert main(["link", "add", "2", "1", "--because", "test"]) == 0  # idempotent, exit 0
+    main(["link", "add", "1", "2", "--because", "test", "--delta", "test"])
+    assert main(["link", "add", "2", "1", "--because", "test", "--delta", "test"]) == 0  # idempotent, exit 0
 
 
 def test_cli_ls_status_filter(cli, capsys):
@@ -141,10 +141,10 @@ def test_cli_new_label_nudge_on_stderr(cli, capsys):
 def test_cli_reopen_then_reconcile_clears_worklist(cli, capsys):
     main(["add", "base"])
     main(["add", "dep"])
-    main(["link", "add", "2", "1", "--because", "test"])
+    main(["link", "add", "2", "1", "--because", "test", "--delta", "test"])
     main(["close", "2"])
     main(["reopen", "2"])
-    main(["edit", "1", "--desc", "x"])  # stales T2
+    main(["edit", "1", "--desc", "x", "--delta", "test"])  # stales T2
     assert main(["reconcile", "2"]) == 0
     capsys.readouterr()
     assert main(["stale", "--json"]) == 0
@@ -195,8 +195,8 @@ def test_cli_setup_emits_install_steps(cli, capsys):
 def test_cli_dep_rm(cli):
     main(["add", "a"])
     main(["add", "b"])
-    main(["link", "add", "2", "1", "--because", "test"])
-    assert main(["link", "rm", "2", "1"]) == 0
+    main(["link", "add", "2", "1", "--because", "test", "--delta", "test"])
+    assert main(["link", "rm", "2", "1", "--delta", "test"]) == 0
 
 
 def test_cli_restore_by_index(cli, capsys):
@@ -225,7 +225,7 @@ def test_cli_no_store_fails_loud(tmp_path, monkeypatch):
 def test_cli_board_groups_and_shows_edges(cli, capsys):
     main(["add", "base"])
     main(["add", "dep"])
-    main(["link", "add", "2", "1", "--because", "test"])
+    main(["link", "add", "2", "1", "--because", "test", "--delta", "test"])
     main(["close", "1"])
     capsys.readouterr()
     assert main(["board"]) == 0
@@ -239,8 +239,8 @@ def test_cli_board_groups_and_shows_edges(cli, capsys):
 def test_cli_board_stale_filter(cli, capsys):
     main(["add", "base"])
     main(["add", "dep"])
-    main(["link", "add", "2", "1", "--because", "test"])
-    main(["edit", "1", "--desc", "x"])  # stales T2
+    main(["link", "add", "2", "1", "--because", "test", "--delta", "test"])
+    main(["edit", "1", "--desc", "x", "--delta", "test"])  # stales T2
     capsys.readouterr()
     assert main(["board", "--stale"]) == 0
     out = capsys.readouterr().out
@@ -260,8 +260,8 @@ def test_cli_labels(cli, capsys):
 def test_cli_stale_lists_nonempty_worklist(cli, capsys):
     main(["add", "base"])
     main(["add", "dep"])
-    main(["link", "add", "2", "1", "--because", "test"])
-    main(["edit", "1", "--desc", "x"])  # stales T2
+    main(["link", "add", "2", "1", "--because", "test", "--delta", "test"])
+    main(["edit", "1", "--desc", "x", "--delta", "test"])  # stales T2
     capsys.readouterr()
     main(["stale"])
     out = capsys.readouterr().out
@@ -271,7 +271,7 @@ def test_cli_stale_lists_nonempty_worklist(cli, capsys):
 def test_cli_edit_no_dependents(cli, capsys):
     main(["add", "solo"])
     capsys.readouterr()
-    assert main(["edit", "1", "--desc", "changed"]) == 0
+    assert main(["edit", "1", "--desc", "changed", "--delta", "test"]) == 0
     assert "no dependents" in capsys.readouterr().out.lower()
 
 

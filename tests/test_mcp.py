@@ -60,7 +60,7 @@ def test_mcp_board_returns_slices_with_edges(tmp_path, monkeypatch):
     async def scenario(s):
         await s.call_tool("add", {"name": "base"})
         await s.call_tool("add", {"name": "dep"})
-        await s.call_tool("link_add", {"a": 2, "b": 1, "because": "test fixture"})
+        await s.call_tool("link_add", {"a": 2, "b": 1, "because": "test fixture", "delta": "test"})
         return await s.call_tool("board", {"status": "open"})
 
     env = _envelope(_drive(tmp_path, monkeypatch, scenario))
@@ -76,8 +76,9 @@ def test_mcp_success_wraps_result_in_envelope(tmp_path, monkeypatch):
         return await s.call_tool("show", {"id": 1})
 
     env = _envelope(_drive(tmp_path, monkeypatch, scenario))
-    assert set(env.keys()) == {"stale_alert", "label_nudge", "result"}
+    assert set(env.keys()) == {"stale_alert", "label_nudge", "delta", "result"}
     assert env["stale_alert"] is None and env["label_nudge"] is None  # nothing stale, no new label
+    assert env["delta"] is None  # T117: show is a read, no delta
     assert env["result"]["task"]["id"] == 1
 
 
@@ -96,8 +97,8 @@ def test_mcp_stale_alert_rides_in_envelope(tmp_path, monkeypatch):
     async def scenario(s):
         await s.call_tool("add", {"name": "base"})
         await s.call_tool("add", {"name": "dep"})
-        await s.call_tool("link_add", {"a": 2, "b": 1, "because": "test fixture"})
-        return await s.call_tool("edit", {"id": 1, "description": "x"})  # stales T2
+        await s.call_tool("link_add", {"a": 2, "b": 1, "because": "test fixture", "delta": "test"})
+        return await s.call_tool("edit", {"id": 1, "description": "x", "delta": "test edit"})  # stales T2
 
     env = _envelope(_drive(tmp_path, monkeypatch, scenario))
     assert env["stale_alert"]["count"] == 1
@@ -109,8 +110,8 @@ def test_mcp_close_stale_refusal_is_error(tmp_path, monkeypatch):
     async def scenario(s):
         await s.call_tool("add", {"name": "base"})
         await s.call_tool("add", {"name": "dep"})
-        await s.call_tool("link_add", {"a": 2, "b": 1, "because": "test fixture"})
-        await s.call_tool("edit", {"id": 1, "description": "x"})  # stales T2
+        await s.call_tool("link_add", {"a": 2, "b": 1, "because": "test fixture", "delta": "test"})
+        await s.call_tool("edit", {"id": 1, "description": "x", "delta": "test edit"})  # stales T2
         return await s.call_tool("close", {"id": 2})
 
     result = _drive(tmp_path, monkeypatch, scenario)
@@ -122,10 +123,10 @@ def test_mcp_dependency_aware_gate(tmp_path, monkeypatch):
     async def scenario(s):
         await s.call_tool("add", {"name": "base"})  # T1
         await s.call_tool("add", {"name": "mid"})  # T2
-        await s.call_tool("link_add", {"a": 2, "b": 1, "because": "test fixture"})
+        await s.call_tool("link_add", {"a": 2, "b": 1, "because": "test fixture", "delta": "test"})
         await s.call_tool("add", {"name": "top"})  # T3
-        await s.call_tool("link_add", {"a": 3, "b": 2, "because": "test fixture"})
-        await s.call_tool("edit", {"id": 1, "description": "x"})  # stales T2
+        await s.call_tool("link_add", {"a": 3, "b": 2, "because": "test fixture", "delta": "test"})
+        await s.call_tool("edit", {"id": 1, "description": "x", "delta": "test edit"})  # stales T2
         return await s.call_tool("close", {"id": 3})  # T3 depends on stale T2
 
     result = _drive(tmp_path, monkeypatch, scenario)
@@ -151,8 +152,8 @@ def test_mcp_remaining_tools_all_work(tmp_path, monkeypatch):
         out = {}
         await s.call_tool("add", {"name": "alpha widget"})  # T1
         await s.call_tool("add", {"name": "beta widget"})  # T2
-        await s.call_tool("link_add", {"a": 2, "b": 1, "because": "test fixture"})
-        out["link_rm"] = _envelope(await s.call_tool("link_rm", {"a": 2, "b": 1}))
+        await s.call_tool("link_add", {"a": 2, "b": 1, "because": "test fixture", "delta": "test"})
+        out["link_rm"] = _envelope(await s.call_tool("link_rm", {"a": 2, "b": 1, "delta": "test"}))
         await s.call_tool("label_add", {"id": 1, "label": "tag"})
         out["label_rm"] = _envelope(await s.call_tool("label_rm", {"id": 1, "label": "tag"}))
         await s.call_tool("close", {"id": 1})
