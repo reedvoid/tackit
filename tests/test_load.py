@@ -128,11 +128,17 @@ def test_load_unknown_dep_key_fails_before_mutating(core):
     assert core.ls() == []  # nothing created (validated before the transaction)
 
 
-def test_load_cycle_fails_atomically(core):
+def test_load_mutual_depends_on_creates_single_link(core):
+    # Under v0.3.0 symmetric semantics (T86), "[a] depends_on b" and
+    # "[b] depends_on a" describe the SAME link {a, b}; the load just creates
+    # the canonical pair once (no cycle to refuse). The plan parser still
+    # accepts the v0.2.0 `depends_on:` keyword; T113 updates D24 prose to use
+    # `links:` and tightens the parser.
     cyc = "[a] one\n  depends_on: b\n[b] two\n  depends_on: a\n"
-    with pytest.raises(InvariantError):
-        core.load(parse_plan(cyc))
-    assert core.ls() == []  # rolled back — no partial import
+    core.load(parse_plan(cyc))
+    assert [t.id for t in core.ls()] == [1, 2]
+    n = core.conn.execute("SELECT COUNT(*) FROM links").fetchone()[0]
+    assert n == 1  # canonical (1, 2) — both depends_on lines collapse to it
 
 
 def test_load_is_a_single_version_bump(core):

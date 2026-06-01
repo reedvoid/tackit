@@ -128,16 +128,21 @@ def test_unpaired_surrogate_in_name_refused(core):
 
 
 def test_diamond_traversal_dedup(core):
-    # T4 reaches T1 by two paths (T4->T2->T1 and T4->T3->T1); exercises the `seen`
-    # dedup in both _stale_upstream (close) and _reaches (cycle check).
+    # Under symmetric semantics (T86), the diamond exercises the `seen` dedup
+    # in `_stale_linked_transitive` (the close-gate walker). T4 reaches T1 by
+    # two paths in the undirected graph; the walker must not revisit T1. Cycles
+    # are no longer a concept (undirected edges have no directed cycle), so
+    # closing the apex is permitted and the would-be-cycle dep_add is now
+    # idempotent (the canonical pair (1, 4) is created either way).
     core.add("base")  # T1
     core.add("left")
-    core.dep_add(2, 1)  # T2 -> T1
+    core.dep_add(2, 1)  # link T1 <-> T2
     core.add("right")
-    core.dep_add(3, 1)  # T3 -> T1
+    core.dep_add(3, 1)  # link T1 <-> T3
     core.add("apex")
-    core.dep_add(4, 2)
-    core.dep_add(4, 3)  # T4 -> T2, T4 -> T3
+    core.dep_add(4, 2)  # link T2 <-> T4
+    core.dep_add(4, 3)  # link T3 <-> T4
     assert core.close(4).task.status == "closed"  # walks the diamond, nothing stale
-    with pytest.raises(InvariantError):
-        core.dep_add(1, 4)  # T1 depends_on T4 -> T4 already reaches T1 -> cycle
+    core.dep_add(1, 4)  # adds link T1 <-> T4 (no cycle under symmetric)
+    n = core.conn.execute("SELECT COUNT(*) FROM links").fetchone()[0]
+    assert n == 5  # 4 original + 1 new

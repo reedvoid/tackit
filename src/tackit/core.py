@@ -144,15 +144,32 @@ class Core:
 
     @classmethod
     def open(cls, start: Path | None = None) -> "Core":
-        """Resolve the store (D1 walk-up), run the D18 startup sync (build on a
-        fresh clone, refuse on ambiguous divergence), apply any pending schema
-        migrations (T83), then open the connection."""
+        """Resolve the store (D1 walk-up); run the D18 sync verdict BEFORE
+        migrating (so a newer .sql gets pulled, a divergent state is refused);
+        then open the conn, run any pending schema migrations (T83), and
+        finally export if there is still no .sql. Migration must follow sync
+        because the dump emitted by ``finalize_mutation`` uses the current
+        schema -- emitting it over a pre-migration db would corrupt the file."""
         from . import migrations
 
         store = require_store(start)
-        sync.startup_sync(store)  # may raise SyncError; may rebuild the db
+        # D18 sync verdict. We call startup_sync only when at least one of the
+        # two files exists; we also avoid the "no .sql" branch (which would
+        # export a pre-migration db) by handling that case after migration
+        # ourselves.
+        if store.db_path.exists() and store.sql_path.exists():
+            sync.startup_sync(store)  # may rebuild .db on Vsql > Vdb; may raise SyncError
+        elif store.sql_path.exists():
+            sync.rebuild_db_from_sql(store)  # fresh clone with only .sql
+        # else: no .sql; will export after migration so the dump uses current schema
+
         conn = connect(store.db_path)
         migrations.run_pending_migrations(conn, store)
+
+        # Post-migration: if we still have no .sql (db-only case), export now
+        # over the just-migrated db so the file matches the current schema.
+        if not store.sql_path.exists():
+            sync.export(store)
         return cls(store, conn)
 
     def close_conn(self) -> None:
@@ -239,7 +256,7 @@ class Core:
             for label in labels or []:
                 self._attach_label(task_id, label)
             for dep in deps or []:
-                self._add_edge(task_id, dep)  # new task depends_on dep
+                self._add_link(task_id, dep)  # new task depends_on dep
         if new_labels:
             self._set_label_nudge(new_labels)  # D23 anti-sprawl nudge
         return self.get(task_id)
@@ -291,7 +308,7 @@ class Core:
             for s in specs:  # pass 2: edges (all keys now have ids)
                 frm = keymap[s["key"]]
                 for dep in s["depends_on"]:
-                    self._add_edge(frm, keymap[dep])
+                    self._add_link(frm, keymap[dep])
         if new_labels:  # T67: surface the new labels so the agent can collapse in one pass
             self.last_label_nudge = (
                 f"🏷 Bulk load created {len(new_labels)} new label(s): "
@@ -399,131 +416,116 @@ class Core:
         return [r["label"] for r in rows]
 
     # ====================================================================
-    # D5 - Dependency edges / D6 - bidirectional traversal
+    # D5 - Symmetric link / D6 - linked-tasks traversal (T86 / D5 / D6)
     # ====================================================================
-    def _add_edge(self, from_task: int, to_task: int) -> None:
-        """D5 + D14 - add ``from_task depends_on to_task`` with invariant checks:
-        both endpoints exist (FK), not self (CHECK), and no cycle (logic)."""
-        if from_task == to_task:
-            raise InvariantError(f"a task cannot depend on itself (T{from_task}).")
-        self._require_row(from_task)
-        self._require_row(to_task)
-        # D14 acyclicity: adding from->to is a cycle iff `to` can already reach
-        # `from` by following depends_on edges (i.e. `to` transitively depends on
-        # `from`).
-        if self._reaches(to_task, from_task):
-            raise InvariantError(
-                f"refusing edge T{from_task} depends_on T{to_task}: it would create "
-                f"a dependency cycle (T{to_task} already depends on T{from_task})."
-            )
+    @staticmethod
+    def _canonical(a: int, b: int) -> tuple[int, int]:
+        """Canonical (lower, higher) order for the symmetric link pair (S3)."""
+        return (a, b) if a < b else (b, a)
+
+    def _add_link(self, a: int, b: int) -> None:
+        """D5 + D14 - add a symmetric link between ``a`` and ``b``. Invariants:
+        both endpoints exist (FK), distinct (CHECK task_a < task_b prevents
+        self-link). Under symmetric semantics there is no cycle invariant --
+        an undirected edge has no cycle in the directed sense."""
+        if a == b:
+            raise InvariantError(f"a task cannot link to itself (T{a}).")
+        self._require_row(a)
+        self._require_row(b)
+        ta, tb = self._canonical(a, b)
         try:
             self.conn.execute(
-                "INSERT INTO dependencies(from_task, to_task) VALUES (?, ?)",
-                (from_task, to_task),
+                "INSERT INTO links(task_a, task_b) VALUES (?, ?)", (ta, tb)
             )
         except sqlite3.IntegrityError:
-            # UNIQUE(from_task,to_task): the edge already exists -- idempotent.
+            # UNIQUE(task_a, task_b): the link already exists -- idempotent.
             pass
 
-    def _reaches(self, start: int, target: int) -> bool:
-        """Can ``start`` reach ``target`` by following depends_on edges
-        (from_task -> to_task)? Iterative DFS; underpins cycle detection (D14)."""
-        seen: set[int] = set()
-        stack = [start]
-        while stack:
-            node = stack.pop()
-            if node == target:
-                return True
-            if node in seen:
-                continue
-            seen.add(node)
-            rows = self.conn.execute(
-                "SELECT to_task FROM dependencies WHERE from_task = ?", (node,)
-            ).fetchall()
-            for r in rows:
-                stack.append(r["to_task"])
-        return False
-
-    def _stale_upstream(self, task_id: int) -> list[int]:
-        """All tasks ``task_id`` transitively depends_on that are currently stale
-        (excluding itself), id-sorted. Underpins the dependency-aware close-gate
-        (D14 extended): closing a task that sits on unreconciled upstream drift is
-        refused, since that drift may still change and re-invalidate it."""
-        seen: set[int] = set()
-        stack: list[int] = []
-        rows = self.conn.execute(
-            "SELECT to_task FROM dependencies WHERE from_task = ?", (task_id,)
-        ).fetchall()
-        for r in rows:
-            stack.append(r["to_task"])
+    def _stale_linked_transitive(self, task_id: int) -> list[int]:
+        """All tasks transitively linked to ``task_id`` (in the symmetric graph)
+        that are currently stale, excluding ``task_id`` itself, id-sorted.
+        Underpins the symmetric close-gate (D14): closing a task whose linked
+        neighborhood is unreconciled is refused. Reach is bounded in practice by
+        the meta-island constraint (D26)."""
+        seen: set[int] = {task_id}
+        stack: list[int] = [task_id]
         stale_found: list[int] = []
         while stack:
             node = stack.pop()
-            if node in seen:
-                continue
-            seen.add(node)
-            row = self.conn.execute(
-                "SELECT stale FROM tasks WHERE id = ?", (node,)
-            ).fetchone()
-            if row is not None and bool(row["stale"]):
-                stale_found.append(node)
-            nxt = self.conn.execute(
-                "SELECT to_task FROM dependencies WHERE from_task = ?", (node,)
+            rows = self.conn.execute(
+                "SELECT CASE WHEN task_a = ? THEN task_b ELSE task_a END AS other "
+                "FROM links WHERE task_a = ? OR task_b = ?",
+                (node, node, node),
             ).fetchall()
-            for r in nxt:
-                stack.append(r["to_task"])
+            for r in rows:
+                nxt = int(r["other"])
+                if nxt in seen:
+                    continue
+                seen.add(nxt)
+                row = self.conn.execute(
+                    "SELECT stale FROM tasks WHERE id = ?", (nxt,)
+                ).fetchone()
+                if row is not None and bool(row["stale"]):
+                    stale_found.append(nxt)
+                stack.append(nxt)
         stale_found.sort()
         return stale_found
 
     def dep_add(self, from_task: int, to_task: int) -> Slice:
-        """D5 - declare ``from_task depends_on to_task``; return from_task's slice."""
-        # No-op guard (D20): an edge that already exists is idempotent, so it must not
-        # bump version. (A new edge still runs the full D14 validation in
-        # ``_add_edge``: self-edge, FK, and cycle checks.)
+        """D5 - add a symmetric link between ``from_task`` and ``to_task``;
+        return ``from_task``'s slice. Argument order is preserved in the slice
+        result, but the stored row is canonicalized (T86); both orderings
+        produce the same row. The public name will become `link_add` in T93/T96."""
+        ta, tb = self._canonical(from_task, to_task)
+        # No-op guard (D20): a link that already exists is idempotent. Look up
+        # via the canonical pair so both argument orderings hit the same row.
         existing = self.conn.execute(
-            "SELECT 1 FROM dependencies WHERE from_task = ? AND to_task = ?",
-            (from_task, to_task),
+            "SELECT 1 FROM links WHERE task_a = ? AND task_b = ?", (ta, tb)
         ).fetchone()
         if existing is None:
             with self._mutate():
-                self._add_edge(from_task, to_task)
+                self._add_link(from_task, to_task)
         return self.show(from_task)
 
     def dep_rm(self, from_task: int, to_task: int) -> Slice:
-        """D5 - remove the edge ``from_task depends_on to_task``."""
+        """D5 - remove the symmetric link between ``from_task`` and ``to_task``."""
         self._require_row(from_task)
         self._require_row(to_task)
-        # No-op guard (D20): removing an edge that isn't there changes nothing.
+        ta, tb = self._canonical(from_task, to_task)
         existing = self.conn.execute(
-            "SELECT 1 FROM dependencies WHERE from_task = ? AND to_task = ?",
-            (from_task, to_task),
+            "SELECT 1 FROM links WHERE task_a = ? AND task_b = ?", (ta, tb)
         ).fetchone()
         if existing is not None:
             with self._mutate():
                 self.conn.execute(
-                    "DELETE FROM dependencies WHERE from_task = ? AND to_task = ?",
-                    (from_task, to_task),
+                    "DELETE FROM links WHERE task_a = ? AND task_b = ?", (ta, tb)
                 )
         return self.show(from_task)
 
-    def dependencies_of(self, task_id: int) -> list[NeighborRef]:
-        """D6 - what ``task_id`` points at (its prerequisites)."""
+    def _linked_with(self, task_id: int) -> list[NeighborRef]:
+        """D6 - every task that shares a link with ``task_id``, id-sorted. Single
+        set under symmetric semantics: there is no "dependencies vs dependents"
+        partition. Status-blind (closed neighbors still returned)."""
         rows = self.conn.execute(
-            "SELECT t.* FROM dependencies d JOIN tasks t ON t.id = d.to_task "
-            "WHERE d.from_task = ? ORDER BY t.id",
-            (task_id,),
+            "SELECT t.* FROM links l "
+            "JOIN tasks t ON t.id = CASE WHEN l.task_a = ? THEN l.task_b ELSE l.task_a END "
+            "WHERE l.task_a = ? OR l.task_b = ? ORDER BY t.id",
+            (task_id, task_id, task_id),
         ).fetchall()
         return [self._neighbor_from_row(r) for r in rows]
 
+    def dependencies_of(self, task_id: int) -> list[NeighborRef]:
+        """D6 -- backward-compatible alias for ``_linked_with``. Under v0.3.0
+        symmetric semantics there is no separate "dependencies" set; both
+        methods return the same linked-neighbor set. T93/T96 rename the public
+        API; for now the directional names are preserved so existing callers
+        don't break."""
+        return self._linked_with(task_id)
+
     def dependents_of(self, task_id: int) -> list[NeighborRef]:
-        """D6 - what points at ``task_id`` (the tasks that depend on it).
-        Status-blind: a closed dependent is still returned."""
-        rows = self.conn.execute(
-            "SELECT t.* FROM dependencies d JOIN tasks t ON t.id = d.from_task "
-            "WHERE d.to_task = ? ORDER BY t.id",
-            (task_id,),
-        ).fetchall()
-        return [self._neighbor_from_row(r) for r in rows]
+        """D6 -- backward-compatible alias for ``_linked_with``. See
+        ``dependencies_of`` for the rationale."""
+        return self._linked_with(task_id)
 
     # ====================================================================
     # D7 - status + stale / D8 - transition history / D10/D11 reconciliation
@@ -551,21 +553,23 @@ class Core:
                 self._set_status(task_id, "open", clear_stale=False)
         return self.get(task_id)
 
-    def _mark_dependents_stale(self, task_id: int) -> list[NeighborRef]:
-        """D10 - mark the DIRECT dependents of ``task_id`` stale + open (invariant
-        stale=>open, D7). One hop only; non-transitive. Recorded *before* the
-        change so an interrupted reconciliation is crash-safe."""
-        dependents = self.dependents_of(task_id)
-        for dep in dependents:
-            row = self._require_row(dep.id)
+    def _mark_linked_stale(self, task_id: int) -> list[NeighborRef]:
+        """D10 - mark the DIRECT linked neighbors of ``task_id`` stale + open
+        (invariant stale=>open, D7). One hop only; non-transitive. Recorded
+        *before* the change so an interrupted reconciliation is crash-safe.
+        Symmetric since T86: fires for both endpoints of any link, bounded by
+        the meta-island constraint (D26)."""
+        linked = self._linked_with(task_id)
+        for n in linked:
+            row = self._require_row(n.id)
             if row["status"] == "closed":
-                self._record_transition(dep.id, "closed", "open")  # forced open by stale
+                self._record_transition(n.id, "closed", "open")  # forced open by stale
             self.conn.execute(
                 "UPDATE tasks SET stale = 1, status = 'open', updated_at = ? WHERE id = ?",
-                (_now(), dep.id),
+                (_now(), n.id),
             )
         # re-read so the returned refs show stale=True
-        return [self._neighbor_from_row(self._require_row(d.id)) for d in dependents]
+        return [self._neighbor_from_row(self._require_row(n.id)) for n in linked]
 
     def stale_worklist(self) -> list[Task]:
         """D11 - the resumable reconciliation worklist: all stale tasks, id order.
@@ -615,19 +619,17 @@ class Core:
                 f"REFUSED: T{task_id} is stale -- it has unreconciled upstream "
                 f"changes. Reconcile (review + `reconcile`) first, then close (D14)."
             )
-        # Dependency-aware close-gate (D14 extended): even if T itself is not stale,
-        # refuse to mark it done while anything it transitively depends_on is stale
-        # -- that upstream drift is unreconciled and may still change under T.
-        upstream = self._stale_upstream(task_id)
-        if upstream:
-            labels = []
-            for uid in upstream:
-                labels.append(f"T{uid}")
-            id_list = ", ".join(labels)
+        # Close-gate (D14 extended, T86 symmetric): refuse to mark T done while
+        # any task in its transitive linked neighborhood is stale. That
+        # unreconciled drift may still change and re-invalidate T. Reach is
+        # bounded in practice by the meta-island constraint (D26).
+        linked_stale = self._stale_linked_transitive(task_id)
+        if linked_stale:
+            id_list = ", ".join(f"T{uid}" for uid in linked_stale)
             raise InvariantError(
-                f"REFUSED: T{task_id} transitively depends on unreconciled stale "
-                f"task(s) {id_list} -- closing it would mark work done on top of "
-                f"drift that may still change. Reconcile {id_list} first, then "
+                f"REFUSED: T{task_id} is in a linked neighborhood with unreconciled "
+                f"stale task(s) {id_list} -- closing it would mark work done on top "
+                f"of drift that may still change. Reconcile {id_list} first, then "
                 f"close (D14)."
             )
         # No-op guard (D20): closing an already-closed task changes nothing -- still
@@ -669,7 +671,7 @@ class Core:
         if not name_changes and not desc_changes:
             return ChangeResult(task=self.get(task_id), newly_stale=[])
         with self._mutate():
-            newly_stale = self._mark_dependents_stale(task_id)  # D10, before change
+            newly_stale = self._mark_linked_stale(task_id)  # D10, before change
             sets, params = [], []
             if name_changes:
                 sets.append("name = ?")

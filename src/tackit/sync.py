@@ -34,7 +34,7 @@ MAX_BACKUPS = 20  # design.md D18: "rotating backup (last ~20)"
 _DUMP_TABLES = [
     ("tasks", "id"),
     ("task_labels", "task_id, label"),
-    ("dependencies", "id"),
+    ("links", "task_a, task_b"),
     ("status_transitions", "id"),
 ]
 

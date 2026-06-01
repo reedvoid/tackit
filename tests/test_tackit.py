@@ -63,26 +63,37 @@ def test_d4_labels_add_list_remove(core):
 
 # --- D5 / D6 / D14: edges, traversal, invariants ----------------------------
 
-def test_d5_d6_dependency_traversal(core):
+def test_d5_d6_symmetric_link_traversal(core):
+    # Under v0.3.0 symmetric semantics (T86), both `dependencies_of` and
+    # `dependents_of` return the same linked-neighbor set; the names are kept
+    # for API stability and rename in T93/T96.
     core.add("a")  # T1
     core.add("b")  # T2
-    core.dep_add(2, 1)  # T2 depends_on T1
+    core.dep_add(2, 1)  # link T1 <-> T2
     assert [n.id for n in core.dependencies_of(2)] == [1]
     assert [n.id for n in core.dependents_of(1)] == [2]
+    # Symmetric: querying from the other endpoint returns the same neighbor set.
+    assert [n.id for n in core.dependencies_of(1)] == [2]
+    assert [n.id for n in core.dependents_of(2)] == [1]
 
 
-def test_d14_self_edge_refused(core):
+def test_d14_self_link_refused(core):
     core.add("a")
     with pytest.raises(InvariantError):
         core.dep_add(1, 1)
 
 
-def test_d14_cycle_refused(core):
+def test_d5_duplicate_link_is_noop(core):
+    # Under symmetric semantics there is no directed cycle; what used to be a
+    # "cycle" (T1->T2 then T2->T1) is the same canonical link {T1, T2}, so the
+    # second dep_add is a no-op (idempotent), not an error.
     core.add("a")  # T1
     core.add("b")  # T2
-    core.dep_add(1, 2)  # T1 depends_on T2
-    with pytest.raises(InvariantError):
-        core.dep_add(2, 1)  # would cycle
+    core.dep_add(1, 2)  # link T1 <-> T2
+    core.dep_add(2, 1)  # same link, reversed args -> idempotent
+    # Exactly one row in the links table.
+    n = core.conn.execute("SELECT COUNT(*) FROM links").fetchone()[0]
+    assert n == 1
 
 
 def test_d14_edge_to_missing_task_refused(core):
@@ -114,14 +125,17 @@ def test_d8_history_logged_through_reopen(core):
 # --- D9: slice fetch --------------------------------------------------------
 
 def test_d9_slice_fetch(core):
+    # Slice still exposes `dependencies` + `dependents` fields for API stability
+    # (T93/T96 rename), but under symmetric semantics both return the same
+    # linked-neighbor set.
     core.add("a", labels=["x"])  # T1
     core.add("b")  # T2
-    core.dep_add(1, 2)  # T1 depends_on T2
+    core.dep_add(1, 2)  # link T1 <-> T2
     s = core.show(1)
     assert s.task.id == 1
     assert s.labels == ["x"]
     assert [n.id for n in s.dependencies] == [2]
-    assert s.dependents == []
+    assert [n.id for n in s.dependents] == [2]  # symmetric: same set
 
 
 # --- D10 / D13: change cascade entry, one-hop (non-transitive) --------------

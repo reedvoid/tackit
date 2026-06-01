@@ -64,6 +64,30 @@ def _mig_002_add_superseded_by_column(conn: sqlite3.Connection) -> None:
     )
 
 
+def _mig_003_dependencies_to_links_symmetric(conn: sqlite3.Connection) -> None:
+    """T86 / D5 / D27 -- rebuild the directional `dependencies` table as the
+    symmetric `links` table. Each existing (from_task, to_task) edge becomes
+    a canonical (min, max) pair in `links`; INSERT OR IGNORE drops any
+    reverse-direction shadow rows (e.g. both (A,B) and (B,A) collapse to one).
+    Migration 003 bundles the schema + the semantic shift -- after this runs
+    the engine reads symmetric semantics; see T88/T89/T90 in core.py."""
+    conn.execute(
+        "CREATE TABLE links ("
+        "  id     INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  task_a INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,"
+        "  task_b INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,"
+        "  UNIQUE (task_a, task_b),"
+        "  CHECK (task_a < task_b)"
+        ");"
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO links (task_a, task_b) "
+        "SELECT MIN(from_task, to_task), MAX(from_task, to_task) "
+        "FROM dependencies;"
+    )
+    conn.execute("DROP TABLE dependencies;")
+
+
 # Ordered registry. Append migrations here in target-version order as they land
 # (T84 -> 2, T85 -> 3, T86 -> 4, ...).
 MIGRATIONS: list[Migration] = [
@@ -76,6 +100,11 @@ MIGRATIONS: list[Migration] = [
         target_version=3,
         name="add S1.superseded_by column (T85 / D25)",
         migrate=_mig_002_add_superseded_by_column,
+    ),
+    Migration(
+        target_version=4,
+        name="dependencies -> symmetric links table (T86 / D5)",
+        migrate=_mig_003_dependencies_to_links_symmetric,
     ),
 ]
 
@@ -101,8 +130,17 @@ def run_pending_migrations(
     conn: sqlite3.Connection, store: Store
 ) -> list[Migration]:
     """Apply every registered migration whose target_version is above the
-    current schema_version, in order, each in its own transaction + D18
-    finalize_mutation. Returns the migrations that ran (possibly empty).
+    current schema_version, in order, each in its own transaction. After all
+    pending migrations succeed, run one D18 finalize_mutation to emit a
+    consistent ``tackit.sql`` at the final schema. Returns the migrations that
+    ran (possibly empty).
+
+    Per-batch finalize (rather than per-migration) because intermediate
+    schemas may not match the current ``_DUMP_TABLES`` shape -- a v1 db
+    mid-batch has neither the pre- nor post-rename table layout. Crash safety
+    still holds: each migration commits independently (schema_version
+    advances), so an interrupted batch resumes from where it stopped on the
+    next ``Core.open``.
 
     Refuses (MigrationError):
       * downgrade -- current > target (store made by a newer tackit);
@@ -127,13 +165,23 @@ def run_pending_migrations(
         try:
             mig.migrate(conn)
             _set_schema_version(conn, next_v)
-            sync.finalize_mutation(conn, store)
             conn.execute("COMMIT")
         except Exception:
             conn.execute("ROLLBACK")
             raise
         ran.append(mig)
         current = next_v
+
+    # One D18 finalize after the whole batch -- emits a consistent .sql at the
+    # final schema. Skipped on no-op batches so a clean startup doesn't churn.
+    if ran:
+        conn.execute("BEGIN")
+        try:
+            sync.finalize_mutation(conn, store)
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
     return ran
 
 

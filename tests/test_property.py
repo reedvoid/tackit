@@ -95,7 +95,7 @@ class TackitMachine(RuleBasedStateMachine):
         try:
             self.core.dep_add(self._id(i), self._id(j))
         except InvariantError:
-            pass  # refused: self-edge or would-cycle — an expected outcome
+            pass  # refused: self-link is the only invariant under symmetric model
 
     @precondition(lambda self: len(self.ids) >= 2)
     @rule(i=_pick, j=_pick)
@@ -122,14 +122,21 @@ class TackitMachine(RuleBasedStateMachine):
         self.last_version = v
 
     @invariant()
-    def graph_is_acyclic(self):
+    def links_are_canonical_pairs(self):
+        # T86 symmetric semantics: every link row is stored in canonical order
+        # (task_a < task_b), so the same unordered pair is never duplicated and
+        # self-links are impossible. The acyclicity invariant was retired with
+        # the directional model -- an undirected edge has no cycle.
         edges = self.core.conn.execute(
-            "SELECT from_task, to_task FROM dependencies"
+            "SELECT task_a, task_b FROM links"
         ).fetchall()
+        seen: set[tuple[int, int]] = set()
         for e in edges:
-            a, b = e["from_task"], e["to_task"]
-            # edge a->b plus a path b->...->a would be a cycle
-            assert not self.core._reaches(b, a), f"cycle via edge T{a}->T{b}"
+            a, b = e["task_a"], e["task_b"]
+            assert a < b, f"link not canonical: ({a}, {b}) should have task_a < task_b"
+            pair = (a, b)
+            assert pair not in seen, f"duplicate link {pair}"
+            seen.add(pair)
 
     @invariant()
     def sql_dump_round_trips(self):
@@ -141,12 +148,12 @@ class TackitMachine(RuleBasedStateMachine):
             orig = self.core.conn.execute(f"SELECT {cols} FROM tasks ORDER BY id").fetchall()
             back = mem.execute(f"SELECT {cols} FROM tasks ORDER BY id").fetchall()
             assert [tuple(r) for r in orig] == [tuple(r) for r in back]
-            eq = "from_task, to_task"
+            eq = "task_a, task_b"
             oe = self.core.conn.execute(
-                f"SELECT {eq} FROM dependencies ORDER BY from_task, to_task"
+                f"SELECT {eq} FROM links ORDER BY task_a, task_b"
             ).fetchall()
             be = mem.execute(
-                f"SELECT {eq} FROM dependencies ORDER BY from_task, to_task"
+                f"SELECT {eq} FROM links ORDER BY task_a, task_b"
             ).fetchall()
             assert [tuple(r) for r in oe] == [tuple(r) for r in be]
         finally:

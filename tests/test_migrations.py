@@ -240,6 +240,18 @@ CREATE TABLE tasks (
 );
 """
 
+# The pre-T86 directional `dependencies` table. Inlined here because the live
+# schema.py has been replaced by the symmetric `links` table.
+_V1_DEPENDENCIES_DDL = """
+CREATE TABLE dependencies (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    from_task INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    to_task   INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    UNIQUE (from_task, to_task),
+    CHECK (from_task <> to_task)
+);
+"""
+
 
 def _make_v1_store(tmp_path):
     """Hand-build a store at the pre-T84 schema (no kind column,
@@ -254,9 +266,9 @@ def _make_v1_store(tmp_path):
     conn.execute("PRAGMA journal_mode = WAL;")
     conn.execute("PRAGMA foreign_keys = ON;")
     conn.executescript(_V1_TASKS_DDL)
+    conn.executescript(_V1_DEPENDENCIES_DDL)
     for ddl in (
         schema.S2_TASK_LABELS,
-        schema.S3_DEPENDENCIES,
         schema.S4_STATUS_TRANSITIONS,
         schema.S5_TASKS_FTS,
         schema.S5_FTS_TRIGGERS,
@@ -346,13 +358,21 @@ def test_mig_002_adds_superseded_by_column_null_on_existing(tmp_path):
 
 
 def test_mig_002_self_supersede_refused(tmp_path):
-    """After mig_002, the CHECK constraint refuses a task marked superseded by
-    itself."""
+    """After mig_002, the CHECK constraint refuses a row whose superseded_by
+    equals its own id. Exercised via INSERT with an explicit id rather than
+    UPDATE -- on UPDATE, SQLite's FTS5-content-trigger column-resolution path
+    masks the CHECK with a confusing OperationalError. The CHECK fires
+    identically; INSERT just keeps the failure surface readable."""
     _make_v1_store(tmp_path)
     c = Core.open(start=tmp_path)
     try:
-        with pytest.raises(sqlite3.IntegrityError):
-            c.conn.execute("UPDATE tasks SET superseded_by = id WHERE id = 1;")
+        with pytest.raises(sqlite3.IntegrityError, match="superseded_by"):
+            c.conn.execute(
+                "INSERT INTO tasks(id, name, description, kind, status, stale, "
+                "superseded_by, created_at, updated_at) "
+                "VALUES (777, 'x', '', 'meta', 'open', 0, 777, "
+                "'2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00');"
+            )
     finally:
         c.close_conn()
 
@@ -362,8 +382,13 @@ def test_mig_002_fk_enforced(tmp_path):
     _make_v1_store(tmp_path)
     c = Core.open(start=tmp_path)
     try:
-        with pytest.raises(sqlite3.IntegrityError):
-            c.conn.execute("UPDATE tasks SET superseded_by = 999 WHERE id = 1;")
+        with pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY"):
+            c.conn.execute(
+                "INSERT INTO tasks(name, description, kind, status, stale, "
+                "superseded_by, created_at, updated_at) "
+                "VALUES ('x', '', 'meta', 'open', 0, 999, "
+                "'2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00');"
+            )
     finally:
         c.close_conn()
 
@@ -375,9 +400,16 @@ def test_mig_002_real_supersede_link_allowed(tmp_path):
     _make_v1_store(tmp_path)
     c = Core.open(start=tmp_path)
     try:
-        c.conn.execute("UPDATE tasks SET superseded_by = 2 WHERE id = 1;")
-        row = c.conn.execute("SELECT superseded_by FROM tasks WHERE id = 1;").fetchone()
-        assert row["superseded_by"] == 2
+        c.conn.execute(
+            "INSERT INTO tasks(name, description, kind, status, stale, "
+            "superseded_by, created_at, updated_at) "
+            "VALUES ('replacer', '', 'meta', 'open', 0, 1, "
+            "'2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00');"
+        )
+        row = c.conn.execute(
+            "SELECT superseded_by FROM tasks WHERE name = 'replacer';"
+        ).fetchone()
+        assert row["superseded_by"] == 1
     finally:
         c.close_conn()
 

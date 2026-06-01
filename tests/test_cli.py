@@ -94,11 +94,14 @@ def test_cli_empty_name_exit_1(cli):
     assert main(["add", "   "]) == 1
 
 
-def test_cli_cycle_refused_exit_1(cli):
+def test_cli_dep_add_reverse_args_is_idempotent(cli):
+    # Under v0.3.0 symmetric semantics (T86), "1 -> 2" and "2 -> 1" are the
+    # same link {1, 2}; reversed arguments hit the same canonical row and the
+    # second dep_add is a successful no-op (exit 0), not a cycle refusal.
     main(["add", "a"])
     main(["add", "b"])
     main(["dep", "add", "1", "2"])
-    assert main(["dep", "add", "2", "1"]) == 1  # would cycle
+    assert main(["dep", "add", "2", "1"]) == 0  # idempotent, exit 0
 
 
 def test_cli_ls_status_filter(cli, capsys):

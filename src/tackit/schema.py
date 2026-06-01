@@ -5,7 +5,7 @@ schema doc. Acyclicity (S3) and the stale=>open invariant (S1) are NOT expressed
 in DDL -- they live in core logic (D14/D7), as the doc notes.
 """
 
-SCHEMA_VERSION = "3"
+SCHEMA_VERSION = "4"
 
 # D26 task kind taxonomy. The four values are also reserved label strings (D14):
 # label_add / load refuse a label equal to any of them, because S1.kind absorbs
@@ -39,16 +39,19 @@ CREATE TABLE IF NOT EXISTS task_labels (
 );
 """
 
-# --- S3 `dependencies` ------------------------------------------------------
-# The single edge type. `from_task` depends_on `to_task`. Queried from both ends
-# (D6). Acyclicity enforced in logic (D14), not DDL.
-S3_DEPENDENCIES = """
-CREATE TABLE IF NOT EXISTS dependencies (
-    id        INTEGER PRIMARY KEY AUTOINCREMENT,
-    from_task INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    to_task   INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    UNIQUE (from_task, to_task),
-    CHECK (from_task <> to_task)
+# --- S3 `links` -------------------------------------------------------------
+# The single edge type: SYMMETRIC. One row per unordered pair, stored in
+# canonical order (task_a < task_b, enforced by CHECK). Queries treat both
+# endpoints equivalently. (Renamed from `dependencies` and made symmetric in
+# v0.3.0; see migration 003 / T86. Replaces the directional from_task ->
+# to_task model with an undirected coupling.)
+S3_LINKS = """
+CREATE TABLE IF NOT EXISTS links (
+    id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_a INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    task_b INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    UNIQUE (task_a, task_b),
+    CHECK (task_a < task_b)
 );
 """
 
@@ -112,7 +115,7 @@ CREATE TABLE IF NOT EXISTS meta (
 ALL_DDL = [
     S1_TASKS,
     S2_TASK_LABELS,
-    S3_DEPENDENCIES,
+    S3_LINKS,
     S4_STATUS_TRANSITIONS,
     S5_TASKS_FTS,
     S5_FTS_TRIGGERS,
