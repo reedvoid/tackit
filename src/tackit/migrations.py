@@ -64,6 +64,19 @@ def _mig_002_add_superseded_by_column(conn: sqlite3.Connection) -> None:
     )
 
 
+def _mig_004_add_because_column(conn: sqlite3.Connection) -> None:
+    """T116 / cascade-ergonomics A -- add the per-edge `because` rationale to
+    S3 links. Existing links backfill to a placeholder ('(pre-T116 link --
+    rationale not recorded)') so the column can be NOT NULL while still
+    accepting the historical rows. New links require a real, non-empty
+    rationale (enforced at the link_add layer; the DDL allows the placeholder
+    so the migration can run before authoring rationales)."""
+    conn.execute(
+        "ALTER TABLE links ADD COLUMN because TEXT NOT NULL "
+        "DEFAULT '(pre-T116 link -- rationale not recorded)';"
+    )
+
+
 def _mig_003_dependencies_to_links_symmetric(conn: sqlite3.Connection) -> None:
     """T86 / D5 / D27 -- rebuild the directional `dependencies` table as the
     symmetric `links` table. Each existing (from_task, to_task) edge becomes
@@ -105,6 +118,11 @@ MIGRATIONS: list[Migration] = [
         target_version=4,
         name="dependencies -> symmetric links table (T86 / D5)",
         migrate=_mig_003_dependencies_to_links_symmetric,
+    ),
+    Migration(
+        target_version=5,
+        name="add S3.because rationale column (T116 / cascade-ergonomics A)",
+        migrate=_mig_004_add_because_column,
     ),
 ]
 

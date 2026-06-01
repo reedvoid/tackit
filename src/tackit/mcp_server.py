@@ -104,13 +104,19 @@ def build_server() -> FastMCP:
             return _wrap(c, c.reconcile(id).model_dump(mode="json"))
 
     @mcp.tool()
-    def link_add(a: int, b: int) -> dict:
-        """Add a symmetric link between tasks ``a`` and ``b`` (D5/T93). Argument
-        order doesn't matter -- the row is stored canonically. Refused on
-        self-link (D14) and on cross-kind meta links (D26 meta-island).
+    def link_add(a: int, b: int, because: str) -> dict:
+        """Add a symmetric link between tasks ``a`` and ``b`` with a required
+        ``because`` rationale (D5/T93/T116). Argument order doesn't matter --
+        the row is stored canonically. Refused on self-link (D14), on
+        cross-kind meta links (D26 meta-island), and on empty ``because``.
+
+        The rationale describes WHY the two tasks are coupled -- the cascade
+        compares it against change deltas to filter relevance. Be specific:
+        "T's CRUD writes S1.name and S1.description" is laser-precise; "T uses
+        U" is useless. Describe the coupling, not the implementation.
         Returns ``a``'s slice."""
         with _core() as c:
-            return _wrap(c, c.link_add(a, b).model_dump(mode="json"))
+            return _wrap(c, c.link_add(a, b, because=because).model_dump(mode="json"))
 
     @mcp.tool()
     def link_rm(a: int, b: int) -> dict:

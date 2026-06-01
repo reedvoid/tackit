@@ -257,7 +257,11 @@ class Core:
             for label in labels or []:
                 self._attach_label(task_id, label)
             for dep in deps or []:
-                self._add_link(task_id, dep)  # new task depends_on dep
+                # T116: deps wired at add() time get a placeholder rationale --
+                # the per-link rationale arg isn't surfaced through `add` yet.
+                # Callers wanting a specific rationale should call link_add
+                # after creation. Tracked as follow-up to T116.
+                self._add_link(task_id, dep, because="(established at task creation)")
         if new_labels:
             self._set_label_nudge(new_labels)  # D23 anti-sprawl nudge
         return self.get(task_id)
@@ -309,7 +313,10 @@ class Core:
             for s in specs:  # pass 2: edges (all keys now have ids)
                 frm = keymap[s["key"]]
                 for dep in s["depends_on"]:
-                    self._add_link(frm, keymap[dep])
+                    # T116: bulk-load edges get a placeholder rationale -- the
+                    # plan format doesn't yet carry per-link rationales (T113
+                    # spec'd the format update; not in T116's scope).
+                    self._add_link(frm, keymap[dep], because="(established via bulk load)")
         if new_labels:  # T67: surface the new labels so the agent can collapse in one pass
             self.last_label_nudge = (
                 f"🏷 Bulk load created {len(new_labels)} new label(s): "
@@ -424,14 +431,25 @@ class Core:
         """Canonical (lower, higher) order for the symmetric link pair (S3)."""
         return (a, b) if a < b else (b, a)
 
-    def _add_link(self, a: int, b: int) -> None:
-        """D5 + D14 - add a symmetric link between ``a`` and ``b``. Invariants:
-        both endpoints exist (FK), distinct (CHECK task_a < task_b prevents
-        self-link), and the **meta-island constraint** (D26 / T87): a link
-        between a ``meta``-kind task and a non-``meta``-kind task is refused
-        so the cascade cannot bleed across the kind boundary."""
+    def _add_link(self, a: int, b: int, because: str) -> None:
+        """D5 + D14 + T116 - add a symmetric link between ``a`` and ``b`` with
+        a required ``because`` rationale describing WHY the two tasks are
+        coupled. Invariants: both endpoints exist (FK), distinct (CHECK
+        task_a < task_b prevents self-link), the **meta-island constraint**
+        (D26 / T87), and a non-empty ``because``. Cascade-ergonomics
+        discipline (per [[T116]]): describe the coupling, not the
+        implementation -- rationales stay stable when implementations
+        change."""
         if a == b:
             raise InvariantError(f"a task cannot link to itself (T{a}).")
+        if not because or not because.strip():
+            raise ValidationError(
+                "link `because` rationale must be a non-empty string (T116). "
+                "Describe the coupling between the two tasks specifically -- "
+                "the cascade compares this rationale against the change delta "
+                "to filter relevance."
+            )
+        _validate_text(because, "link because")
         row_a = self._require_row(a)
         row_b = self._require_row(b)
         # Meta-island constraint (D26 / T87): refuse cross-kind links between
@@ -450,7 +468,8 @@ class Core:
         ta, tb = self._canonical(a, b)
         try:
             self.conn.execute(
-                "INSERT INTO links(task_a, task_b) VALUES (?, ?)", (ta, tb)
+                "INSERT INTO links(task_a, task_b, because) VALUES (?, ?, ?)",
+                (ta, tb, because.strip()),
             )
         except sqlite3.IntegrityError:
             # UNIQUE(task_a, task_b): the link already exists -- idempotent.
@@ -486,18 +505,20 @@ class Core:
         stale_found.sort()
         return stale_found
 
-    def link_add(self, a: int, b: int) -> Slice:
-        """D5 (T93) - add a symmetric link between ``a`` and ``b``; return
-        ``a``'s slice. The stored row is canonicalized (lower id first) so
-        ``link_add(a, b)`` and ``link_add(b, a)`` produce the same row and
-        are indistinguishable thereafter. No-op if the link already exists."""
+    def link_add(self, a: int, b: int, because: str) -> Slice:
+        """D5 (T93) + T116 - add a symmetric link between ``a`` and ``b`` with
+        a required ``because`` rationale. The stored row is canonicalized
+        (lower id first) so ``link_add(a, b, ...)`` and ``link_add(b, a, ...)``
+        produce the same row and are indistinguishable thereafter. No-op if
+        the link already exists (the existing rationale stays; the no-op does
+        NOT overwrite it)."""
         ta, tb = self._canonical(a, b)
         existing = self.conn.execute(
             "SELECT 1 FROM links WHERE task_a = ? AND task_b = ?", (ta, tb)
         ).fetchone()
         if existing is None:
             with self._mutate():
-                self._add_link(a, b)
+                self._add_link(a, b, because)
         return self.show(a)
 
     def link_rm(self, a: int, b: int) -> Slice:

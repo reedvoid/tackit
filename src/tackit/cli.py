@@ -244,7 +244,7 @@ def _cmd_reconcile(args) -> int:
 def _cmd_link(args) -> int:
     with _core_session() as core:
         if args.link_action == "add":
-            s = core.link_add(args.a, args.b)
+            s = core.link_add(args.a, args.b, because=args.because)
             verb = "added"
         else:
             s = core.link_rm(args.a, args.b)
@@ -459,6 +459,14 @@ def build_parser() -> argparse.ArgumentParser:
         lsp = link_sub.add_parser(act, parents=[common])
         lsp.add_argument("a", type=int, metavar="A")
         lsp.add_argument("b", type=int, metavar="B")
+        if act == "add":
+            lsp.add_argument(
+                "--because",
+                required=True,
+                help="WHY this pair is coupled. Cascade compares this against "
+                "the change delta to filter relevance -- be specific "
+                "(T116). Describe the coupling, not the implementation.",
+            )
         lsp.set_defaults(func=_cmd_link)
 
     sp = add("label", _cmd_label, "tag/untag a task (D4)")

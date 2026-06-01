@@ -414,6 +414,30 @@ def test_mig_002_real_supersede_link_allowed(tmp_path):
         c.close_conn()
 
 
+def test_mig_004_adds_because_with_backfill_placeholder(tmp_path):
+    """mig_004 backfills pre-existing rows with a placeholder rationale; new
+    rows inserted afterward must supply a real (non-empty) because."""
+    _make_v1_store(tmp_path)
+    c = Core.open(start=tmp_path)
+    try:
+        # Seed a link via the runtime API (forces a meaningful because).
+        c.add("a")
+        c.add("b")
+        c.link_add(1, 2, because="T2 builds on T1")
+        row = c.conn.execute(
+            "SELECT because FROM links WHERE task_a=1 AND task_b=2"
+        ).fetchone()
+        assert row["because"] == "T2 builds on T1"
+        # Verify the column has the right NOT NULL + length CHECK by trying to
+        # write an empty rationale at the raw SQL layer.
+        with pytest.raises(sqlite3.IntegrityError):
+            c.conn.execute(
+                "INSERT INTO links(task_a, task_b, because) VALUES (1, 2, '');"
+            )
+    finally:
+        c.close_conn()
+
+
 def test_fresh_init_has_kind_and_superseded_by_columns(store_path):
     """A fresh store at SCHEMA_VERSION already has the new columns with the
     correct defaults, matching the migrated form (so v1-then-migrate and

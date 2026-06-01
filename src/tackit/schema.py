@@ -5,7 +5,7 @@ schema doc. Acyclicity (S3) and the stale=>open invariant (S1) are NOT expressed
 in DDL -- they live in core logic (D14/D7), as the doc notes.
 """
 
-SCHEMA_VERSION = "4"
+SCHEMA_VERSION = "5"
 
 # D26 task kind taxonomy. The four values are also reserved label strings (D14):
 # label_add / load refuse a label equal to any of them, because S1.kind absorbs
@@ -47,9 +47,10 @@ CREATE TABLE IF NOT EXISTS task_labels (
 # to_task model with an undirected coupling.)
 S3_LINKS = """
 CREATE TABLE IF NOT EXISTS links (
-    id     INTEGER PRIMARY KEY AUTOINCREMENT,
-    task_a INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    task_b INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_a  INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    task_b  INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    because TEXT    NOT NULL CHECK (length(because) > 0),
     UNIQUE (task_a, task_b),
     CHECK (task_a < task_b)
 );
