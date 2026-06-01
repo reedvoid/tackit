@@ -367,11 +367,21 @@ def _cmd_labels(args) -> int:
 
 def _cmd_history(args) -> int:
     with _core_session() as core:
-        rows = core.history(args.id)
-        text = "\n".join(
-            f"  {r.changed_at}  {r.from_status or '(new)'} -> {r.to_status}" for r in rows
+        hist = core.history(args.id)
+        st_text = "\n".join(
+            f"  {r.changed_at}  {r.from_status or '(new)'} -> {r.to_status}"
+            for r in hist.status_transitions
+        ) or "  (no status transitions)"
+        rev_text = "\n".join(
+            f"  {r.edited_at}  edit -- {r.delta}"
+            for r in hist.description_revisions
+        ) or "  (no description revisions)"
+        text = (
+            f"T{args.id} history:\n"
+            f"status transitions:\n{st_text}\n"
+            f"description revisions (D29):\n{rev_text}"
         )
-        _emit(f"status history of T{args.id}:\n{text}", [_dump(r) for r in rows], args.json)
+        _emit(text, _dump(hist), args.json)
     return 0
 
 

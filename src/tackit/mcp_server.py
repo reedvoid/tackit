@@ -222,12 +222,13 @@ def build_server() -> FastMCP:
 
     @mcp.tool()
     def history(id: int) -> dict:
-        """The append-only status-transition history of a task (D8)."""
+        """The full append-only history of a task (D8 + D29 v0.4): status
+        transitions and description revisions, both in chronological order.
+        Description revisions preserve verbatim prior name/description
+        plus the delta rationale, so archaeology can recover what the task
+        used to say -- the backstop for edit-on-closed under v0.4."""
         with _core() as c:
-            hist = []
-            for h in c.history(id):
-                hist.append(h.model_dump(mode="json"))
-            return _wrap(c, hist)
+            return _wrap(c, c.history(id).model_dump(mode="json"))
 
     @mcp.tool()
     def load(plan: str) -> dict:

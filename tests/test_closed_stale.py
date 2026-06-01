@@ -35,21 +35,28 @@ def test_closed_stale_reconcile_clears_stale_keeps_closed(core):
     assert t2.stale is False
     assert t2.status == "closed"  # T123: reconcile does NOT touch status
     # Reconcile should not have logged a spurious transition.
-    seq = [(h.from_status, h.to_status) for h in core.history(2)]
+    seq = [(h.from_status, h.to_status) for h in core.history(2).status_transitions]
     assert seq == [(None, "open"), ("open", "closed")]
 
 
-def test_closed_stale_edit_still_refused(core):
-    """T118 (no-edit-closed) is unchanged by T123. The relaxed D7 just lets
-    closed tasks be stale; it does not unlock editing them. Drift must still
-    be addressed via a new task carrying the new direction. P2 retires the
-    refusal once the description_revisions audit table lands."""
+def test_closed_stale_edit_allowed_under_v04(core):
+    """v0.4 / D29 retires T118: edit is allowed on a closed-stale task. The
+    description_revisions audit table preserves the verbatim prior name +
+    description, so updating a closed task's prose no longer destroys
+    history. Status stays 'closed' across the edit."""
     _stale_closed_setup(core)
-    with pytest.raises(InvariantError, match="closed"):
-        core.edit(2, description="trying to fix it", delta="should be refused")
-    # State unchanged.
+    pre_name = core.get(2).name
+    pre_desc = core.get(2).description
+    core.edit(2, description="updated under v0.4", delta="fixing closed-stale prose")
     t2 = core.get(2)
-    assert t2.stale is True and t2.status == "closed"
+    assert t2.description == "updated under v0.4"
+    assert t2.status == "closed"  # edit doesn't change status
+    # Audit row recorded the prior state verbatim.
+    revs = core.history(2).description_revisions
+    assert len(revs) == 1
+    assert revs[0].prev_name == pre_name
+    assert revs[0].prev_description == pre_desc
+    assert revs[0].delta == "fixing closed-stale prose"
 
 
 def test_closed_stale_link_add_allowed(core):
@@ -78,11 +85,11 @@ def test_cascade_staling_already_stale_closed_is_idempotent(core):
     """A second edit upstream of an already-closed-stale task does not churn
     its row's status or duplicate-log a transition."""
     _stale_closed_setup(core)
-    seq_before = [(h.from_status, h.to_status) for h in core.history(2)]
+    seq_before = [(h.from_status, h.to_status) for h in core.history(2).status_transitions]
     core.edit(1, description="changed again", delta="upstream shifted further")
     t2 = core.get(2)
     assert t2.stale is True and t2.status == "closed"
-    seq_after = [(h.from_status, h.to_status) for h in core.history(2)]
+    seq_after = [(h.from_status, h.to_status) for h in core.history(2).status_transitions]
     assert seq_before == seq_after  # no new transitions on the closed-stale row
 
 

@@ -5,7 +5,7 @@ schema doc. Acyclicity (S3) and the stale=>open invariant (S1) are NOT expressed
 in DDL -- they live in core logic (D14/D7), as the doc notes.
 """
 
-SCHEMA_VERSION = "7"
+SCHEMA_VERSION = "8"
 
 # D26 task kind taxonomy. The four values are also reserved label strings (D14):
 # label_add / load refuse a label equal to any of them, because S1.kind absorbs
@@ -111,6 +111,23 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 """
 
+# --- S7 `description_revisions` ---------------------------------------------
+# Append-only audit log for edits (D29, v0.4). One row per successful edit()
+# that changed name or description; preserves the VERBATIM prior values plus
+# the agent's delta. The backstop that makes edit-on-closed safe: archaeology
+# recovers what the task used to say under the same id, replacing the v0.3
+# supersede marker's role. Never updated; rows are inserted only.
+S7_DESCRIPTION_REVISIONS = """
+CREATE TABLE IF NOT EXISTS description_revisions (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id          INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    prev_name        TEXT    NOT NULL,
+    prev_description TEXT    NOT NULL DEFAULT '',
+    delta            TEXT    NOT NULL CHECK (length(delta) > 0),
+    edited_at        TEXT    NOT NULL
+);
+"""
+
 # Ordered DDL for a fresh store. tasks before its dependents; FTS table before
 # its triggers.
 ALL_DDL = [
@@ -121,4 +138,5 @@ ALL_DDL = [
     S5_TASKS_FTS,
     S5_FTS_TRIGGERS,
     S6_META,
+    S7_DESCRIPTION_REVISIONS,
 ]

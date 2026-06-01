@@ -53,31 +53,23 @@ def test_meta_to_meta_link_allowed(core):
     assert n == 1
 
 
-# --- T118: edit refused on closed tasks (P2 retires this) ------------------
+# --- v0.4 / D29: edit allowed on closed/wont_do with audit-table backstop --
 
 
-def test_edit_closed_task_refused(core):
-    core.add("a", kind="production")
+def test_edit_closed_task_allowed_under_v04(core):
+    """v0.4 retires T118: edit is allowed on closed tasks. The audit table
+    preserves the verbatim prior name+description+delta, so archaeology
+    recovers what the task used to say."""
+    core.add("a", kind="production", description="original desc")
     core.close(1)
-    with pytest.raises(InvariantError, match="closed"):
-        core.edit(1, description="changed", delta="trying to edit a closed")
-
-
-def test_edit_closed_task_error_directs_to_new_task(core):
-    """Under P1 the refusal stays, but the error message no longer names
-    supersede (the verb is gone). P2 will remove this refusal entirely once
-    the description_revisions audit table lands as the archaeology backstop."""
-    core.add("a", kind="production")
-    core.add("b", kind="production")  # potential successor
-    core.close(1)
-    try:
-        core.edit(1, description="changed", delta="testing the message")
-    except InvariantError as e:
-        msg = str(e).lower()
-        assert "new task" in msg
-        assert "supersede" not in msg  # verb retired
-    else:
-        raise AssertionError("expected InvariantError")
+    core.edit(1, description="updated desc", delta="prose refinement after close")
+    t = core.get(1)
+    assert t.description == "updated desc"
+    assert t.status == "closed"  # status unchanged
+    revs = core.history(1).description_revisions
+    assert len(revs) == 1
+    assert revs[0].prev_description == "original desc"
+    assert revs[0].delta == "prose refinement after close"
 
 
 # --- T117: delta required on edit / link_add / link_rm --------------------

@@ -100,6 +100,24 @@ def _mig_005_add_wont_do_status_and_reason(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA writable_schema=OFF;")
 
 
+def _mig_007_add_description_revisions(conn: sqlite3.Connection) -> None:
+    """v0.4 / D29 -- add the description_revisions audit table (S7).
+    Append-only; written by core.edit() on every successful edit that
+    actually changes name or description (no-op edits skipped per D20).
+    Existing edits made before this migration have no recorded revision
+    (audit starts here, by design -- the table is forward-looking)."""
+    conn.execute(
+        "CREATE TABLE description_revisions ("
+        "  id               INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  task_id          INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,"
+        "  prev_name        TEXT    NOT NULL,"
+        "  prev_description TEXT    NOT NULL DEFAULT '',"
+        "  delta            TEXT    NOT NULL CHECK (length(delta) > 0),"
+        "  edited_at        TEXT    NOT NULL"
+        ");"
+    )
+
+
 def _mig_006_drop_superseded_by_column(conn: sqlite3.Connection) -> None:
     """v0.4 / D29 -- retire the supersede marker. Drops the superseded_by
     column added by mig_002. The v0.4 simplification replaces the marker's
@@ -171,6 +189,11 @@ MIGRATIONS: list[Migration] = [
         target_version=7,
         name="drop S1.superseded_by column (v0.4 / D29: supersede retired)",
         migrate=_mig_006_drop_superseded_by_column,
+    ),
+    Migration(
+        target_version=8,
+        name="add S7.description_revisions audit table (v0.4 / D29)",
+        migrate=_mig_007_add_description_revisions,
     ),
 ]
 

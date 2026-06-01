@@ -79,5 +79,5 @@ def test_d7_relaxed_staling_closed_dependent_stays_closed(core):
     t2 = core.get(2)
     assert t2.stale is True and t2.status == "closed"  # T123: stays closed
     # Status-transitions log does NOT carry a spurious closed->open event.
-    seq = [(h.from_status, h.to_status) for h in core.history(2)]
+    seq = [(h.from_status, h.to_status) for h in core.history(2).status_transitions]
     assert seq == [(None, "open"), ("open", "closed")]

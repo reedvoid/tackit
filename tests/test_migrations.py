@@ -432,3 +432,60 @@ def test_mig_006_preserves_existing_task_rows(tmp_path):
         assert "kind" in cols and "wont_do_reason" in cols and "stale" in cols
     finally:
         c.close_conn()
+
+
+# ----------------------------------------------------------------------------
+# v0.4 / D29 / mig_007: add description_revisions audit table (S7)
+# ----------------------------------------------------------------------------
+
+
+def test_mig_007_creates_description_revisions_table(tmp_path):
+    """After the full chain, the description_revisions table exists with the
+    expected column shape -- the v0.4 audit backstop for edit-on-closed."""
+    _make_v1_store(tmp_path)
+    c = Core.open(start=tmp_path)
+    try:
+        cols = {
+            r[1]
+            for r in c.conn.execute("PRAGMA table_info(description_revisions)").fetchall()
+        }
+        assert cols == {
+            "id",
+            "task_id",
+            "prev_name",
+            "prev_description",
+            "delta",
+            "edited_at",
+        }
+    finally:
+        c.close_conn()
+
+
+def test_mig_007_table_starts_empty_on_existing_data(tmp_path):
+    """Migration creates the table empty; pre-migration edits leave no audit
+    rows (audit is forward-looking by design)."""
+    _make_v1_store(tmp_path)
+    c = Core.open(start=tmp_path)
+    try:
+        count = c.conn.execute(
+            "SELECT COUNT(*) FROM description_revisions"
+        ).fetchone()[0]
+        assert count == 0
+    finally:
+        c.close_conn()
+
+
+def test_mig_007_empty_delta_rejected_by_table_check(tmp_path):
+    """The S7 DDL CHECK refuses an empty delta at the DB layer (defense in
+    depth alongside the op-layer _require_delta)."""
+    _make_v1_store(tmp_path)
+    c = Core.open(start=tmp_path)
+    try:
+        with pytest.raises(sqlite3.IntegrityError):
+            c.conn.execute(
+                "INSERT INTO description_revisions("
+                "  task_id, prev_name, prev_description, delta, edited_at"
+                ") VALUES (1, 'x', 'y', '', '2026-01-01T00:00:00+00:00');"
+            )
+    finally:
+        c.close_conn()

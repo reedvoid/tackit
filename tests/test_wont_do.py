@@ -40,7 +40,7 @@ def test_wont_do_returns_one_hop_neighbors(core):
 def test_wont_do_logs_transition(core):
     core.add("task", kind="production")
     core.wont_do(1, reason="dropped", delta="not doing it")
-    seq = [(h.from_status, h.to_status) for h in core.history(1)]
+    seq = [(h.from_status, h.to_status) for h in core.history(1).status_transitions]
     assert seq == [(None, "open"), ("open", "wont_do")]
 
 
@@ -71,12 +71,23 @@ def test_wont_do_missing_task_refused(core):
 
 # --- locked-forever (T118 pattern extends to wont_do) ----------------------
 
-def test_wont_do_edit_refused(core):
-    """T118 extends to wont_do -- the task content is frozen."""
-    core.add("task", kind="production")
-    core.wont_do(1, reason="dropped", delta="dropped")
-    with pytest.raises(InvariantError, match="terminal"):
-        core.edit(1, description="trying to change it", delta="should refuse")
+def test_wont_do_edit_allowed_under_v04(core):
+    """v0.4 / D29 retires the T118 lock on terminal tasks. edit is allowed
+    on wont_do (and closed) tasks; the description_revisions audit table
+    preserves the verbatim prior state. The wont_do_reason field is NOT
+    edited via this op (it's set once at wont_do() time and is immutable)."""
+    core.add("task", kind="production", description="initial")
+    core.wont_do(1, reason="dropped because X", delta="initial drop")
+    core.edit(1, description="updated rationale prose", delta="refining the wont_do context")
+    t = core.get(1)
+    assert t.status == "wont_do"
+    assert t.description == "updated rationale prose"
+    # wont_do_reason is immutable -- still the original string.
+    assert t.wont_do_reason == "dropped because X"
+    revs = core.history(1).description_revisions
+    assert len(revs) == 1
+    assert revs[0].prev_description == "initial"
+    assert revs[0].delta == "refining the wont_do context"
 
 
 def test_wont_do_reopen_refused(core):

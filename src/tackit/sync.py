@@ -36,6 +36,7 @@ _DUMP_TABLES = [
     ("task_labels", "task_id, label"),
     ("links", "task_a, task_b"),
     ("status_transitions", "id"),
+    ("description_revisions", "id"),
 ]
 
 

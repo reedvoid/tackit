@@ -23,6 +23,8 @@ from .errors import InvariantError, NotFoundError, ValidationError
 from .models import (
     ChangeResult,
     CloseResult,
+    DescriptionRevision,
+    History,
     LabelUsage,
     NeighborRef,
     SearchHit,
@@ -934,24 +936,19 @@ class Core:
         name: str | None = None,
         description: str | None = None,
     ) -> ChangeResult:
-        """D13 + T117 - edit a task: first mark its direct linked tasks
-        stale+open (D10), then apply the edit, then return the now-stale set.
-        ``delta`` (T117) is required and surfaces in the stale_alert envelope
-        so reconcilers compare it against each link's `because` rationale."""
+        """D13 + T117 + D29 - edit a task: first mark its direct linked tasks
+        stale (D10), record the prior name+description as a description_revisions
+        audit row (D29 / S7), then apply the edit, then return the now-stale set.
+        ``delta`` (T117) is required and surfaces in the stale_alert envelope so
+        reconcilers compare it against each link's `because` rationale.
+
+        v0.4 (D29): edit is allowed on any status -- closed, wont_do, open.
+        The audit table preserves the verbatim prior state, so edit no longer
+        destroys history. (T118's "no-edit-closed" rule is retired.) The
+        wont_do reason field is not edited via this op -- it's set once at
+        wont_do() time and is immutable thereafter."""
         self._record_delta(delta, "edit")
         row = self._require_row(task_id)
-        # T118 / cascade-ergonomics C + T132: closed and wont_do tasks are
-        # frozen at the edit boundary (P2 retires this refusal under v0.4 /
-        # D29 once the description_revisions audit table lands as the
-        # archaeology backstop). For now the rule still applies.
-        if row["status"] in ("closed", "wont_do"):
-            raise InvariantError(
-                f"REFUSED: T{task_id} is {row['status']} -- edit is not allowed "
-                f"on terminal tasks (T118 / T132). Create a new task with the "
-                f"replacement content; the old task stays as historical record. "
-                f"Reopen+edit+close-again would log a misleading status "
-                f"transition."
-            )
         if name is not None and not name.strip():
             raise ValidationError("task name cannot be set empty (D3/S1).")
         _validate_text(name, "task name")
@@ -968,6 +965,16 @@ class Core:
             return ChangeResult(task=self.get(task_id), newly_stale=[])
         with self._mutate():
             newly_stale = self._mark_linked_stale(task_id)  # D10, before change
+            # D29 / S7: record verbatim prior name + description before the
+            # UPDATE overwrites them. Always full prior state (both fields),
+            # not just the changed one -- archaeology can then read a single
+            # revision row to recover the task's state at a point in time.
+            self.conn.execute(
+                "INSERT INTO description_revisions("
+                "  task_id, prev_name, prev_description, delta, edited_at"
+                ") VALUES (?, ?, ?, ?, ?);",
+                (task_id, row["name"], row["description"], delta.strip(), _now()),
+            )
             sets, params = [], []
             if name_changes:
                 sets.append("name = ?")
@@ -1067,22 +1074,43 @@ class Core:
     # ====================================================================
     # D8 - read status history
     # ====================================================================
-    def history(self, task_id: int) -> list[StatusTransition]:
-        """D8 - the append-only status-transition log for a task."""
+    def history(self, task_id: int) -> History:
+        """D8 + D29 (v0.4) - the full append-only history for a task: status
+        transitions and description revisions. Two separate logs, both
+        chronological. Reconstructs the task's life: how it changed status
+        and what its prior name/description used to say."""
         self._require_row(task_id)
-        rows = self.conn.execute(
-            "SELECT * FROM status_transitions WHERE task_id = ? ORDER BY id", (task_id,)
+        st_rows = self.conn.execute(
+            "SELECT * FROM status_transitions WHERE task_id = ? ORDER BY id",
+            (task_id,),
         ).fetchall()
-        return [
-            StatusTransition(
-                id=r["id"],
-                task_id=r["task_id"],
-                from_status=r["from_status"],
-                to_status=r["to_status"],
-                changed_at=r["changed_at"],
-            )
-            for r in rows
-        ]
+        dr_rows = self.conn.execute(
+            "SELECT * FROM description_revisions WHERE task_id = ? ORDER BY id",
+            (task_id,),
+        ).fetchall()
+        return History(
+            status_transitions=[
+                StatusTransition(
+                    id=r["id"],
+                    task_id=r["task_id"],
+                    from_status=r["from_status"],
+                    to_status=r["to_status"],
+                    changed_at=r["changed_at"],
+                )
+                for r in st_rows
+            ],
+            description_revisions=[
+                DescriptionRevision(
+                    id=r["id"],
+                    task_id=r["task_id"],
+                    prev_name=r["prev_name"],
+                    prev_description=r["prev_description"],
+                    delta=r["delta"],
+                    edited_at=r["edited_at"],
+                )
+                for r in dr_rows
+            ],
+        )
 
     # ====================================================================
     # D21 - label usage view (label-discipline)

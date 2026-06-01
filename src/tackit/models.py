@@ -122,6 +122,37 @@ class StatusTransition(BaseModel):
     changed_at: datetime
 
 
+class DescriptionRevision(BaseModel):
+    """S7 `description_revisions` row (D29, v0.4). One append-only entry per
+    successful edit() that actually changed name or description (no-op edits
+    skipped per D20). Records the VERBATIM prior name and description, plus
+    the agent's delta rationale, so archaeology can recover what the task
+    used to say. Backstop for v0.4 edit-on-closed: edits no longer destroy
+    history under the same task id."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    task_id: int
+    prev_name: str
+    prev_description: str
+    delta: str
+    edited_at: datetime
+
+
+class History(BaseModel):
+    """D8 + D29 (v0.4): full history payload for one task. Status transitions
+    and description revisions live in separate append-only logs; History
+    returns both in chronological order so callers can reconstruct the
+    task's life. Replaces the v0.3 list[StatusTransition] return shape of
+    core.history()."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status_transitions: list[StatusTransition]
+    description_revisions: list[DescriptionRevision]
+
+
 class SearchHit(BaseModel):
     """D17 - one ranked FTS5 result: task id + title + relevance score."""
 

@@ -121,7 +121,7 @@ def test_d8_history_logged_through_reopen(core):
     core.add("a", kind="production")
     core.close(1)
     core.reopen(1)
-    seq = [(h.from_status, h.to_status) for h in core.history(1)]
+    seq = [(h.from_status, h.to_status) for h in core.history(1).status_transitions]
     assert seq == [(None, "open"), ("open", "closed"), ("closed", "open")]
 
 
