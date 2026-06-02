@@ -29,7 +29,7 @@ from hypothesis.stateful import RuleBasedStateMachine, invariant, precondition, 
 from tackit import sync
 from tackit.core import Core
 from tackit.db import init_store
-from tackit.errors import InvariantError
+from tackit.errors import InvariantError, ValidationError
 
 # names/labels: non-empty after strip; still includes quotes/newlines/unicode, which
 # stresses the SQL-literal escaping in the dump (a real round-trip hazard). We restrict
@@ -115,9 +115,11 @@ class TackitMachine(RuleBasedStateMachine):
         try:
             self.core.reconcile(self._id(i))
         except InvariantError:
-            # v0.4 (D28): reconcile refuses on closed/wont_do tasks. Their
-            # stale flag is record-only. The property machine doesn't care
-            # which path it takes; the refusal is well-defined behavior.
+            # v0.4 (D28 + T156): reconcile refuses iff (status in {closed,
+            # wont_do}) AND (kind in {production, meta}). Closed/wont_do
+            # design/schema rows ARE reconcilable (perma-spec is the
+            # obligation). The property machine doesn't care which path it
+            # takes; the refusal is well-defined behavior.
             pass
 
     @precondition(lambda self: len(self.ids) >= 2)
@@ -138,11 +140,13 @@ class TackitMachine(RuleBasedStateMachine):
     def label_add(self, i, label):
         try:
             self.core.label_add(self._id(i), label)
-        except InvariantError:
+        except (InvariantError, ValidationError):
             # D26 / T110: reserved label names (design/schema/production/meta)
             # are refused at the validation boundary. The random string
             # generator can happen to produce one; that refusal is well-
-            # defined behavior the machine just keeps walking past.
+            # defined behavior the machine just keeps walking past. (The
+            # refusal raises ValidationError -- caught alongside
+            # InvariantError so Hypothesis doesn't shrink to this case.)
             pass
 
     # ---- invariants (checked after every rule) ----
@@ -197,6 +201,23 @@ class TackitMachine(RuleBasedStateMachine):
             f"description_revisions shrank: {self._last_audit_count} -> {c}"
         )
         self._last_audit_count = c
+
+    @invariant()
+    def worklist_filter_holds(self):
+        """T147 / D28 v0.4 - the stale_worklist must only contain tasks
+        where status='open' OR kind in {design, schema}. A closed/wont_do
+        production/meta task carrying stale=True is record-only and must
+        be excluded from the worklist; this catches a future regression
+        where the filter is loosened (which would re-introduce the v0.3-
+        era never-emptying-worklist problem on hub-spec edits)."""
+        for t in self.core.stale_worklist():
+            assert (
+                t.status == "open" or t.kind in ("design", "schema")
+            ), (
+                f"task {t.id} (status={t.status}, kind={t.kind}) is on the "
+                f"worklist but violates D28's filter: should be excluded as "
+                f"record-only stale."
+            )
 
     @invariant()
     def wont_do_rows_have_reason(self):
