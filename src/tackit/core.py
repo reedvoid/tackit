@@ -600,11 +600,28 @@ class Core:
         _validate_text(because, "link because")
         row_a = self._require_row(a)
         row_b = self._require_row(b)
+        # D36 (v0.5): retired endpoints accept no new edges. Retired specs are
+        # dead decisions; new realization links to them are nonsensical. Prior
+        # content lives in description_revisions if archaeology is needed.
+        kind_a = row_a["kind"]
+        kind_b = row_b["kind"]
+        if row_a["status"] == "retired":
+            raise InvariantError(
+                f"REFUSED: link_add endpoint {prefixed_id(kind_a, a)} is "
+                f"retired. Retired specs accept no new edges -- there is no "
+                f"realization relationship to a dead decision (D36). Prior "
+                f"content lives in description_revisions."
+            )
+        if row_b["status"] == "retired":
+            raise InvariantError(
+                f"REFUSED: link_add endpoint {prefixed_id(kind_b, b)} is "
+                f"retired. Retired specs accept no new edges -- there is no "
+                f"realization relationship to a dead decision (D36). Prior "
+                f"content lives in description_revisions."
+            )
         # Meta-island constraint (D26 / T87): refuse cross-kind links between
         # meta and non-meta. Same-kind links are always allowed (meta<->meta,
         # production<->production, design<->schema, etc.).
-        kind_a = row_a["kind"]
-        kind_b = row_b["kind"]
         if (kind_a == "meta") != (kind_b == "meta"):
             raise InvariantError(
                 f"REFUSED: meta-island constraint (D26). {prefixed_id(kind_a, a)} "
@@ -914,16 +931,26 @@ class Core:
             self._record_transition(task_id, old_status, new_status)  # D8
 
     def reopen(self, task_id: int) -> Task:
-        """D7/D8 + T132 - move a closed task back to open (logged). Does not
-        set stale; the history log keeps the earlier 'closed' fact. REFUSED
-        on wont_do tasks -- wont_do is terminal forever per T132 design
-        (the change-of-mind path is a fresh task with the new direction)."""
+        """D7/D8 + T132 + D36 - move a closed task back to open (logged).
+        Does not set stale; the history log keeps the earlier 'closed' fact.
+        REFUSED on wont_do tasks -- wont_do is terminal forever per T132
+        design (the change-of-mind path is a fresh task with the new
+        direction). REFUSED on retired tasks (D36 v0.5: same terminal
+        rationale -- file a fresh D# instead of reanimating)."""
         row = self._require_row(task_id)
         if row["status"] == "wont_do":
             raise InvariantError(
                 f"REFUSED: {prefixed_id(row['kind'], task_id)} is wont_do -- reopen is not allowed "
                 f"(T132: wont_do is terminal forever). If the decision has "
                 f"changed, create a new task with the new direction."
+            )
+        if row["status"] == "retired":
+            raise InvariantError(
+                f"REFUSED: {prefixed_id(row['kind'], task_id)} is retired -- "
+                f"reopen is not allowed (D36: retired is terminal forever, "
+                f"same rationale as wont_do per T132 generalized). If the "
+                f"decision has returned, file a fresh D# with the new "
+                f"direction; do not reanimate this row."
             )
         # No-op guard (D20): reopening an already-open task changes nothing, so it must
         # not bump version / re-dump tackit.sql (which would be spurious git churn
@@ -1052,6 +1079,14 @@ class Core:
                 f"decision has changed and the work IS being done, create a "
                 f"new task carrying the new direction and close that one."
             )
+        if row["status"] == "retired":
+            raise InvariantError(
+                f"REFUSED: {prefixed_id(row['kind'], task_id)} is retired -- "
+                f"cannot be closed (D36: closed/wont_do/retired are distinct "
+                f"terminal states; no double-decide). The decision is dead; "
+                f"close() is for work-done. File a fresh D# if a new "
+                f"decision needs to be made and tracked."
+            )
         if bool(row["stale"]):
             raise InvariantError(
                 f"REFUSED: {prefixed_id(row['kind'], task_id)} is stale -- it has unreconciled upstream "
@@ -1134,6 +1169,13 @@ class Core:
                 f"and the work shouldn't have been done, create a new task "
                 f"explaining the wont_do decision."
             )
+        if row["status"] == "retired":
+            raise InvariantError(
+                f"REFUSED: {prefixed_id(row['kind'], task_id)} is retired -- "
+                f"cannot be marked wont_do (D36: closed/wont_do/retired are "
+                f"distinct terminal states; no double-decide). The decision "
+                f"is already dead via retire()."
+            )
         if bool(row["stale"]):
             raise InvariantError(
                 f"REFUSED: {prefixed_id(row['kind'], task_id)} is stale -- it has unreconciled upstream "
@@ -1154,6 +1196,124 @@ class Core:
                 (reason.strip(), _now(), task_id),
             )
             self._record_transition(task_id, row["status"], "wont_do")
+        return WontDoResult(
+            task=self.get(task_id),
+            dependencies=self.dependencies_of(task_id),
+            dependents=self.dependents_of(task_id),
+        )
+
+    # ====================================================================
+    # D36 (v0.5) - retire (terminal "decision 100% gone" verb for design/schema)
+    # ====================================================================
+    _RETIRE_PLACEHOLDERS = frozenset(
+        {"tbd", "todo", "obsolete", "no longer needed"}
+    )
+
+    def retire(self, task_id: int, reason: str, delta: str) -> WontDoResult:
+        """D36 (v0.5) - retire a design/schema slice: status spec -> retired.
+
+        Use ONLY when the slice's premise is 100% gone with no replacement.
+        Partial-change path is edit() + let the cascade prompt link review.
+        Mirrors wont_do() shape (durable ``reason`` in wont_do_reason; no
+        cascade fire; no description_revisions row; returns one-hop
+        obligation payload).
+
+        Refusal order (fail-fast, 6 checks):
+          1. Reason validation: non-empty + non-placeholder (D33 extension).
+          2. status='spec' (the only valid source state).
+          3. kind IN ('design','schema') (redundant under partition; kept
+             for error clarity on the misuse path).
+          4. Stale gate (D14): refused if the target is stale.
+          5. Linked-stale gate: refused if any obligation-bearing stale
+             task sits in the transitive linked neighborhood.
+          6. Open-neighbor gate: refused if any linked neighbor has
+             status='open'. The refusal lists each open neighbor with its
+             `because` rationale and presents the (i)/(ii) decision tree
+             (link_rm + wont_do vs link_rm alone).
+
+        Terminal state: reopen/close/wont_do/retire all refused on retired
+        rows (T132 generalized -- no double-decide). Edit IS still allowed
+        per D29 (audit-table backstop)."""
+        self._record_delta(delta, "retire")
+        if not reason or not reason.strip():
+            raise ValidationError(
+                "retire requires a non-empty `reason` -- the durable "
+                "rationale for retiring this decision (persisted forever in "
+                "wont_do_reason). One sentence is enough; future-you will "
+                "read it to understand why this decision was 100% dropped."
+            )
+        _validate_text(reason, "retire reason")
+        placeholder = reason.strip().lower()
+        if placeholder in self._RETIRE_PLACEHOLDERS:
+            raise ValidationError(
+                f"retire reason must be a real rationale, not a placeholder "
+                f"({reason!r}). Describe WHY the decision is 100% gone -- "
+                f"the replaced premise, the dropped product direction, the "
+                f"schema collapse, etc. Placeholders refused per D33 "
+                f"extension."
+            )
+        row = self._require_row(task_id)
+        if row["status"] != "spec":
+            raise InvariantError(
+                f"REFUSED: {prefixed_id(row['kind'], task_id)} has "
+                f"status={row['status']!r} -- retire is only valid on living "
+                f"specs (status='spec'). If the decision returned, file a "
+                f"fresh D# instead of reanimating this row (T132 generalized: "
+                f"no double-decide)."
+            )
+        if row["kind"] not in ("design", "schema"):
+            # Defensive: under partition this is unreachable (spec only on
+            # design/schema), but the explicit refusal keeps the error self-
+            # explaining if the partition CHECK is ever bypassed.
+            raise InvariantError(
+                f"REFUSED: {prefixed_id(row['kind'], task_id)} has "
+                f"kind={row['kind']!r} -- retire is for design/schema "
+                f"slices only. For production/meta tasks, use wont_do() to "
+                f"drop scope."
+            )
+        if bool(row["stale"]):
+            raise InvariantError(
+                f"REFUSED: {prefixed_id(row['kind'], task_id)} is stale -- "
+                f"it has unreconciled upstream changes. Reconcile (review + "
+                f"`reconcile`) first, then retire (D36)."
+            )
+        linked_stale = self._stale_linked_transitive(task_id)
+        if linked_stale:
+            id_list = ", ".join(prefixed_id(k, uid) for uid, k in linked_stale)
+            raise InvariantError(
+                f"REFUSED: {prefixed_id(row['kind'], task_id)} is in a "
+                f"linked neighborhood with unreconciled stale task(s) "
+                f"{id_list}. Reconcile {id_list} first, then retire (D36)."
+            )
+        linked = self._linked_with(task_id)
+        open_neighbors = [n for n in linked if n.status == "open"]
+        if open_neighbors:
+            details = "\n".join(
+                f"  - {prefixed_id(n.kind, n.id)} (status={n.status}) -- "
+                f"because: {n.because!r}"
+                for n in open_neighbors
+            )
+            n = len(open_neighbors)
+            self_id = prefixed_id(row["kind"], task_id)
+            raise InvariantError(
+                f"REFUSED: {self_id} has {n} open linked task(s). Resolve "
+                f"each before retiring:\n{details}\n"
+                f"For each open neighbor, decide:\n"
+                f"  (i)  If the neighbor's work realizes ONLY this retired "
+                f"decision: link_rm + wont_do(neighbor, reason=...) -- the "
+                f"work is dead too.\n"
+                f"  (ii) If the neighbor's work has other reasons to exist "
+                f"(linked to other living specs): link_rm -- work continues "
+                f"under remaining live premises.\n"
+                f"Then re-attempt retire({self_id})."
+            )
+        with self._mutate():
+            self.conn.execute(
+                "UPDATE tasks SET status = 'retired', wont_do_reason = ?, "
+                "updated_at = ? WHERE id = ?",
+                (reason.strip(), _now(), task_id),
+            )
+            self._record_transition(task_id, row["status"], "retired")
         return WontDoResult(
             task=self.get(task_id),
             dependencies=self.dependencies_of(task_id),
