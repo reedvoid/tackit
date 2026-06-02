@@ -130,17 +130,136 @@ def test_links_expansion_keeps_closed_design_slices(core):
 
 
 # ----------------------------------------------------------------------------
-# D28 - reconcile refuses on closed/wont_do
+# T147 / D29 - regression guards: supersede is fully retired
 # ----------------------------------------------------------------------------
 
 
-def test_reconcile_refused_on_closed_task(core):
-    """Reconcile on a closed task -- regardless of stale=1 or 0 -- is refused.
-    Their stale flag is record-only; clearing it has no defined meaning."""
+def test_core_has_no_supersede_method():
+    """T147 P6 - belt-and-suspenders that the v0.4 P1 retirement (mig_006 +
+    code rip-out) really removed the verb at the engine layer. A future
+    'oh let's bring it back' would surface here before anything else
+    breaks. The audit table S7 (description_revisions) IS the v0.4
+    replacement for archaeology."""
+    from tackit.core import Core
+
+    assert not hasattr(Core, "supersede"), (
+        "Core.supersede is back; v0.4 D29 retired it -- use edit() + the "
+        "description_revisions audit table (S7) for the prior-name archaeology "
+        "the supersede marker used to provide."
+    )
+
+
+def test_mcp_tool_surface_has_no_supersede():
+    """Same regression-guard, one layer up. The MCP tool registration must
+    not surface a `supersede` tool to agents."""
+    from tackit.mcp_server import build_server
+
+    server = build_server()
+    # FastMCP keeps tools in an internal registry; the exact attribute varies
+    # by version, so we look at what the server exposes by introspection of
+    # any attribute holding tools by name. The simpler, version-stable check:
+    # the source of mcp_server.py defines tools via @mcp.tool(); none of them
+    # should be named supersede.
+    import inspect
+
+    from tackit import mcp_server as mod
+
+    src = inspect.getsource(mod)
+    assert "def supersede(" not in src, (
+        "mcp_server.py defines a supersede tool; v0.4 P1 retired it."
+    )
+
+
+# ----------------------------------------------------------------------------
+# D28 + T156 - reconcile refusal mirrors the worklist filter
+# ----------------------------------------------------------------------------
+
+
+def test_reconcile_refused_on_closed_production(core):
+    """Reconcile on a closed production task is refused. Stale flag is
+    record-only archaeology; clearing it would erase the signal."""
     core.add("a", kind="production")
     core.close(1)
     with pytest.raises(InvariantError, match="terminal"):
         core.reconcile(1)
+
+
+def test_reconcile_refused_on_wont_do_production(core):
+    """Same as closed-production -- wont_do production rows are record-only."""
+    core.add("a", kind="production")
+    core.wont_do(1, reason="not pursuing", delta="dropped")
+    with pytest.raises(InvariantError, match="terminal"):
+        core.reconcile(1)
+
+
+def test_reconcile_refused_on_closed_meta(core):
+    """Meta tasks follow the production rule -- closed-stale is record-only."""
+    core.add("a", kind="meta")
+    core.close(1)
+    with pytest.raises(InvariantError, match="terminal"):
+        core.reconcile(1)
+
+
+def test_reconcile_refused_on_wont_do_meta(core):
+    core.add("a", kind="meta")
+    core.wont_do(1, reason="dropped", delta="dropped")
+    with pytest.raises(InvariantError, match="terminal"):
+        core.reconcile(1)
+
+
+def test_reconcile_allowed_on_closed_design(core):
+    """T156 (v0.4 refinement): reconcile on a CLOSED-design task succeeds --
+    design slices stay obligation-bearing under D28 regardless of status (the
+    kind clause of the worklist filter), so reconcile must mirror that to
+    avoid pinning legacy closed-design rows on the worklist with no exit
+    path. Bypassing D30 to seed the closed-design state, since D30 refuses
+    close() on design at the op layer."""
+    core.add("d1", kind="design")
+    # Force-close + stale, simulating a pre-D30 row that's now obligation-
+    # bearing per D28's kind clause.
+    core.conn.execute(
+        "UPDATE tasks SET status = 'closed', stale = 1 WHERE id = 1;"
+    )
+    t = core.reconcile(1)
+    assert t.stale is False  # reconcile cleared the flag
+    assert t.status == "closed"  # status preserved -- reconcile doesn't reopen
+
+
+def test_reconcile_allowed_on_closed_schema(core):
+    """Schema slices follow the same T156 rule -- living spec by kind."""
+    core.add("s1", kind="schema")
+    core.conn.execute(
+        "UPDATE tasks SET status = 'closed', stale = 1 WHERE id = 1;"
+    )
+    t = core.reconcile(1)
+    assert t.stale is False
+    assert t.status == "closed"
+
+
+def test_reconcile_allowed_on_wont_do_design(core):
+    """Wont_do design rows surface too (T109 in the dogfood is exactly this).
+    Reconcile must work so they can be cleared after the upstream they
+    referenced changes again."""
+    core.add("d1", kind="design")
+    core.conn.execute(
+        "UPDATE tasks SET status = 'wont_do', stale = 1, "
+        "wont_do_reason = 'retired' WHERE id = 1;"
+    )
+    t = core.reconcile(1)
+    assert t.stale is False
+    assert t.status == "wont_do"
+
+
+def test_reconcile_open_design_unchanged_by_t156(core):
+    """The T156 refinement only affects closed/wont_do design/schema; open
+    design slices reconcile as before (no-op when not stale; clears stale
+    when set)."""
+    core.add("d1", kind="design")  # open + stale=0
+    t = core.reconcile(1)
+    assert t.stale is False  # no-op succeeds
+    core.conn.execute("UPDATE tasks SET stale = 1 WHERE id = 1;")
+    t = core.reconcile(1)
+    assert t.stale is False  # cleared
 
 
 # ----------------------------------------------------------------------------

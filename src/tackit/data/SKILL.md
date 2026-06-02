@@ -141,15 +141,21 @@ you see a stale alert, act on it.
 - **Cascade is symmetric.** Every link is bidirectional in the cascade sense
   — editing either endpoint stales the other. There is no "depends_on
   direction" to fire the cascade only one way.
-- **Bounded obligation (D28 v0.4): closed and wont_do tasks CAN be stale,
-  but the flag is RECORD ONLY.** The cascade still writes stale=1 on them
-  mechanically (depth-1, unchanged), but they're NOT on the worklist and they
-  do NOT pressure the close-gate. The flag stays as historical signal that
-  an upstream changed; archaeology can see it in `show()`. The worklist
-  filter: `status='open' OR kind in {design,schema}`. Closed-stale
-  production/meta is acceptable and doesn't block anything; you don't have to
-  reconcile it. `reconcile()` is refused on closed/wont_do tasks (clearing a
-  record-only marker would erase the signal without meaning).
+- **Bounded obligation (D28 v0.4): closed and wont_do PRODUCTION/META tasks
+  CAN be stale, but the flag is RECORD ONLY.** The cascade still writes
+  stale=1 on them mechanically (depth-1, unchanged), but they're NOT on the
+  worklist and they do NOT pressure the close-gate. The flag stays as
+  historical signal that an upstream changed; archaeology can see it in
+  `show()`. The worklist filter: `status='open' OR kind in {design,schema}`.
+  Closed-stale production/meta is acceptable and doesn't block anything; you
+  don't have to reconcile it. `reconcile()` is refused on closed/wont_do
+  PRODUCTION/META (clearing a record-only marker would erase the signal
+  without meaning). Closed/wont_do DESIGN/SCHEMA tasks (T156 v0.4
+  refinement, 2026-06-02) are obligation-bearing AND reconcilable — the
+  refusal filter mirrors the worklist filter exactly, so what surfaces is
+  what can be cleared. Reconciling a closed-design slice acknowledges its
+  spec prose still describes truth after the upstream changed (legacy
+  pre-D30 rows can finally drain off the worklist).
 - **Use delta × because to FAST-filter.** Every link carries a durable
   `because` (set at link_add time) describing why the two tasks are coupled.
   Every cascade-firing op carries a `delta` describing the semantic shift.

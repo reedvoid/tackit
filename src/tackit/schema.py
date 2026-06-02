@@ -1,8 +1,9 @@
 """SQLite schema - tables S1-S7.
 
 Each CREATE statement is tagged with its S# so the DDL traces directly to the
-spec slice that defines it. Non-DDL invariants live in core logic (D14, D7)
-rather than here.
+spec slice that defines it. Invariants that aren't expressible in DDL live in
+core logic (graph integrity in D14, status/stale rules in D7); see those
+slices for the authoritative formulations.
 """
 
 SCHEMA_VERSION = "9"

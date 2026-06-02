@@ -250,7 +250,7 @@ def build_server() -> FastMCP:
     ) -> dict:
         """Dependency-aware board (D22): the filtered tasks, each as a full slice (task +
         dependencies + dependents + labels), so you see the whole graph's structure in
-        ONE call (richer than `ls`). Filters: status (open/closed), label, stale."""
+        ONE call (richer than `ls`). Filters: status (open/closed/wont_do), label, stale."""
         with _core() as c:
             stale_filter = True if stale else None
             cards = []

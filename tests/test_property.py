@@ -72,7 +72,11 @@ class TackitMachine(RuleBasedStateMachine):
         try:
             self.core.edit(self._id(i), name=name, delta="property test")
         except InvariantError:
-            pass  # T118: edit refused on closed -- a valid outcome here
+            # v0.4 D29 retired the no-edit-closed convention -- edit is now
+            # allowed on any status. InvariantError can still arise from other
+            # paths (e.g. an empty delta in a future API tweak); leaving the
+            # catch as a defensive marker.
+            pass
 
     @precondition(lambda self: self.ids)
     @rule(i=_pick)
@@ -80,12 +84,30 @@ class TackitMachine(RuleBasedStateMachine):
         try:
             self.core.close(self._id(i))
         except InvariantError:
-            pass  # refused: task stale or upstream stale — an expected outcome
+            pass  # refused: task stale, upstream stale, or design/schema (D30)
+
+    @precondition(lambda self: self.ids)
+    @rule(i=_pick)
+    def wont_do(self, i):
+        """T132 / v0.4 - third terminal status. The machine must exercise it
+        so post-wont_do invariants (no double-decide, no further status
+        change without reopen, etc.) get random-coverage exposure too."""
+        try:
+            self.core.wont_do(
+                self._id(i), reason="property test", delta="property test"
+            )
+        except InvariantError:
+            # Refused: already-closed/wont_do (no double-decide), design/schema
+            # kind (D30), or close-gate stale -- all expected.
+            pass
 
     @precondition(lambda self: self.ids)
     @rule(i=_pick)
     def reopen(self, i):
-        self.core.reopen(self._id(i))
+        try:
+            self.core.reopen(self._id(i))
+        except InvariantError:
+            pass  # refused on wont_do per v0.4 reopen rules
 
     @precondition(lambda self: self.ids)
     @rule(i=_pick)
@@ -114,7 +136,14 @@ class TackitMachine(RuleBasedStateMachine):
     @precondition(lambda self: self.ids)
     @rule(i=_pick, label=_labels)
     def label_add(self, i, label):
-        self.core.label_add(self._id(i), label)
+        try:
+            self.core.label_add(self._id(i), label)
+        except InvariantError:
+            # D26 / T110: reserved label names (design/schema/production/meta)
+            # are refused at the validation boundary. The random string
+            # generator can happen to produce one; that refusal is well-
+            # defined behavior the machine just keeps walking past.
+            pass
 
     # ---- invariants (checked after every rule) ----
 
@@ -151,6 +180,37 @@ class TackitMachine(RuleBasedStateMachine):
             pair = (a, b)
             assert pair not in seen, f"duplicate link {pair}"
             seen.add(pair)
+
+    @invariant()
+    def audit_table_never_shrinks(self):
+        """T147 / D29 v0.4 - description_revisions is append-only. Row count
+        must be monotonically non-decreasing across the random op sequence.
+        Catches a future regression where an edit path forgot to insert, an
+        insert was rolled back without rolling the whole op back, or a
+        cleanup task deleted rows."""
+        if not hasattr(self, "_last_audit_count"):
+            self._last_audit_count = 0
+        c = self.core.conn.execute(
+            "SELECT COUNT(*) FROM description_revisions"
+        ).fetchone()[0]
+        assert c >= self._last_audit_count, (
+            f"description_revisions shrank: {self._last_audit_count} -> {c}"
+        )
+        self._last_audit_count = c
+
+    @invariant()
+    def wont_do_rows_have_reason(self):
+        """T132 / D7 v0.4 - status='wont_do' rows MUST carry a non-null
+        wont_do_reason; the op layer enforces it on wont_do() and edit()
+        leaves the field alone. If a future code path lets a wont_do row
+        end up reason=NULL, this catches it."""
+        rows = self.core.conn.execute(
+            "SELECT id, status, wont_do_reason FROM tasks WHERE status = 'wont_do'"
+        ).fetchall()
+        for r in rows:
+            assert r["wont_do_reason"] is not None, (
+                f"task {r['id']} status=wont_do but wont_do_reason is NULL"
+            )
 
     @invariant()
     def sql_dump_round_trips(self):

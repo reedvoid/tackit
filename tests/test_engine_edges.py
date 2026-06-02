@@ -168,6 +168,21 @@ def test_ls_invalid_status_refused(core):
         core.ls(status="bogus")
 
 
+def test_ls_status_filter_accepts_all_three_v04_values(core):
+    """T157: D7 v0.4 has three statuses {open, closed, wont_do} -- the ls()
+    filter must accept all three. Pre-T157 the validator rejected wont_do as
+    a bogus value, breaking `ls --status wont_do` for listing dropped scope."""
+    core.add("a", kind="production")  # T1, open
+    core.add("b", kind="production")  # T2 -> closed
+    core.close(2)
+    core.add("c", kind="production")  # T3 -> wont_do
+    core.wont_do(3, reason="dropped", delta="dropped")
+
+    assert [t.id for t in core.ls(status="open")] == [1]
+    assert [t.id for t in core.ls(status="closed")] == [2]
+    assert [t.id for t in core.ls(status="wont_do")] == [3]
+
+
 def test_render_empty_label(core):
     md = core.render("nonexistent-label")
     assert "No tasks" in md

@@ -818,19 +818,29 @@ class Core:
         return [self._task_from_row(r) for r in rows]
 
     def reconcile(self, task_id: int) -> Task:
-        """D11 + D28 (v0.4) - clear ``stale`` on a task reviewed and found
-        still-correct, with no content change (so it does NOT cascade to
-        dependents). REFUSED on closed/wont_do tasks: under v0.4 their stale
-        flag is record-only (D28), not actionable -- clearing it would erase
-        the archaeology marker without corresponding meaning."""
+        """D11 + D28 (v0.4) + T156 - clear ``stale`` on a task reviewed and
+        found still-correct, with no content change (so it does NOT cascade
+        to dependents).
+
+        REFUSED only when (status closed/wont_do) AND (kind in production/
+        meta) -- T156 v0.4 refinement: the refusal condition now mirrors
+        D28's worklist filter (allowed iff status='open' OR kind in
+        {design, schema}), so what surfaces on the worklist is exactly what
+        can be reconciled. For closed/wont_do design/schema rows (perma-open
+        in spirit per D30 but legacy-closed from before D30 landed), the
+        spec slice IS the obligation -- reconciling it acknowledges that
+        the slice still describes truth after the upstream change. For
+        closed/wont_do production/meta the original D28 rationale stands:
+        their stale flag is a record-only archaeology marker, not an
+        obligation; clearing it would erase the signal."""
         row = self._require_row(task_id)
-        if row["status"] in ("closed", "wont_do"):
+        if row["status"] in ("closed", "wont_do") and row["kind"] not in ("design", "schema"):
             raise InvariantError(
-                f"REFUSED: T{task_id} is {row['status']} -- reconcile is not "
-                f"allowed on terminal tasks (D28). Their stale flag is "
-                f"record-only (not on the worklist, not blocking close-gates); "
-                f"it stays as historical signal that an upstream changed. No "
-                f"action needed."
+                f"REFUSED: T{task_id} is {row['status']} (kind={row['kind']}) -- "
+                f"reconcile is not allowed on terminal production/meta tasks "
+                f"(D28 + T156). Their stale flag is record-only (not on the "
+                f"worklist, not blocking close-gates); it stays as historical "
+                f"signal that an upstream changed. No action needed."
             )
         # No-op guard (D20): reconciling a task that isn't stale changes nothing.
         if bool(row["stale"]):
@@ -1078,10 +1088,14 @@ class Core:
         label: str | None = None,
         stale: bool | None = None,
     ) -> list[Task]:
-        """D15 - list/filter tasks by status, label, and/or stale. The work queue
-        and any board are *queries over the fields*, not maintained lists."""
-        if status is not None and status not in ("open", "closed"):
-            raise ValidationError("status filter must be 'open' or 'closed' (D7).")
+        """D15 + T157 - list/filter tasks by status, label, and/or stale. The
+        work queue and any board are *queries over the fields*, not maintained
+        lists. Status filter accepts the full v0.4 set (open, closed, wont_do)
+        per D7's three-status taxonomy."""
+        if status is not None and status not in ("open", "closed", "wont_do"):
+            raise ValidationError(
+                "status filter must be 'open', 'closed', or 'wont_do' (D7 v0.4)."
+            )
         clauses, params = [], []
         join = ""
         if label is not None:

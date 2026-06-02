@@ -345,8 +345,9 @@ def _cmd_board(args) -> int:
         allt = core.ls()
         n_open = sum(1 for t in allt if t.status == "open")
         n_done = sum(1 for t in allt if t.status == "closed")
+        n_wont = sum(1 for t in allt if t.status == "wont_do")
         n_stale = sum(1 for t in allt if t.stale)
-        head = _board_paint("tackit", ["38;5;154", "1"]) + f"   {n_open} open · {n_done} done · {n_stale} stale"
+        head = _board_paint("tackit", ["38;5;154", "1"]) + f"   {n_open} open · {n_done} done · {n_wont} wont_do · {n_stale} stale"
         body = _render_board(core, tasks)
         print(head + ("\n" + body if body else "\n(no matching tasks)"))
     return 0
