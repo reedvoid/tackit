@@ -111,6 +111,20 @@ def _validate_text(value: str | None, field: str) -> None:
 # deterministically, before the requested op and again after. These two helpers are
 # the single source of the warning's wording, so it reads identically everywhere.
 
+LINK_BECAUSE_REMINDER = (
+    "Each link's `because` describes WHY the two tasks are coupled. Each "
+    "cascade-firing op's `delta` describes the upstream's semantic shift. "
+    "Read both BEFORE opening a stale dependent -- they tell you the "
+    "specific aspect to check. In the rare case where the shift doesn't "
+    "intersect the coupling axis at all, you can `reconcile` without "
+    "re-reading the dependent (FAST path); otherwise re-read and edit-or-"
+    "reconcile (SLOW path with the question pre-formed)."
+)
+"""D34 / T166 - the single-source reminder string. Emitted on show / board
+envelopes that contain at least one stale dep entry, alongside the per-entry
+`because` + `last_edit_delta` fields the agent uses to orient reconciliation."""
+
+
 def stale_alert_text(stale_tasks: list[Task]) -> str:
     """The strongly-worded stale-obligation banner; empty string when nothing is
     stale. Names the tasks, the required action (review each AGAINST its depends_on
@@ -276,15 +290,27 @@ class Core:
             raise NotFoundError(f"no task with id {task_id}.")
         return row
 
-    def _neighbor_from_row(self, row: sqlite3.Row) -> NeighborRef:
+    def _neighbor_from_row(
+        self,
+        row: sqlite3.Row,
+        *,
+        because: str | None = None,
+        last_edit_delta: str | None = None,
+    ) -> NeighborRef:
         # D32: include kind so the neighbor render can synthesize its auto-id
         # prefix without a second lookup.
+        # D34/T166: in slice/edge contexts, the caller supplies the link's
+        # because and the neighbor's most-recent edit delta from S7 so the
+        # FAST-filter inputs ride in the slice envelope. Non-edge contexts
+        # (links() candidates) leave both None.
         return NeighborRef(
             id=row["id"],
             name=row["name"],
             status=row["status"],
             stale=bool(row["stale"]),
             kind=row["kind"],
+            because=because,
+            last_edit_delta=last_edit_delta,
         )
 
     def _record_transition(self, task_id: int, from_status, to_status: str) -> None:
@@ -305,17 +331,39 @@ class Core:
         kind: str,
         description: str = "",
         labels: list[str] | None = None,
-        deps: list[int] | None = None,
+        deps: dict[int, str] | None = None,
     ) -> Task:
-        """D3 + T94 - create a task (auto monotonic id). ``kind`` is required
-        (D26 taxonomy: design | schema | production | meta) and refused as
-        missing/invalid via D2. Optionally attach labels (D4) and declare
-        symmetric links via ``deps`` (D5)."""
+        """D3 + T94 + D33 (T164) - create a task (auto monotonic id). ``kind``
+        is required (D26 taxonomy: design | schema | production | meta) and
+        refused as missing/invalid via D2. Optionally attach labels (D4) and
+        declare symmetric links via ``deps`` (D5).
+
+        v0.4 (D33 / T164): ``deps`` is ``{dep_id: because}`` -- each edge
+        wired at creation MUST carry a real, caller-supplied ``because``
+        rationale describing the coupling. Empty/whitespace because is
+        refused at the boundary (same rule as ``link_add``). The pre-T164
+        ``list[int]`` form with a hardcoded placeholder rationale is
+        retired: a placeholder carries zero signal for the cascade-
+        ergonomics filter, so every link created this way silently
+        corrupts the SNR. Callers wanting graph-only wiring without a
+        real rationale must now state that intent explicitly per edge."""
         _require_kind(kind, "add")
         if not name or not name.strip():
             raise ValidationError("task name must be a non-empty string (D3/S1).")
         _validate_text(name, "task name")
         _validate_text(description, "task description")
+        # D33 / T164: validate per-dep rationales BEFORE mutating so the whole
+        # add fails loud if any dep lacks a real because (no partial creation).
+        for dep_id, because in (deps or {}).items():
+            if not because or not because.strip():
+                raise ValidationError(
+                    f"add(deps=...) requires a real `because` rationale for each "
+                    f"dep edge -- dep_id={dep_id} got empty/whitespace. The pre-T164 "
+                    f"placeholder shortcut is retired (D33): a vague rationale "
+                    f"carries no signal for the cascade-ergonomics filter and "
+                    f"silently corrupts SNR. Pass `deps={{<id>: '<one-sentence "
+                    f"coupling rationale>', ...}}` instead."
+                )
         self.last_label_nudge = None  # D23: reflect only this op
         new_labels = self._new_labels(labels or [])  # D23: detect before they exist
         ts = _now()
@@ -329,12 +377,8 @@ class Core:
             self._record_transition(task_id, None, "open")  # D8: creation event
             for label in labels or []:
                 self._attach_label(task_id, label)
-            for dep in deps or []:
-                # T116: deps wired at add() time get a placeholder rationale --
-                # the per-link rationale arg isn't surfaced through `add` yet.
-                # Callers wanting a specific rationale should call link_add
-                # after creation. Tracked as follow-up to T116.
-                self._add_link(task_id, dep, because="(established at task creation)")
+            for dep_id, because in (deps or {}).items():
+                self._add_link(task_id, dep_id, because=because)
         if new_labels:
             self._set_label_nudge(new_labels)  # D23 anti-sprawl nudge
         return self.get(task_id)
@@ -354,12 +398,26 @@ class Core:
         for s in specs:
             _require_kind(s.get("kind"), f"load: task '{s['key']}'")
         # Validate all depends_on resolve within the plan BEFORE mutating (fail loud).
+        # D33 / T164: each dep entry is {"key": str, "because": str}; missing
+        # or empty because is refused (no placeholder rationale path).
         for s in specs:
-            for dep in s["depends_on"]:
-                if dep not in keys:
+            for dep_entry in s["depends_on"]:
+                dep_key = dep_entry["key"]
+                because = dep_entry.get("because", "")
+                if dep_key not in keys:
                     raise ValidationError(
-                        f"task '{s['key']}' depends_on unknown key '{dep}' "
+                        f"task '{s['key']}' depends_on unknown key '{dep_key}' "
                         f"(not defined in this plan)."
+                    )
+                if not because or not because.strip():
+                    raise ValidationError(
+                        f"task '{s['key']}' depends_on '{dep_key}' is missing a "
+                        f"real `because` rationale. Under D33 (T164), every "
+                        f"link-creation path requires an explicit one-sentence "
+                        f"rationale describing the coupling -- the pre-T164 "
+                        f"placeholder shortcut is retired. Use the multi-line "
+                        f"`depends_on:` block with `<key> :: <rationale>` "
+                        f"per entry (see plan.py docstring)."
                     )
         # D23: which labels the import will newly create (before they exist), for the
         # post-load anti-sprawl summary (T67 — bulk load is the one path the per-op
@@ -391,11 +449,15 @@ class Core:
                     self._attach_label(tid, label)
             for s in specs:  # pass 2: edges (all keys now have ids)
                 frm = keymap[s["key"]]
-                for dep in s["depends_on"]:
-                    # T116: bulk-load edges get a placeholder rationale -- the
-                    # plan format doesn't yet carry per-link rationales (T113
-                    # spec'd the format update; not in T116's scope).
-                    self._add_link(frm, keymap[dep], because="(established via bulk load)")
+                for dep_entry in s["depends_on"]:
+                    # D33 / T164: per-edge rationale comes from the plan; the
+                    # pre-T164 placeholder shortcut was retired. Pre-validation
+                    # above already refused any empty/missing because.
+                    self._add_link(
+                        frm,
+                        keymap[dep_entry["key"]],
+                        because=dep_entry["because"],
+                    )
         if new_labels:  # T67: surface the new labels so the agent can collapse in one pass
             self.last_label_nudge = (
                 f"🏷 Bulk load created {len(new_labels)} new label(s): "
@@ -634,14 +696,28 @@ class Core:
     def _linked_with(self, task_id: int) -> list[NeighborRef]:
         """D6 - every task that shares a link with ``task_id``, id-sorted. Single
         set under symmetric semantics: there is no "dependencies vs dependents"
-        partition. Status-blind (closed neighbors still returned)."""
+        partition. Status-blind (closed neighbors still returned).
+
+        D34/T166: the result carries per-entry `because` (the link's
+        coupling rationale) and `last_edit_delta` (the neighbor's most-
+        recent edit delta from S7) so the FAST-filter inputs are reachable
+        in the slice envelope without a second lookup."""
         rows = self.conn.execute(
-            "SELECT t.* FROM links l "
+            "SELECT t.*, l.because AS link_because, "
+            "  (SELECT delta FROM description_revisions dr "
+            "   WHERE dr.task_id = t.id ORDER BY dr.id DESC LIMIT 1) "
+            "  AS last_edit_delta "
+            "FROM links l "
             "JOIN tasks t ON t.id = CASE WHEN l.task_a = ? THEN l.task_b ELSE l.task_a END "
             "WHERE l.task_a = ? OR l.task_b = ? ORDER BY t.id",
             (task_id, task_id, task_id),
         ).fetchall()
-        return [self._neighbor_from_row(r) for r in rows]
+        return [
+            self._neighbor_from_row(
+                r, because=r["link_because"], last_edit_delta=r["last_edit_delta"]
+            )
+            for r in rows
+        ]
 
     def dependencies_of(self, task_id: int) -> list[NeighborRef]:
         """D6 -- backward-compatible alias for ``_linked_with``. Under v0.3.0
@@ -863,13 +939,25 @@ class Core:
     # ====================================================================
     def show(self, task_id: int) -> Slice:
         """D9 - one task plus its directly-linked context (deps, dependents,
-        labels): the small, step-sized unit of access."""
+        labels): the small, step-sized unit of access.
+
+        D34/T166: when at least one dep entry is stale, surface the FAST-
+        filter reminder so the agent knows to compare the upstream's
+        `last_edit_delta` (on the dep entry) against the link's `because`
+        (also on the dep entry) before opening the dependent."""
         task = self.get(task_id)
+        deps = self.dependencies_of(task_id)
+        dependents = self.dependents_of(task_id)
+        # D34/T166 trigger: any stale neighbor reachable from this slice.
+        # Dependencies and dependents are the same set under symmetric
+        # semantics (D5), so checking either is equivalent; both for clarity.
+        has_stale_neighbor = any(n.stale for n in deps) or any(n.stale for n in dependents)
         return Slice(
             task=task,
             labels=self.labels_of(task_id),
-            dependencies=self.dependencies_of(task_id),
-            dependents=self.dependents_of(task_id),
+            dependencies=deps,
+            dependents=dependents,
+            because_reminder=LINK_BECAUSE_REMINDER if has_stale_neighbor else None,
         )
 
     # ====================================================================

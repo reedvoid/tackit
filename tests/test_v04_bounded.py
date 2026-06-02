@@ -500,3 +500,206 @@ def test_core_source_has_no_kind_blind_T_prefix_for_ids(core):
         f"Route every id mention through `prefixed_id(kind, id)` to honor "
         f"the D32 prefix convention (T162)."
     )
+
+
+# ----------------------------------------------------------------------------
+# T164 - refuse placeholder rationales at every link-creation path (D33)
+# ----------------------------------------------------------------------------
+
+
+def test_add_deps_empty_because_refused(core):
+    """D33 / T164: add(deps={dep: ''}) is refused -- the pre-T164 placeholder
+    shortcut is retired and an empty/whitespace because is the same failure
+    mode (zero signal for the cascade-ergonomics filter)."""
+    from tackit.errors import ValidationError
+
+    core.add("base", kind="production")
+    with pytest.raises(ValidationError, match="because"):
+        core.add("dependent", kind="production", deps={1: ""})
+    with pytest.raises(ValidationError, match="because"):
+        core.add("dependent", kind="production", deps={1: "   "})
+    # No partial creation: the failing add() rolled back.
+    assert len(core.ls()) == 1
+
+
+def test_add_deps_real_because_stored_verbatim(core):
+    """D33 / T164: add(deps={dep: '<real>'}) succeeds and stores the rationale
+    on the link verbatim (no trimming beyond strip)."""
+    core.add("base", kind="production")
+    rationale = "dep extends base's contract; changes here propagate"
+    core.add("dep", kind="production", deps={1: rationale})
+    row = core.conn.execute(
+        "SELECT because FROM links WHERE task_a=1 AND task_b=2"
+    ).fetchone()
+    assert row["because"] == rationale
+
+
+def test_load_plan_with_old_csv_form_refused(core):
+    """D33 / T164: the pre-T164 inline `depends_on: a, b` form is refused
+    by the parser with a clear error pointing at the new continuation
+    syntax. No partial load."""
+    from tackit.errors import ValidationError
+
+    plan = (
+        "[a] one\n  kind: production\n"
+        "[b] two\n  kind: production\n  depends_on: a\n"
+    )
+    from tackit.plan import parse_plan
+
+    with pytest.raises(ValidationError, match="(?i)retired|because"):
+        parse_plan(plan)
+    assert core.ls() == []  # nothing created -- parser refused before load()
+
+
+def test_load_plan_with_empty_because_refused(core):
+    """D33 / T164: a continuation entry of the form `key ::` (empty rationale)
+    is refused by the parser."""
+    from tackit.errors import ValidationError
+    from tackit.plan import parse_plan
+
+    plan = (
+        "[a] one\n  kind: production\n"
+        "[b] two\n  kind: production\n"
+        "  depends_on:\n    a ::\n"
+    )
+    with pytest.raises(ValidationError, match="(?i)because|rationale"):
+        parse_plan(plan)
+
+
+def test_load_plan_with_missing_separator_refused(core):
+    """D33 / T164: a continuation line without `::` is refused (the
+    separator is mandatory; we don't try to guess a default rationale)."""
+    from tackit.errors import ValidationError
+    from tackit.plan import parse_plan
+
+    plan = (
+        "[a] one\n  kind: production\n"
+        "[b] two\n  kind: production\n"
+        "  depends_on:\n    a should be coupled here\n"
+    )
+    with pytest.raises(ValidationError, match="(?i)separator|::"):
+        parse_plan(plan)
+
+
+def test_load_plan_with_real_rationales_succeeds(core):
+    """D33 / T164: a plan with explicit becauses on every dep loads cleanly
+    and the rationales land on the links verbatim."""
+    from tackit.plan import parse_plan
+
+    plan = (
+        "[a] alpha\n  kind: production\n"
+        "[b] beta\n  kind: production\n"
+        "  depends_on:\n    a :: beta builds on alpha's published interface\n"
+    )
+    keymap = core.load(parse_plan(plan))
+    row = core.conn.execute(
+        "SELECT because FROM links WHERE task_a=? AND task_b=?",
+        (keymap["a"], keymap["b"]),
+    ).fetchone()
+    assert row["because"] == "beta builds on alpha's published interface"
+
+
+def test_internal_add_link_still_refuses_empty_because(core):
+    """T116 already refused empty becauses on `_add_link`/`link_add`. T164
+    didn't change that path; this regression-pins it so the placeholder-
+    shortcut removal hasn't loosened the canonical path."""
+    from tackit.errors import ValidationError
+
+    core.add("a", kind="production")
+    core.add("b", kind="production")
+    with pytest.raises(ValidationError, match="because"):
+        core.link_add(a=1, b=2, because="", delta="test")
+    with pytest.raises(ValidationError, match="because"):
+        core.link_add(a=1, b=2, because="  ", delta="test")
+
+
+# ----------------------------------------------------------------------------
+# T166 - surface link `because` + upstream `last_edit_delta` per dep entry +
+# DRY FAST-filter reminder in show/board envelopes (D34)
+# ----------------------------------------------------------------------------
+
+
+def test_show_dep_entries_carry_link_because(core):
+    """D34 / T166: each dep entry in the slice envelope carries the link's
+    `because` rationale (T116 stored, now surfaced)."""
+    core.add("a", kind="production")
+    core.add("b", kind="production")
+    rationale = "b extends a's contract; changes to a require b's review"
+    core.link_add(a=1, b=2, because=rationale, delta="setup")
+    slice_ = core.show(1)
+    assert len(slice_.dependencies) == 1
+    assert slice_.dependencies[0].because == rationale
+
+
+def test_show_dep_entries_carry_last_edit_delta(core):
+    """D34 / T166: each dep entry carries the neighbor's most-recent edit
+    delta from S7 (D29) so the FAST filter can compare delta x because."""
+    core.add("a", kind="production")
+    core.add("b", kind="production")
+    core.link_add(a=1, b=2, because="b couples to a's behavior", delta="setup")
+    # Edit B; its last delta should surface on A's dep entry for B.
+    core.edit(2, description="new shape", delta="changed b's serialization")
+    slice_ = core.show(1)
+    assert slice_.dependencies[0].last_edit_delta == "changed b's serialization"
+
+
+def test_show_last_edit_delta_none_if_neighbor_never_edited(core):
+    """D34 / T166: `last_edit_delta` is None when the neighbor has no S7
+    history."""
+    core.add("a", kind="production")
+    core.add("b", kind="production")
+    core.link_add(a=1, b=2, because="coupling", delta="setup")
+    slice_ = core.show(1)
+    assert slice_.dependencies[0].last_edit_delta is None
+
+
+def test_show_because_reminder_fires_iff_a_dep_is_stale(core):
+    """D34 / T166: `because_reminder` is set iff at least one dep entry is
+    stale. It's the single DRY-sourced LINK_BECAUSE_REMINDER constant."""
+    from tackit.core import LINK_BECAUSE_REMINDER
+
+    core.add("a", kind="production")
+    core.add("b", kind="production")
+    core.link_add(a=1, b=2, because="coupling", delta="setup")
+    # Neither is stale -> no reminder.
+    assert core.show(1).because_reminder is None
+    # Edit b: a is now stale via the cascade.
+    core.edit(2, description="updated", delta="b's prose changed")
+    a_view = core.show(1)
+    assert a_view.task.stale is True
+    # When viewing b, its dep `a` is stale -> reminder fires.
+    b_view = core.show(2)
+    # a (its neighbor) carries stale=True via cascade.
+    assert any(n.stale for n in b_view.dependencies)
+    assert b_view.because_reminder == LINK_BECAUSE_REMINDER
+
+
+def test_show_because_reminder_constant_is_dry_sourced(core):
+    """D34 / T166: the reminder text lives in exactly one source location
+    (`core.LINK_BECAUSE_REMINDER`). This regression test catches duplication
+    across modules."""
+    import pathlib
+
+    src_dir = pathlib.Path(__file__).resolve().parent.parent / "src" / "tackit"
+    # Search for the distinctive opening phrase to find literal definitions
+    # (as opposed to references to the constant by name).
+    phrase = "Each link's `because` describes WHY the two tasks are coupled."
+    matches = []
+    for py in src_dir.rglob("*.py"):
+        text = py.read_text()
+        if phrase in text:
+            matches.append(py.name)
+    assert matches == ["core.py"], (
+        f"LINK_BECAUSE_REMINDER literal text should live only in core.py "
+        f"(single DRY source). Found in: {matches}"
+    )
+
+
+def test_links_op_neighbors_have_no_because_or_delta(core):
+    """D34 / T166: the `links()` op returns candidates not tied to a single
+    edge from the input ids' perspective, so the per-edge fields are None
+    (the agent uses them only in slice contexts)."""
+    core.add("anchor", kind="design")
+    candidates = core.links()  # anchor layer (no input -> design+schema)
+    assert all(n.because is None for n in candidates)
+    assert all(n.last_edit_delta is None for n in candidates)

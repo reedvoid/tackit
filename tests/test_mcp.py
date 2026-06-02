@@ -51,7 +51,11 @@ def test_mcp_load(tmp_path, monkeypatch):
     async def scenario(s):
         return await s.call_tool(
             "load",
-            {"plan": "[a] first\n  kind: production\n[b] second\n  kind: production\n  depends_on: a\n"},
+            {"plan": (
+                "[a] first\n  kind: production\n"
+                "[b] second\n  kind: production\n"
+                "  depends_on:\n    a :: test fixture: b couples to a's contract\n"
+            )},
         )
 
     env = _envelope(_drive(tmp_path, monkeypatch, scenario))

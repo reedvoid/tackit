@@ -170,14 +170,39 @@ def _cmd_init(args) -> int:
     return 0
 
 
+def _dep_arg(value: str) -> tuple[int, str]:
+    """D33 / T164 - parse `--dep ID::because` into (id, because). The `::`
+    separator matches the plan format (plan.py); chosen because a single
+    `:` is ambiguous with becauses containing colons. Empty becauses are
+    refused at core.add() (D33 boundary). The argparse type runs at parse
+    time, so a malformed `--dep` aborts before any DB touch."""
+    if "::" not in value:
+        raise argparse.ArgumentTypeError(
+            f"--dep {value!r}: missing `::` separator. Expected "
+            f"`<id>::<because rationale>` (D33 / T164). Example: "
+            f"`--dep 5::'anchor invariant decides this task'`."
+        )
+    id_str, _, because = value.partition("::")
+    try:
+        dep_id = int(id_str.strip())
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"--dep {value!r}: id {id_str.strip()!r} is not an integer."
+        )
+    return (dep_id, because.strip())
+
+
 def _cmd_add(args) -> int:
+    deps_dict: dict[int, str] | None = (
+        {dep_id: because for dep_id, because in args.dep} if args.dep else None
+    )
     with _core_session() as core:
         task = core.add(
             args.name,
             kind=args.kind,
             description=args.desc or "",
             labels=args.label,
-            deps=args.dep,
+            deps=deps_dict,
         )
         _emit("created " + _fmt_slice(core.show(task.id)), _dump(core.show(task.id)), args.json)
     return 0
@@ -484,7 +509,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sp.add_argument("--desc", default="", help="task description/body")
     sp.add_argument("--label", action="append", default=[], help="attach a label (repeatable, D4)")
-    sp.add_argument("--dep", action="append", type=int, default=[], help="depends_on this id (repeatable, D5)")
+    sp.add_argument(
+        "--dep",
+        action="append",
+        type=_dep_arg,
+        default=[],
+        help="depends_on (repeatable, D5 + D33): `<id>::<because>` per edge; "
+        "every link requires a real one-sentence coupling rationale (T164).",
+    )
 
     sp = add("search", _cmd_search, "ranked FTS keyword search -> ids (D17)")
     sp.add_argument("terms")

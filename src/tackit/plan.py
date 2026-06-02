@@ -12,13 +12,23 @@ Format (no external dependency; the design.md D#/S# slices nearly conform):
       kind: production
       desc: replace the static signing key with rotating keys
       labels: auth, security
-      depends_on: token-endpoint
+      depends_on:
+        token-endpoint :: token endpoint defines the request/response shape this
+          rotation must preserve when swapping signing keys
 
 A ``[key] Name`` line starts a task; indented ``kind:`` / ``desc:`` / ``labels:`` /
 ``depends_on:`` lines are its fields. ``kind`` is required (D26: design | schema |
 production | meta); a row missing it is refused, the whole import rolls back (T94).
 ``depends_on`` references other keys in the same plan. Anything malformed fails loud
 (D2) before the store is touched.
+
+D33 / T164 (v0.4): every dep edge MUST carry an explicit per-edge ``because``
+rationale describing the coupling. The pre-T164 CSV form (``depends_on: a, b, c``)
+is refused with a clear error pointing at the new continuation-block syntax: the
+``depends_on:`` keyword line has an empty value, and each dep is its own
+deeper-indented continuation line in the form ``<key> :: <because rationale>``.
+Continuation lines indented deeper still continue the previous rationale (same
+rule as ``desc:`` multi-line).
 
 Multi-line ``desc``: a ``desc:`` field may span several lines. Lines indented
 *deeper* than the ``desc:`` keyword are **continuation lines** of the description;
@@ -31,7 +41,9 @@ equal-or-lesser-indented line that is neither a known field nor a ``[key]`` stil
 fails loud, exactly as before.
 
     [d1] D1 — Persistent task store
-      depends_on: s1
+      depends_on:
+        s1 :: D1's persistence contract is realized over the S1 schema, so a
+          change to S1's columns or indexes shifts what D1 must promise.
       desc: First paragraph of the description, which may itself be long.
         A second paragraph, kept as its own line.
 """
@@ -59,8 +71,10 @@ def _split_csv(value: str) -> list[str]:
 
 def parse_plan(text: str) -> list[dict]:
     """Parse plan text into ordered task specs:
-    ``{"key", "name", "desc", "labels": [...], "depends_on": [...]}``. Fails loud on
-    a bad line, a duplicate key, a field outside a task, or an unknown field."""
+    ``{"key", "name", "desc", "labels": [...], "depends_on": [{"key", "because"}, ...]}``.
+    Fails loud on a bad line, a duplicate key, a field outside a task, or an
+    unknown field. Under D33 / T164 (v0.4), every dep entry must carry an
+    explicit ``because`` rationale; the pre-T164 CSV form is refused."""
     items: list[dict] = []
     seen_keys: set[str] = set()
     current: dict | None = None
@@ -68,6 +82,9 @@ def parse_plan(text: str) -> list[dict]:
     # keyword line; deeper-indented lines that follow are its continuation. None
     # whenever we are not collecting a desc.
     desc_indent: int | None = None
+    # T164: same idea for ``depends_on:`` continuation lines. Each continuation
+    # is one dep entry of the form ``<key> :: <because rationale>``.
+    deps_indent: int | None = None
     for lineno, raw in enumerate(text.splitlines(), start=1):
         indent = len(raw) - len(raw.lstrip())
         stripped = raw.strip()
@@ -80,13 +97,40 @@ def parse_plan(text: str) -> list[dict]:
             else:
                 current["desc"] = stripped
             continue
-        # Blank line ends a desc block; blank lines and comments are otherwise ignored.
+        # T164: a depends_on continuation line: deeper-indented than the
+        # `depends_on:` keyword, of the form `<key> :: <because rationale>`.
+        if current is not None and deps_indent is not None and stripped and indent > deps_indent:
+            if "::" not in stripped:
+                raise ValidationError(
+                    f"plan line {lineno}: depends_on continuation line "
+                    f"{stripped!r} missing the `::` separator. Each dep entry "
+                    f"must be `<key> :: <because rationale>` (D33 / T164)."
+                )
+            dep_key, sep, because = stripped.partition("::")
+            dep_key = dep_key.strip()
+            because = because.strip()
+            if not dep_key:
+                raise ValidationError(
+                    f"plan line {lineno}: depends_on entry has no key before `::`."
+                )
+            if not because:
+                raise ValidationError(
+                    f"plan line {lineno}: depends_on entry for '{dep_key}' has "
+                    f"an empty `because` rationale. D33 / T164 requires every "
+                    f"dep edge to carry a real one-sentence coupling rationale; "
+                    f"the pre-T164 placeholder shortcut is retired."
+                )
+            current["depends_on"].append({"key": dep_key, "because": because})
+            continue
+        # Blank line ends a desc/deps block; blank lines and comments are otherwise ignored.
         if not stripped or stripped.startswith("#"):
             if not stripped:
                 desc_indent = None
+                deps_indent = None
             continue
-        # Any structural line (key / field) ends a desc block.
+        # Any structural line (key / field) ends a desc/deps block.
         desc_indent = None
+        deps_indent = None
         key_match = _KEY_LINE.match(raw.rstrip())
         if key_match:
             key = key_match.group(1)
@@ -131,8 +175,18 @@ def parse_plan(text: str) -> list[dict]:
                 desc_indent = indent  # subsequent deeper-indented lines continue it
             elif field == "labels":
                 current["labels"] = _split_csv(value)
-            else:
-                current["depends_on"] = _split_csv(value)
+            else:  # depends_on
+                # D33 / T164: refuse the pre-T164 CSV form `depends_on: a, b, c`.
+                # The keyword must be followed by an empty value and a multi-line
+                # continuation block where each dep is `<key> :: <because>`.
+                if value:
+                    raise ValidationError(
+                        f"plan line {lineno}: pre-T164 inline `depends_on: {value}` "
+                        f"form is retired (D33). The keyword must be on its own "
+                        f"line; put each dep on a continuation line of the form "
+                        f"`<key> :: <because rationale>`."
+                    )
+                deps_indent = indent  # subsequent deeper-indented lines are dep entries
             continue
         raise ValidationError(f"plan line {lineno}: cannot parse: {raw.strip()!r}")
     if not items:

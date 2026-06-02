@@ -31,7 +31,8 @@ def test_cli_load(cli, tmp_path, capsys):
         "  kind: production\n"
         "[b] second task\n"
         "  kind: production\n"
-        "  depends_on: a\n"
+        "  depends_on:\n"
+        "    a :: test fixture: b couples to a's interface\n"
     )
     capsys.readouterr()
     assert main(["load", str(plan)]) == 0

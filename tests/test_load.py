@@ -17,11 +17,14 @@ PLAN = """\
   kind: production
   desc: sits on the base
   labels: core, feature
-  depends_on: base
+  depends_on:
+    base :: mid sits on base's API; base interface changes need mid to follow
 
 [top] Build the top thing
   kind: production
-  depends_on: mid, base
+  depends_on:
+    mid :: top composes mid's behavior end-to-end
+    base :: top also reaches through directly for the foundational types
 """
 
 
@@ -32,8 +35,11 @@ def test_parse_plan_ok():
     assert mid["name"] == "Build the middle thing"
     assert mid["desc"] == "sits on the base"
     assert mid["labels"] == ["core", "feature"]
-    assert mid["depends_on"] == ["base"]
-    assert specs[2]["depends_on"] == ["mid", "base"]
+    # D33 / T164: depends_on is list[{"key", "because"}], not list[str].
+    assert mid["depends_on"] == [
+        {"key": "base", "because": "mid sits on base's API; base interface changes need mid to follow"},
+    ]
+    assert [d["key"] for d in specs[2]["depends_on"]] == ["mid", "base"]
 
 
 def test_parse_multiline_desc_folds_continuations():
@@ -144,19 +150,19 @@ def test_load_creates_tasks_and_edges(core):
 
 def test_load_unknown_dep_key_fails_before_mutating(core):
     with pytest.raises(ValidationError):
-        core.load(parse_plan("[a] one\n  kind: production\n  depends_on: nope\n"))
+        core.load(parse_plan(
+            "[a] one\n  kind: production\n  depends_on:\n    nope :: missing target\n"
+        ))
     assert core.ls() == []  # nothing created (validated before the transaction)
 
 
 def test_load_mutual_depends_on_creates_single_link(core):
     # Under v0.3.0 symmetric semantics (T86), "[a] depends_on b" and
     # "[b] depends_on a" describe the SAME link {a, b}; the load just creates
-    # the canonical pair once (no cycle to refuse). The plan parser still
-    # accepts the v0.2.0 `depends_on:` keyword; T113 updates D24 prose to use
-    # `links:` and tightens the parser.
+    # the canonical pair once (no cycle to refuse).
     cyc = (
-        "[a] one\n  kind: production\n  depends_on: b\n"
-        "[b] two\n  kind: production\n  depends_on: a\n"
+        "[a] one\n  kind: production\n  depends_on:\n    b :: a couples to b's shape\n"
+        "[b] two\n  kind: production\n  depends_on:\n    a :: b also references a's shape\n"
     )
     core.load(parse_plan(cyc))
     assert [t.id for t in core.ls()] == [1, 2]

@@ -103,7 +103,16 @@ class NeighborRef(BaseModel):
     small summary (id + name + status + stale + kind), not the full row. Keeps
     the slice small (design.md D9: "a step-sized slice"). `kind` (D32, v0.4)
     is carried so the neighbor render can synthesize its auto-id prefix
-    (`prefixed_name`) without a second lookup."""
+    (`prefixed_name`) without a second lookup.
+
+    D34 / T166 (v0.4): in slice contexts where there is a specific edge from
+    the focal task to this neighbor (show, board, close/wont_do payloads),
+    the `because` (link's coupling rationale, T116) and `last_edit_delta`
+    (neighbor's most recent edit delta from S7, T117/D29) are populated so
+    the agent can compare delta x because to orient reconciliation of a
+    stale neighbor without re-reading the dependent's full description.
+    Both are None in non-slice contexts like the `links()` op output where
+    a candidate isn't tied to a single edge from the input ids' perspective."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -113,6 +122,11 @@ class NeighborRef(BaseModel):
     stale: bool
     kind: Kind = "production"  # D32: defaulted for backward compat at the model
                                # boundary; populated at every construction site.
+    because: Optional[str] = None  # D34/T166: link's coupling rationale; None in
+                                    # non-edge contexts (links() op candidates).
+    last_edit_delta: Optional[str] = None  # D34/T166: this neighbor's most-recent
+                                            # edit delta from S7; None if never
+                                            # edited or in non-edge contexts.
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -124,7 +138,12 @@ class NeighborRef(BaseModel):
 class Slice(BaseModel):
     """D9 - slice fetch payload: one task plus its directly-linked context
     (dependencies it points at, dependents that point at it, and its labels).
-    The core anti-context-bloat unit of access."""
+    The core anti-context-bloat unit of access.
+
+    D34 / T166 (v0.4): when at least one dep entry has stale=True, the
+    `because_reminder` field carries the FAST-filter discipline reminder
+    pointing the agent at the per-entry `because` + `last_edit_delta` they
+    should use to orient reconciliation. None when no dep entry is stale."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -132,6 +151,7 @@ class Slice(BaseModel):
     labels: list[str]
     dependencies: list[NeighborRef]  # D6: what this task points at (prerequisites)
     dependents: list[NeighborRef]  # D6: what points at this task
+    because_reminder: Optional[str] = None  # D34/T166
 
 
 class CloseResult(BaseModel):

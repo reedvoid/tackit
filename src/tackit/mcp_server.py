@@ -55,9 +55,9 @@ def build_server() -> FastMCP:
         kind: str,
         description: str = "",
         labels: list[str] | None = None,
-        deps: list[int] | None = None,
+        deps: dict[int, str] | None = None,
     ) -> dict:
-        """Create a task (D3 + T94). ``kind`` is REQUIRED -- one of
+        """Create a task (D3 + T94 + D33). ``kind`` is REQUIRED -- one of
         design | schema | production | meta (D26). Classify by the 'alters
         running-app behavior' rule: design = a decision slice, schema = the
         store's shape, production = changes the app's behavior (source, tests
@@ -65,7 +65,10 @@ def build_server() -> FastMCP:
         / experiments. The kind boundary bounds the cascade (D26 meta-island);
         a stray choice silently corrupts cascade reach, so refuse missing/invalid
         loudly via D2. Optionally attach labels (D4) and symmetric links via
-        ``deps`` (D5). Returns the new task's slice plus any ``stale_alert``."""
+        ``deps``: under D33 / T164 (v0.4) each entry is ``{dep_id: because}``
+        where ``because`` is the per-edge one-sentence coupling rationale
+        (placeholder/empty rationales are refused). Returns the new task's
+        slice plus any ``stale_alert``."""
         with _core() as c:
             t = c.add(name, kind=kind, description=description, labels=labels, deps=deps)
             return _wrap(c, c.show(t.id).model_dump(mode="json"))

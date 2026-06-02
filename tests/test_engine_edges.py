@@ -202,7 +202,13 @@ def test_dep_rm_missing_task_refused(core):
 
 def test_add_with_deps_and_labels_at_once(core):
     core.add("base", kind="production")  # T1
-    t = core.add("dep", kind="production", labels=["x", "y"], deps=[1])
+    # D33 / T164: deps now require per-edge `because` rationales (dict[int, str]).
+    t = core.add(
+        "dep",
+        kind="production",
+        labels=["x", "y"],
+        deps={1: "dep extends base's interface; changes to base must be reviewed here"},
+    )
     assert t.id == 2
     assert core.labels_of(2) == ["x", "y"]
     assert [n.id for n in core.dependencies_of(2)] == [1]
@@ -210,7 +216,7 @@ def test_add_with_deps_and_labels_at_once(core):
 
 def test_add_dep_to_missing_refused(core):
     with pytest.raises(NotFoundError):
-        core.add("bad", kind="production", deps=[999])
+        core.add("bad", kind="production", deps={999: "test fixture: bad target"})
 
 
 def test_edit_name_change(core):

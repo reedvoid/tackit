@@ -84,7 +84,8 @@ def test_load_with_reserved_label_refused_and_rollback(core, reserved):
     """load() with any reserved label rolls back the WHOLE plan (D24 fail-loud)."""
     specs = [
         {"key": "a", "name": "alpha", "kind": "production", "desc": "", "labels": [], "depends_on": []},
-        {"key": "b", "name": "beta", "kind": "production", "desc": "", "labels": [reserved], "depends_on": ["a"]},
+        {"key": "b", "name": "beta", "kind": "production", "desc": "", "labels": [reserved],
+         "depends_on": [{"key": "a", "because": "test fixture: b couples to a's contract"}]},
     ]
     with pytest.raises(ValidationError, match="reserved"):
         core.load(specs)
