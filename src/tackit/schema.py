@@ -1,11 +1,11 @@
-"""SQLite schema - tables S1-S6 from schema.md.
+"""SQLite schema - tables S1-S7.
 
 Each CREATE statement is tagged with its S# so the DDL traces directly to the
-schema doc. Acyclicity (S3) and the stale=>open invariant (S1) are NOT expressed
-in DDL -- they live in core logic (D14/D7), as the doc notes.
+spec slice that defines it. Non-DDL invariants live in core logic (D14, D7)
+rather than here.
 """
 
-SCHEMA_VERSION = "8"
+SCHEMA_VERSION = "9"
 
 # D26 task kind taxonomy. The four values are also reserved label strings (D14):
 # label_add / load refuse a label equal to any of them, because S1.kind absorbs
@@ -84,20 +84,65 @@ CREATE VIRTUAL TABLE IF NOT EXISTS tasks_fts USING fts5(
 # S5 sync triggers: mirror every tasks insert/update/delete into the FTS index.
 # The 'delete' command rows are the FTS5-prescribed way to retract external
 # content before re-inserting on update.
+#
+# D32 (v0.4): the indexed `name` column carries the synthesized auto-id prefix
+# (`<letter><id> — <name>`) so search("T238") / search("D23") resolves to the
+# right row even when the user-supplied name doesn't contain that string. The
+# CASE expression here MUST agree with models.py._KIND_LETTERS; both encode
+# the same kind->letter map. Em dash separator matches existing D7/S1-style
+# names. Migration 008 rebuilds the index for pre-D32 rows.
 S5_FTS_TRIGGERS = """
 CREATE TRIGGER IF NOT EXISTS tasks_fts_ai AFTER INSERT ON tasks BEGIN
     INSERT INTO tasks_fts(rowid, name, description)
-    VALUES (new.id, new.name, new.description);
+    VALUES (
+        new.id,
+        CASE new.kind
+            WHEN 'design'     THEN 'D'
+            WHEN 'schema'     THEN 'S'
+            WHEN 'production' THEN 'T'
+            WHEN 'meta'       THEN 'M'
+        END || new.id || ' — ' || new.name,
+        new.description
+    );
 END;
 CREATE TRIGGER IF NOT EXISTS tasks_fts_ad AFTER DELETE ON tasks BEGIN
     INSERT INTO tasks_fts(tasks_fts, rowid, name, description)
-    VALUES ('delete', old.id, old.name, old.description);
+    VALUES (
+        'delete',
+        old.id,
+        CASE old.kind
+            WHEN 'design'     THEN 'D'
+            WHEN 'schema'     THEN 'S'
+            WHEN 'production' THEN 'T'
+            WHEN 'meta'       THEN 'M'
+        END || old.id || ' — ' || old.name,
+        old.description
+    );
 END;
 CREATE TRIGGER IF NOT EXISTS tasks_fts_au AFTER UPDATE ON tasks BEGIN
     INSERT INTO tasks_fts(tasks_fts, rowid, name, description)
-    VALUES ('delete', old.id, old.name, old.description);
+    VALUES (
+        'delete',
+        old.id,
+        CASE old.kind
+            WHEN 'design'     THEN 'D'
+            WHEN 'schema'     THEN 'S'
+            WHEN 'production' THEN 'T'
+            WHEN 'meta'       THEN 'M'
+        END || old.id || ' — ' || old.name,
+        old.description
+    );
     INSERT INTO tasks_fts(rowid, name, description)
-    VALUES (new.id, new.name, new.description);
+    VALUES (
+        new.id,
+        CASE new.kind
+            WHEN 'design'     THEN 'D'
+            WHEN 'schema'     THEN 'S'
+            WHEN 'production' THEN 'T'
+            WHEN 'meta'       THEN 'M'
+        END || new.id || ' — ' || new.name,
+        new.description
+    );
 END;
 """
 

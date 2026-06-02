@@ -133,6 +133,112 @@ def _mig_006_drop_superseded_by_column(conn: sqlite3.Connection) -> None:
     conn.execute("ALTER TABLE tasks DROP COLUMN superseded_by;")
 
 
+def _mig_008_rebuild_fts_with_prefix(conn: sqlite3.Connection) -> None:
+    """v0.4 / D32 -- rebuild tasks_fts so its indexed name carries the
+    synthesized auto-id prefix (<kind_letter><id> — <name>).
+
+    Steps:
+      1. Drop the three S5 FTS sync triggers (tasks_fts_ai / _ad / _au) -- the
+         pre-D32 versions index the bare name; they must go before we touch
+         the virtual table to avoid firing on the rebuild.
+      2. Drop the tasks_fts virtual table (clears every pre-D32 indexed row).
+      3. Recreate the tasks_fts virtual table.
+      4. Bulk-insert one row per existing tasks row, with the synthesized
+         prefix prepended to the indexed name.
+      5. Recreate the three triggers as the prefix-aware versions, so
+         subsequent inserts/updates/deletes on tasks are mirrored with the
+         prefix.
+
+    DDL is inlined rather than imported from schema.py: a migration captures
+    a point-in-time schema state and shouldn't drift if schema.py is later
+    refactored. The CASE statement here, the CASE in schema.S5_FTS_TRIGGERS,
+    and models.kind_letter must all agree -- one logical map, three encodings.
+
+    Why conn.execute() per statement rather than conn.executescript(): the
+    sqlite3 driver auto-COMMITs before each executescript() call, which would
+    break the BEGIN/COMMIT envelope this migration is wrapped in by
+    run_pending_migrations (the post-script COMMIT would then fail with 'no
+    transaction is active')."""
+    conn.execute("DROP TRIGGER IF EXISTS tasks_fts_ai;")
+    conn.execute("DROP TRIGGER IF EXISTS tasks_fts_ad;")
+    conn.execute("DROP TRIGGER IF EXISTS tasks_fts_au;")
+    conn.execute("DROP TABLE IF EXISTS tasks_fts;")
+    conn.execute(
+        "CREATE VIRTUAL TABLE tasks_fts USING fts5("
+        "  name, description, content='tasks', content_rowid='id');"
+    )
+    conn.execute(
+        "INSERT INTO tasks_fts(rowid, name, description) "
+        "SELECT id, "
+        "       CASE kind "
+        "           WHEN 'design'     THEN 'D' "
+        "           WHEN 'schema'     THEN 'S' "
+        "           WHEN 'production' THEN 'T' "
+        "           WHEN 'meta'       THEN 'M' "
+        "       END || id || ' — ' || name, "
+        "       description "
+        "FROM tasks;"
+    )
+    conn.execute(
+        "CREATE TRIGGER tasks_fts_ai AFTER INSERT ON tasks BEGIN "
+        "  INSERT INTO tasks_fts(rowid, name, description) "
+        "  VALUES ("
+        "    new.id, "
+        "    CASE new.kind "
+        "      WHEN 'design'     THEN 'D' "
+        "      WHEN 'schema'     THEN 'S' "
+        "      WHEN 'production' THEN 'T' "
+        "      WHEN 'meta'       THEN 'M' "
+        "    END || new.id || ' — ' || new.name, "
+        "    new.description"
+        "  );"
+        "END;"
+    )
+    conn.execute(
+        "CREATE TRIGGER tasks_fts_ad AFTER DELETE ON tasks BEGIN "
+        "  INSERT INTO tasks_fts(tasks_fts, rowid, name, description) "
+        "  VALUES ("
+        "    'delete', "
+        "    old.id, "
+        "    CASE old.kind "
+        "      WHEN 'design'     THEN 'D' "
+        "      WHEN 'schema'     THEN 'S' "
+        "      WHEN 'production' THEN 'T' "
+        "      WHEN 'meta'       THEN 'M' "
+        "    END || old.id || ' — ' || old.name, "
+        "    old.description"
+        "  );"
+        "END;"
+    )
+    conn.execute(
+        "CREATE TRIGGER tasks_fts_au AFTER UPDATE ON tasks BEGIN "
+        "  INSERT INTO tasks_fts(tasks_fts, rowid, name, description) "
+        "  VALUES ("
+        "    'delete', "
+        "    old.id, "
+        "    CASE old.kind "
+        "      WHEN 'design'     THEN 'D' "
+        "      WHEN 'schema'     THEN 'S' "
+        "      WHEN 'production' THEN 'T' "
+        "      WHEN 'meta'       THEN 'M' "
+        "    END || old.id || ' — ' || old.name, "
+        "    old.description"
+        "  );"
+        "  INSERT INTO tasks_fts(rowid, name, description) "
+        "  VALUES ("
+        "    new.id, "
+        "    CASE new.kind "
+        "      WHEN 'design'     THEN 'D' "
+        "      WHEN 'schema'     THEN 'S' "
+        "      WHEN 'production' THEN 'T' "
+        "      WHEN 'meta'       THEN 'M' "
+        "    END || new.id || ' — ' || new.name, "
+        "    new.description"
+        "  );"
+        "END;"
+    )
+
+
 def _mig_003_dependencies_to_links_symmetric(conn: sqlite3.Connection) -> None:
     """T86 / D5 / D27 -- rebuild the directional `dependencies` table as the
     symmetric `links` table. Each existing (from_task, to_task) edge becomes
@@ -194,6 +300,11 @@ MIGRATIONS: list[Migration] = [
         target_version=8,
         name="add S7.description_revisions audit table (v0.4 / D29)",
         migrate=_mig_007_add_description_revisions,
+    ),
+    Migration(
+        target_version=9,
+        name="rebuild tasks_fts with kind+id name prefix (v0.4 / D32)",
+        migrate=_mig_008_rebuild_fts_with_prefix,
     ),
 ]
 

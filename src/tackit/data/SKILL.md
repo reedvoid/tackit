@@ -237,6 +237,31 @@ Treat a vague task title or a code↔task vocabulary mismatch as a **defect**, n
 style nit. The system's ability to recover intent across context resets depends
 entirely on this.
 
+### Auto-id name prefix (D32, v0.4)
+Every task carries a deterministic `<kind_letter><id>` prefix in its agent-facing
+display. The letters: design→**D**, schema→**S**, production→**T**, meta→**M**;
+the number is the task row id. The prefix is **synthesized by tackit** from
+`kind + id` — you pass a bare name to `add()` / `edit()` ("Fix the ls() status
+filter"), and every display surface emits `T157 — Fix the ls() status filter`.
+The FTS index also stores the synthesized prefix, so `search("T157")` /
+`search("D23")` resolves to the right row even when the user-supplied name has
+no such substring.
+
+- **Don't manually prefix.** Write the bare name; tackit adds the prefix. A
+  manually-prefixed name like `"T157 — Fix..."` will double-prefix at display.
+- **Reference tasks in code/conversation by the synthesized prefix.** Code
+  comments saying `# T157: validates the wont_do status` or PR descriptions
+  saying "fixes T157" are the cross-references the search and code↔task
+  vocabulary depend on. Grep for "T157" in the codebase to find every site
+  that mentions the task; grep that exact string in tackit search to confirm
+  the task is what you think it is.
+- **Legacy D#/S# names are grandfathered** (T160 / 2026-06-01): pre-D32
+  design/schema tasks keep their manually-assigned slot prefix as part of the
+  stored `name` field (e.g., T133's `name` is `"D7 — Status + stale flag"`).
+  Their synthesized display becomes the doubled `D133 — D7 — Status + stale
+  flag` — verbose but unambiguous; the cost of not retro-renaming the spec
+  references in code, SKILL.md, etc.
+
 ## Working effectively
 - **Wire links explicitly — including among tasks you add together.** A task
   building on another must declare the edge with a real `because` rationale —

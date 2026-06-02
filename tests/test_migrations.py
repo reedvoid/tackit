@@ -252,6 +252,27 @@ CREATE TABLE dependencies (
 );
 """
 
+# The pre-D32 (v<9) bare-name FTS sync triggers. Inlined here because the live
+# schema.py S5_FTS_TRIGGERS now references new.kind for the synthesized prefix,
+# which doesn't exist on the v1 tasks table. mig_008 (v8->v9) is what replaces
+# these with the prefix-aware versions.
+_V1_FTS_TRIGGERS = """
+CREATE TRIGGER tasks_fts_ai AFTER INSERT ON tasks BEGIN
+    INSERT INTO tasks_fts(rowid, name, description)
+    VALUES (new.id, new.name, new.description);
+END;
+CREATE TRIGGER tasks_fts_ad AFTER DELETE ON tasks BEGIN
+    INSERT INTO tasks_fts(tasks_fts, rowid, name, description)
+    VALUES ('delete', old.id, old.name, old.description);
+END;
+CREATE TRIGGER tasks_fts_au AFTER UPDATE ON tasks BEGIN
+    INSERT INTO tasks_fts(tasks_fts, rowid, name, description)
+    VALUES ('delete', old.id, old.name, old.description);
+    INSERT INTO tasks_fts(rowid, name, description)
+    VALUES (new.id, new.name, new.description);
+END;
+"""
+
 
 def _make_v1_store(tmp_path):
     """Hand-build a store at the pre-T84 schema (no kind column,
@@ -271,7 +292,7 @@ def _make_v1_store(tmp_path):
         schema.S2_TASK_LABELS,
         schema.S4_STATUS_TRANSITIONS,
         schema.S5_TASKS_FTS,
-        schema.S5_FTS_TRIGGERS,
+        _V1_FTS_TRIGGERS,  # pre-D32 bare-name triggers (mig_008 swaps them later)
         schema.S6_META,
     ):
         conn.executescript(ddl)

@@ -276,8 +276,14 @@ class Core:
         return row
 
     def _neighbor_from_row(self, row: sqlite3.Row) -> NeighborRef:
+        # D32: include kind so the neighbor render can synthesize its auto-id
+        # prefix without a second lookup.
         return NeighborRef(
-            id=row["id"], name=row["name"], status=row["status"], stale=bool(row["stale"])
+            id=row["id"],
+            name=row["name"],
+            status=row["status"],
+            stale=bool(row["stale"]),
+            kind=row["kind"],
         )
 
     def _record_transition(self, task_id: int, from_status, to_status: str) -> None:
@@ -1137,7 +1143,7 @@ class Core:
             raise ValidationError("search query must be non-empty (D17).")
         try:
             rows = self.conn.execute(
-                "SELECT t.id AS id, t.name AS name, t.status AS status, "
+                "SELECT t.id AS id, t.name AS name, t.status AS status, t.kind AS kind, "
                 "t.wont_do_reason AS wont_do_reason, bm25(tasks_fts) AS bm25 "
                 "FROM tasks_fts JOIN tasks t ON t.id = tasks_fts.rowid "
                 "WHERE tasks_fts MATCH ? ORDER BY bm25 LIMIT ?",
@@ -1152,6 +1158,7 @@ class Core:
                 name=r["name"],
                 score=-float(r["bm25"]),
                 status=r["status"],
+                kind=r["kind"],  # D32: carried for prefixed_name synthesis
                 wont_do_reason=r["wont_do_reason"],
             )
             for r in rows

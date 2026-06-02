@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 # design.md D7 / schema.md S1: status is informational. T132 added 'wont_do' as
 # a third terminal status distinct from 'closed' -- 'closed' = work done;
@@ -25,6 +25,37 @@ Status = Literal["open", "closed", "wont_do"]
 # omit it until T94 lands and to preserve the DB-level safety net for any caller
 # that slips past the op-layer check.
 Kind = Literal["design", "schema", "production", "meta"]
+
+# D32 (v0.4) - kind -> letter map for the synthesized auto-id name prefix.
+# Every agent-facing display of a task renders as `<letter><id> — <name>` so
+# the row's identifier is self-describing and code/conversation/FTS share one
+# vocabulary. The prefix is COMPUTED from kind+id, never stored: the stored
+# `name` column stays bare ("Fix ls() ..."), the prefix is appended at the
+# display boundary (computed_field below) and at the FTS-index boundary
+# (schema.py triggers). Legacy D#/S# task names from before D32 are
+# grandfathered (per user 2026-06-01, T160) -- the synthesized prefix layers
+# on top, producing e.g. "D133 — D7 — Status + stale flag" until those rows
+# are someday renamed.
+_KIND_LETTERS: dict[str, str] = {
+    "design": "D",
+    "schema": "S",
+    "production": "T",
+    "meta": "M",
+}
+
+
+def kind_letter(kind: str) -> str:
+    """D32 - return the single-letter prefix for a kind. Single source of truth
+    used by both Task.prefixed_name and the FTS triggers (the SQL CASE in
+    schema.py must agree with this map)."""
+    return _KIND_LETTERS[kind]
+
+
+def synthesize_prefixed_name(kind: str, task_id: int, name: str) -> str:
+    """D32 - the canonical display form of a task: `<letter><id> — <name>`.
+    Shared between the model's computed_field and any non-Task call site that
+    needs the same string (search hits, neighbor refs, render output)."""
+    return f"{kind_letter(kind)}{task_id} — {name}"
 
 
 class Task(BaseModel):
@@ -49,11 +80,20 @@ class Task(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def prefixed_name(self) -> str:
+        """D32 - canonical agent-facing identifier: `<kind_letter><id> — <name>`.
+        Computed from kind+id+name; not stored. See models.py.kind_letter."""
+        return synthesize_prefixed_name(self.kind, self.id, self.name)
+
 
 class NeighborRef(BaseModel):
     """A directly-linked task as it appears in a slice/obligation payload -- a
-    small summary (id + name + status + stale), not the full row. Keeps the
-    slice small (design.md D9: "a step-sized slice")."""
+    small summary (id + name + status + stale + kind), not the full row. Keeps
+    the slice small (design.md D9: "a step-sized slice"). `kind` (D32, v0.4)
+    is carried so the neighbor render can synthesize its auto-id prefix
+    (`prefixed_name`) without a second lookup."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -61,6 +101,14 @@ class NeighborRef(BaseModel):
     name: str
     status: Status
     stale: bool
+    kind: Kind = "production"  # D32: defaulted for backward compat at the model
+                               # boundary; populated at every construction site.
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def prefixed_name(self) -> str:
+        """D32 - canonical display form for this neighbor reference."""
+        return synthesize_prefixed_name(self.kind, self.id, self.name)
 
 
 class Slice(BaseModel):
@@ -154,11 +202,12 @@ class History(BaseModel):
 
 
 class SearchHit(BaseModel):
-    """D17 + D28 (v0.4) - one ranked FTS5 result. ``status`` lets the adapter
-    visually distinguish live work (open) from historical record
-    (closed/wont_do) without opening each hit. ``wont_do_reason`` is set
-    only for wont_do hits, so search results carry their dropped-scope
-    rationale inline."""
+    """D17 + D28 (v0.4) + D32 - one ranked FTS5 result. ``status`` lets the
+    adapter visually distinguish live work (open) from historical record
+    (closed/wont_do) without opening each hit. ``wont_do_reason`` is set only
+    for wont_do hits, so search results carry their dropped-scope rationale
+    inline. ``kind`` (D32) lets the hit render its auto-id prefix without a
+    follow-up show()."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -167,6 +216,13 @@ class SearchHit(BaseModel):
     score: float
     status: Status
     wont_do_reason: Optional[str] = None
+    kind: Kind = "production"
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def prefixed_name(self) -> str:
+        """D32 - canonical display form for this search hit."""
+        return synthesize_prefixed_name(self.kind, self.id, self.name)
 
 
 class LabelUsage(BaseModel):
