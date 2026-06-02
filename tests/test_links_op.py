@@ -79,6 +79,18 @@ def test_links_no_neighbors_returns_empty(core):
     assert core.links(ids=[1]) == []
 
 
+def test_links_anchor_layer_excludes_retired(core):
+    """v0.5 D36 / T180: the anchor layer (no input) excludes retired design/
+    schema rows. They're dead spec, not viable link anchors for new work --
+    same predicate the expansion hop already applies under T173 (status IN
+    ('open','spec')), unified across both SELECT branches in Core.links()."""
+    core.add("live_d", kind="design")  # T1 -- spec by default
+    core.add("retired_d", kind="design")  # T2 -- spec, then forced retired
+    core.conn.execute("UPDATE tasks SET status = 'retired' WHERE id = 2;")
+    anchors = core.links()  # no input -> anchor layer
+    assert [n.id for n in anchors] == [1]  # only the live spec
+
+
 def test_links_expansion_excludes_retired_status(core):
     """v0.5 D36: the expansion hop filters candidates by status IN
     ('open','spec'). Retired design/schema rows (mig 009 destinations for

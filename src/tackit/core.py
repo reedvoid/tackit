@@ -868,19 +868,20 @@ class Core:
           is caller-driven: the caller passes its accumulated "judged" set as
           ``already_seen`` so each next layer excludes what it has handled.
 
-        v0.5 (D28 + D27 + D36): the expansion hop filters candidates to
-        viable link targets -- status IN ('open','spec'). Spec is the open-
-        equivalent for design/schema; closed/wont_do production/meta and
-        retired design/schema are excluded. The anchor layer (no input)
-        still returns all design+schema rows kind-only, regardless of
-        status -- a known inconsistency: retired design/schema CAN surface
-        there. Tracked outside T173 (Phase 2a strictly enumerated only the
-        expansion-hop predicate).
+        v0.5 (D28 + D27 + D36 + T180): both branches filter to viable link
+        targets -- status IN ('open','spec'). Spec is the open-equivalent
+        for design/schema; closed/wont_do production/meta and retired
+        design/schema are excluded across both the anchor layer (no input)
+        and the expansion hop. The anchor layer additionally constrains
+        kind IN ('design','schema') to express its semantic (the anchor IS
+        the live spec layer that production work links to).
         """
         excluded: set[int] = set(already_seen or [])
         if not ids:
             rows = self.conn.execute(
-                "SELECT * FROM tasks WHERE kind IN ('design', 'schema') ORDER BY id"
+                "SELECT * FROM tasks WHERE kind IN ('design', 'schema') "
+                "AND status IN ('open', 'spec') "
+                "ORDER BY id"
             ).fetchall()
             return [
                 self._neighbor_from_row(r) for r in rows if r["id"] not in excluded
