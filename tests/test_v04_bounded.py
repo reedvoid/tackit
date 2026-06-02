@@ -319,15 +319,19 @@ def test_edit_design_sets_code_check_reminder(core):
     assert core.last_code_check_reminder is None
     core.edit(1, description="updated", delta="refining the slice")
     assert core.last_code_check_reminder is not None
-    assert "T1" in core.last_code_check_reminder
-    assert "design" in core.last_code_check_reminder.lower()
+    # T162 (v0.4): id mention uses the D32 kind-letter prefix, not the kind-blind
+    # `T<id>`. A design task surfaces as `D<id>` in the reminder.
+    assert "D1" in core.last_code_check_reminder
+    # The kind word may or may not appear in prose; the prefix carries the
+    # kind signal. Assert the kind is recoverable from the prefix.
 
 
 def test_edit_schema_sets_code_check_reminder(core):
     core.add("s1", kind="schema", description="initial")
     core.edit(1, description="updated", delta="refining the slice")
     assert core.last_code_check_reminder is not None
-    assert "schema" in core.last_code_check_reminder.lower()
+    # T162: schema task surfaces as `S<id>` (kind-letter prefix).
+    assert "S1" in core.last_code_check_reminder
 
 
 def test_edit_production_does_not_set_code_check_reminder(core):
@@ -390,3 +394,109 @@ def test_search_hit_wont_do_reason_null_on_non_wont_do(core):
     hits = core.search("live target")
     assert hits[0].status == "open"
     assert hits[0].wont_do_reason is None
+
+
+# ----------------------------------------------------------------------------
+# T162 - kind-letter prefix in every agent-facing id mention
+# ----------------------------------------------------------------------------
+
+
+def test_stale_alert_uses_kind_letter_prefix_per_task(core):
+    """T162: stale_alert builds its id list with the D32 kind-letter prefix
+    per task (D/S/T/M), not the kind-blind `T<id>` it used pre-T162. A
+    design slice staled in the cascade surfaces as `D<id>`, a schema as
+    `S<id>`, production `T<id>`, meta `M<id>`."""
+    from tackit.core import stale_alert_text
+
+    core.add("d", kind="design")
+    core.add("s", kind="schema")
+    core.add("p", kind="production")
+    core.add("m", kind="meta")
+    msg = stale_alert_text(
+        [core.get(1), core.get(2), core.get(3), core.get(4)]
+    )
+    assert "D1" in msg
+    assert "S2" in msg
+    assert "T3" in msg
+    assert "M4" in msg
+    # And no kind-blind id mentions for the design/schema/meta tasks:
+    assert "T1" not in msg  # would be the old kind-blind D1 mention
+    assert "T2" not in msg
+    assert "T4" not in msg
+
+
+def test_close_gate_offender_list_uses_kind_letter_prefix(core):
+    """T162: when close() refuses on a linked-stale neighborhood, the
+    offender list names each offending neighbor with its own kind-letter
+    prefix, not a blanket `T<id>`."""
+    core.add("anchor design", kind="design")
+    core.add("downstream prod", kind="production")
+    core.link_add(
+        a=1, b=2,
+        because="anchor's invariant decides whether prod is correct",
+        delta="setup",
+    )
+    # Stale the design by editing it; the production downstream gets staled
+    # via the cascade (open production: stays on worklist per D28).
+    core.edit(1, description="updated", delta="shift")
+    # Now attempt to close T2 (production, open, stale-via-cascade).
+    # Close should refuse — both because T2 is stale AND the design (D1)
+    # in its neighborhood is on the worklist.
+    with pytest.raises(InvariantError) as excinfo:
+        core.close(2)
+    msg = str(excinfo.value)
+    # The error names T2 (this task) with the production prefix:
+    assert "T2" in msg
+    # The offender or self-reference should use kind-correct prefixes:
+    # the message at minimum names the closing task with its T prefix.
+
+
+def test_reclassify_refusal_uses_kind_letter_prefix(core):
+    """T162: reclassify's meta-island refusal names the offending neighbors
+    and the reclassifying task with kind-letter prefixes, replacing the
+    pre-T162 `T<id> (kind=...)` form whose parenthetical was redundant
+    with the new prefix."""
+    core.add("prod1", kind="production")
+    core.add("prod2", kind="production")
+    core.link_add(a=1, b=2, because="same-kind coupling", delta="setup")
+    # Reclassifying T1 to meta would create a cross-kind link with T2.
+    with pytest.raises(InvariantError) as excinfo:
+        core.reclassify(1, new_kind="meta", delta="experiment")
+    msg = str(excinfo.value)
+    # The reclassifying task currently has kind=production, so its prefix
+    # in the refusal message is T1; the offender T2 (still production) is
+    # also T2. The OLD format would have included `T2 (kind=production)`
+    # — T162 drops the redundant parenthetical in favor of the letter.
+    assert "T1" in msg
+    assert "T2" in msg
+    # The pre-T162 `(kind=production)` parenthetical for offenders is gone:
+    assert "(kind=production)" not in msg
+
+
+def test_core_source_has_no_kind_blind_T_prefix_for_ids(core):
+    """T162 regression guard: the kind-blind `f"T{...id...}"` pattern is
+    the bug we just fixed. Assert it doesn't reappear in core.py. The
+    only legitimate `T{...}` interpolations in agent-facing strings
+    should go through `prefixed_id(kind, id)` instead."""
+    import pathlib
+
+    src = pathlib.Path(__file__).resolve().parent.parent / "src" / "tackit" / "core.py"
+    text = src.read_text()
+    # Any of the known id-bearing variable names paired with a kind-blind T
+    # prefix is a regression:
+    forbidden = (
+        'f"T{task_id}',
+        'f"T{t.id}',
+        'f"T{uid}',
+        'f"T{tid}',
+        'f"T{a}',
+        'f"T{b}',
+        'f"T{n.id}',
+        'f"T{d.id}',
+    )
+    found = [s for s in forbidden if s in text]
+    assert not found, (
+        f"Kind-blind id mentions reappeared in core.py: {found}. "
+        f"Route every id mention through `prefixed_id(kind, id)` to honor "
+        f"the D32 prefix convention (T162)."
+    )

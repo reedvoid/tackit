@@ -32,6 +32,7 @@ from .models import (
     StatusTransition,
     Task,
     WontDoResult,
+    prefixed_id,
 )
 from .schema import KIND_VALUES
 
@@ -118,7 +119,7 @@ def stale_alert_text(stale_tasks: list[Task]) -> str:
         return ""
     ids = []
     for t in stale_tasks:
-        ids.append(f"T{t.id}")
+        ids.append(prefixed_id(t.kind, t.id))
     id_list = ", ".join(ids)
     n = len(stale_tasks)
     if n == 1:
@@ -272,7 +273,7 @@ class Core:
             "SELECT * FROM tasks WHERE id = ?", (task_id,)
         ).fetchone()
         if row is None:
-            raise NotFoundError(f"no task with id {task_id} (T{task_id}).")
+            raise NotFoundError(f"no task with id {task_id}.")
         return row
 
     def _neighbor_from_row(self, row: sqlite3.Row) -> NeighborRef:
@@ -537,8 +538,8 @@ class Core:
         kind_b = row_b["kind"]
         if (kind_a == "meta") != (kind_b == "meta"):
             raise InvariantError(
-                f"REFUSED: meta-island constraint (D26). T{a} (kind={kind_a}) and "
-                f"T{b} (kind={kind_b}) cannot be linked because exactly one is meta. "
+                f"REFUSED: meta-island constraint (D26). {prefixed_id(kind_a, a)} "
+                f"and {prefixed_id(kind_b, b)} cannot be linked because exactly one is meta. "
                 f"Meta tasks may only link other meta tasks; the boundary bounds the "
                 f"cascade so meta work (release tracking, experiments) cannot drag "
                 f"spec/production tasks into a stale review and vice versa."
@@ -553,7 +554,7 @@ class Core:
             # UNIQUE(task_a, task_b): the link already exists -- idempotent.
             pass
 
-    def _stale_linked_transitive(self, task_id: int) -> list[int]:
+    def _stale_linked_transitive(self, task_id: int) -> list[tuple[int, str]]:
         """All tasks transitively linked to ``task_id`` (in the symmetric graph)
         that carry an obligation-bearing stale flag, excluding ``task_id``
         itself, id-sorted. Underpins the symmetric close-gate (D14): closing
@@ -565,10 +566,14 @@ class Core:
         the close-gate. The walk itself still traverses all neighbors (so
         an obligation-bearing task on the far side of a closed-stale
         neighbor is still found), but only obligation-bearing stale tasks
-        end up in the return list."""
+        end up in the return list.
+
+        Returns list of (id, kind) tuples (T162) so callers can synthesize
+        the D32 `<kind_letter><id>` prefix for refusal messages without a
+        second lookup."""
         seen: set[int] = {task_id}
         stack: list[int] = [task_id]
-        stale_found: list[int] = []
+        stale_found: list[tuple[int, str]] = []
         while stack:
             node = stack.pop()
             rows = self.conn.execute(
@@ -587,9 +592,9 @@ class Core:
                 if row is not None and bool(row["stale"]):
                     # D28: obligation only on open OR design/schema kind.
                     if row["status"] == "open" or row["kind"] in ("design", "schema"):
-                        stale_found.append(nxt)
+                        stale_found.append((nxt, row["kind"]))
                 stack.append(nxt)
-        stale_found.sort()
+        stale_found.sort()  # tuples sort by id, then kind
         return stale_found
 
     def link_add(self, a: int, b: int, because: str, delta: str) -> Slice:
@@ -689,10 +694,11 @@ class Core:
             if (new_kind == "meta") != (neighbor_kind == "meta"):
                 offenders.append((n.id, neighbor_kind))
         if offenders:
-            id_list = ", ".join(f"T{tid} (kind={k})" for tid, k in offenders)
+            id_list = ", ".join(prefixed_id(k, tid) for tid, k in offenders)
             raise InvariantError(
-                f"REFUSED: reclassifying T{task_id} to kind={new_kind!r} would "
-                f"create cross-kind link(s) with: {id_list}. The meta-island "
+                f"REFUSED: reclassifying {prefixed_id(row['kind'], task_id)} to "
+                f"kind={new_kind!r} would create cross-kind link(s) with: "
+                f"{id_list}. The meta-island "
                 f"constraint (D26) refuses cross-kind links between meta and "
                 f"non-meta. Either link_rm the offending edges first, or "
                 f"create a new task with the desired kind (the old links stay "
@@ -775,7 +781,7 @@ class Core:
         row = self._require_row(task_id)
         if row["status"] == "wont_do":
             raise InvariantError(
-                f"REFUSED: T{task_id} is wont_do -- reopen is not allowed "
+                f"REFUSED: {prefixed_id(row['kind'], task_id)} is wont_do -- reopen is not allowed "
                 f"(T132: wont_do is terminal forever). If the decision has "
                 f"changed, create a new task with the new direction."
             )
@@ -836,8 +842,9 @@ class Core:
         row = self._require_row(task_id)
         if row["status"] in ("closed", "wont_do") and row["kind"] not in ("design", "schema"):
             raise InvariantError(
-                f"REFUSED: T{task_id} is {row['status']} (kind={row['kind']}) -- "
-                f"reconcile is not allowed on terminal production/meta tasks "
+                f"REFUSED: {prefixed_id(row['kind'], task_id)} is {row['status']} "
+                f"(kind={row['kind']}) -- reconcile is not allowed on terminal "
+                f"production/meta tasks "
                 f"(D28 + T156). Their stale flag is record-only (not on the "
                 f"worklist, not blocking close-gates); it stays as historical "
                 f"signal that an upstream changed. No action needed."
@@ -878,7 +885,7 @@ class Core:
         row = self._require_row(task_id)
         if row["kind"] in ("design", "schema"):
             raise InvariantError(
-                f"REFUSED: T{task_id} is kind={row['kind']!r} -- design and "
+                f"REFUSED: {prefixed_id(row['kind'], task_id)} is kind={row['kind']!r} -- design and "
                 f"schema slices are LIVING SPEC, not work items (D30 v0.4). "
                 f"They are perma-open by design: updating a decision is "
                 f"edit(), not close(). The description_revisions audit table "
@@ -888,7 +895,7 @@ class Core:
             )
         if row["status"] == "wont_do":
             raise InvariantError(
-                f"REFUSED: T{task_id} is wont_do -- cannot be closed (T132). "
+                f"REFUSED: {prefixed_id(row['kind'], task_id)} is wont_do -- cannot be closed (T132). "
                 f"Closed and wont_do are distinct terminal states; the task is "
                 f"already terminal in the 'decided not to do' sense. If the "
                 f"decision has changed and the work IS being done, create a "
@@ -896,7 +903,7 @@ class Core:
             )
         if bool(row["stale"]):
             raise InvariantError(
-                f"REFUSED: T{task_id} is stale -- it has unreconciled upstream "
+                f"REFUSED: {prefixed_id(row['kind'], task_id)} is stale -- it has unreconciled upstream "
                 f"changes. Reconcile (review + `reconcile`) first, then close (D14)."
             )
         # Close-gate (D14 extended, T86 symmetric): refuse to mark T done while
@@ -905,9 +912,9 @@ class Core:
         # bounded in practice by the meta-island constraint (D26).
         linked_stale = self._stale_linked_transitive(task_id)
         if linked_stale:
-            id_list = ", ".join(f"T{uid}" for uid in linked_stale)
+            id_list = ", ".join(prefixed_id(k, uid) for uid, k in linked_stale)
             raise InvariantError(
-                f"REFUSED: T{task_id} is in a linked neighborhood with unreconciled "
+                f"REFUSED: {prefixed_id(row['kind'], task_id)} is in a linked neighborhood with unreconciled "
                 f"stale task(s) {id_list} -- closing it would mark work done on top "
                 f"of drift that may still change. Reconcile {id_list} first, then "
                 f"close (D14)."
@@ -953,7 +960,7 @@ class Core:
         row = self._require_row(task_id)
         if row["kind"] in ("design", "schema"):
             raise InvariantError(
-                f"REFUSED: T{task_id} is kind={row['kind']!r} -- design and "
+                f"REFUSED: {prefixed_id(row['kind'], task_id)} is kind={row['kind']!r} -- design and "
                 f"schema slices are LIVING SPEC, not work items (D30 v0.4). "
                 f"wont_do is for dropped work; a design decision can't be "
                 f"'not done' -- it either holds, or it's edited to reflect a "
@@ -961,13 +968,13 @@ class Core:
             )
         if row["status"] == "wont_do":
             raise InvariantError(
-                f"REFUSED: T{task_id} is already wont_do (T132). The decision "
+                f"REFUSED: {prefixed_id(row['kind'], task_id)} is already wont_do (T132). The decision "
                 f"is locked; if it has changed, create a new task with the new "
                 f"direction."
             )
         if row["status"] == "closed":
             raise InvariantError(
-                f"REFUSED: T{task_id} is closed (work done) -- it cannot be "
+                f"REFUSED: {prefixed_id(row['kind'], task_id)} is closed (work done) -- it cannot be "
                 f"reclassified as wont_do (decided not to do) (T132). The two "
                 f"are distinct terminal states. If the close was a mistake "
                 f"and the work shouldn't have been done, create a new task "
@@ -975,14 +982,14 @@ class Core:
             )
         if bool(row["stale"]):
             raise InvariantError(
-                f"REFUSED: T{task_id} is stale -- it has unreconciled upstream "
+                f"REFUSED: {prefixed_id(row['kind'], task_id)} is stale -- it has unreconciled upstream "
                 f"changes. Reconcile (review + `reconcile`) first, then wont_do (T132)."
             )
         linked_stale = self._stale_linked_transitive(task_id)
         if linked_stale:
-            id_list = ", ".join(f"T{uid}" for uid in linked_stale)
+            id_list = ", ".join(prefixed_id(k, uid) for uid, k in linked_stale)
             raise InvariantError(
-                f"REFUSED: T{task_id} is in a linked neighborhood with "
+                f"REFUSED: {prefixed_id(row['kind'], task_id)} is in a linked neighborhood with "
                 f"unreconciled stale task(s) {id_list}. Reconcile {id_list} "
                 f"first, then wont_do (T132)."
             )
@@ -1072,7 +1079,7 @@ class Core:
         if row["kind"] in ("design", "schema"):
             edited = self.get(task_id)
             self.last_code_check_reminder = (
-                f"D31: T{task_id} ({row['kind']}) was edited -- "
+                f"D31: {prefixed_id(row['kind'], task_id)} was edited -- "
                 f"{edited.name!r}. The slice's D#/S# id is referenced in "
                 f"code by convention (SKILL.md code↔task naming rule). "
                 f"Grep for the id and check the associated files for drift."
@@ -1130,10 +1137,10 @@ class Core:
             flags = [t.status]
             if t.stale:
                 flags.append("STALE")
-            out.append(f"## T{t.id} - {t.name}  ({', '.join(flags)})")
+            out.append(f"## {prefixed_id(t.kind, t.id)} - {t.name}  ({', '.join(flags)})")
             deps = self.dependencies_of(t.id)
             if deps:
-                dep_str = ", ".join(f"T{d.id}" for d in deps)
+                dep_str = ", ".join(prefixed_id(d.kind, d.id) for d in deps)
                 out.append(f"*depends on:* {dep_str}")
             labels = [lab for lab in self.labels_of(t.id) if lab != label]
             if labels:

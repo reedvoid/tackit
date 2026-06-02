@@ -58,6 +58,16 @@ def synthesize_prefixed_name(kind: str, task_id: int, name: str) -> str:
     return f"{kind_letter(kind)}{task_id} — {name}"
 
 
+def prefixed_id(kind: str, task_id: int) -> str:
+    """D32 + T162 - the short id-only prefixed form: `<kind_letter><id>`.
+    Used in agent-facing messages (stale_alert, refusals, error envelopes)
+    where the full `prefixed_name` (with task name appended) would be too
+    verbose. Single source; every message-construction site references this
+    rather than hardcoding `T<id>` (which is kind-blind and breaks the D32
+    convention for design/schema/meta tasks)."""
+    return f"{kind_letter(kind)}{task_id}"
+
+
 class Task(BaseModel):
     """S1 `tasks` row. The atomic item; every view is derived from it.
 

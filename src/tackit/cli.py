@@ -582,7 +582,7 @@ def build_parser() -> argparse.ArgumentParser:
         lsp.set_defaults(func=_cmd_label)
 
     sp = add("ls", _cmd_ls, "query/board: filter by status/label/stale (D15)")
-    sp.add_argument("--status", choices=["open", "closed"])
+    sp.add_argument("--status", choices=["open", "closed", "wont_do"])
     sp.add_argument("--label")
     sp.add_argument("--stale", action="store_true", help="only stale tasks")
 
@@ -591,7 +591,7 @@ def build_parser() -> argparse.ArgumentParser:
     add("labels", _cmd_labels, "list all labels with usage: count + sample tasks (D21)")
 
     sp = add("board", _cmd_board, "rich board view (open/label/stale) with dependency edges (D22)")
-    sp.add_argument("--status", choices=["open", "closed"])
+    sp.add_argument("--status", choices=["open", "closed", "wont_do"])
     sp.add_argument("--label")
     sp.add_argument("--stale", action="store_true", help="only stale tasks")
 
