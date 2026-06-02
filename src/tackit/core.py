@@ -629,11 +629,12 @@ class Core:
         itself, id-sorted. Underpins the symmetric close-gate (D14): closing
         a task whose linked neighborhood is unreconciled is refused.
 
-        v0.4 (D28): only stale tasks with status='open' OR kind in
-        {design,schema} count as obligation. Closed/wont_do production/meta
+        v0.5 (D28 + D36): obligation iff status IN ('open','spec'). The
+        kind/status partition makes spec the open-equivalent for design/
+        schema; closed/wont_do production/meta and retired design/schema
         neighbors carrying stale=1 are record-only -- they do NOT pressure
         the close-gate. The walk itself still traverses all neighbors (so
-        an obligation-bearing task on the far side of a closed-stale
+        an obligation-bearing task on the far side of a terminal-stale
         neighbor is still found), but only obligation-bearing stale tasks
         end up in the return list.
 
@@ -659,8 +660,12 @@ class Core:
                     "SELECT stale, status, kind FROM tasks WHERE id = ?", (nxt,)
                 ).fetchone()
                 if row is not None and bool(row["stale"]):
-                    # D28: obligation only on open OR design/schema kind.
-                    if row["status"] == "open" or row["kind"] in ("design", "schema"):
+                    # D28 + D36 (v0.5): obligation iff status IN ('open','spec').
+                    # The kind/status partition makes this equivalent to the
+                    # v0.4 `open OR kind IN (design,schema)` clause for live
+                    # rows, while correctly excluding 'retired' (which has
+                    # kind=design/schema but is terminal -- record-only).
+                    if row["status"] in ("open", "spec"):
                         stale_found.append((nxt, row["kind"]))
                 stack.append(nxt)
         stale_found.sort()  # tuples sort by id, then kind
@@ -863,12 +868,14 @@ class Core:
           is caller-driven: the caller passes its accumulated "judged" set as
           ``already_seen`` so each next layer excludes what it has handled.
 
-        v0.4 (D28 + D27 refinement): candidates are filtered to viable link
-        targets -- status='open' OR kind in {design,schema}. The anchor
-        layer already meets this (design+schema are the only kinds it
-        returns). The expansion hop filters closed/wont_do production/meta
-        tasks out (closed/wont_do design/schema slices still surface, since
-        they're living spec).
+        v0.5 (D28 + D27 + D36): the expansion hop filters candidates to
+        viable link targets -- status IN ('open','spec'). Spec is the open-
+        equivalent for design/schema; closed/wont_do production/meta and
+        retired design/schema are excluded. The anchor layer (no input)
+        still returns all design+schema rows kind-only, regardless of
+        status -- a known inconsistency: retired design/schema CAN surface
+        there. Tracked outside T173 (Phase 2a strictly enumerated only the
+        expansion-hop predicate).
         """
         excluded: set[int] = set(already_seen or [])
         if not ids:
@@ -885,7 +892,7 @@ class Core:
             f"  SELECT task_b FROM links WHERE task_a IN ({placeholders}) "
             f"  UNION "
             f"  SELECT task_a FROM links WHERE task_b IN ({placeholders})"
-            f") AND (status = 'open' OR kind IN ('design', 'schema')) "
+            f") AND status IN ('open', 'spec') "
             f"ORDER BY id"
         )
         rows = self.conn.execute(sql, tuple(ids) * 2).fetchall()
@@ -943,43 +950,41 @@ class Core:
         return [self._neighbor_from_row(self._require_row(n.id)) for n in linked]
 
     def stale_worklist(self) -> list[Task]:
-        """D11 + D28 (v0.4) - the resumable reconciliation worklist: stale tasks
-        that carry an OBLIGATION. Filters to status='open' OR kind in {design,
-        schema}. Closed/wont_do production/meta tasks may still carry stale=1
-        as a record-only marker (D28), but they're not on the worklist and
-        don't pressure the agent. Empty list == reconciliation pass complete."""
+        """D11 + D28 (v0.4) + D36 (v0.5) - the resumable reconciliation
+        worklist: stale tasks that carry an OBLIGATION. Filters to status IN
+        ('open','spec'). Closed/wont_do production/meta and retired design/
+        schema tasks may still carry stale=1 as a record-only marker, but
+        they're not on the worklist and don't pressure the agent. Empty list
+        == reconciliation pass complete."""
         rows = self.conn.execute(
             "SELECT * FROM tasks WHERE stale = 1 "
-            "AND (status = 'open' OR kind IN ('design', 'schema')) "
+            "AND status IN ('open', 'spec') "
             "ORDER BY id"
         ).fetchall()
         return [self._task_from_row(r) for r in rows]
 
     def reconcile(self, task_id: int) -> Task:
-        """D11 + D28 (v0.4) + T156 - clear ``stale`` on a task reviewed and
-        found still-correct, with no content change (so it does NOT cascade
-        to dependents).
+        """D11 + D28 (v0.4) + D36 (v0.5) + T156 - clear ``stale`` on a task
+        reviewed and found still-correct, with no content change (so it does
+        NOT cascade to dependents).
 
-        REFUSED only when (status closed/wont_do) AND (kind in production/
-        meta) -- T156 v0.4 refinement: the refusal condition now mirrors
-        D28's worklist filter (allowed iff status='open' OR kind in
-        {design, schema}), so what surfaces on the worklist is exactly what
-        can be reconciled. For closed/wont_do design/schema rows (perma-open
-        in spirit per D30 but legacy-closed from before D30 landed), the
-        spec slice IS the obligation -- reconciling it acknowledges that
-        the slice still describes truth after the upstream change. For
-        closed/wont_do production/meta the original D28 rationale stands:
-        their stale flag is a record-only archaeology marker, not an
-        obligation; clearing it would erase the signal."""
+        REFUSED when status IN ('closed','wont_do','retired') -- the
+        terminal states. This mirrors the worklist filter (allowed iff
+        status IN ('open','spec')), so what surfaces on the worklist is
+        exactly what can be reconciled. Stale on terminal rows is record-
+        only archaeology (D28 + D36); clearing it would erase the historical
+        signal that an upstream changed. Open and spec rows are the live
+        partition -- reconcile clears stale and confirms the row still
+        describes truth after the upstream shift."""
         row = self._require_row(task_id)
-        if row["status"] in ("closed", "wont_do") and row["kind"] not in ("design", "schema"):
+        if row["status"] in ("closed", "wont_do", "retired"):
             raise InvariantError(
-                f"REFUSED: {prefixed_id(row['kind'], task_id)} is {row['status']} "
-                f"(kind={row['kind']}) -- reconcile is not allowed on terminal "
-                f"production/meta tasks "
-                f"(D28 + T156). Their stale flag is record-only (not on the "
-                f"worklist, not blocking close-gates); it stays as historical "
-                f"signal that an upstream changed. No action needed."
+                f"REFUSED: {prefixed_id(row['kind'], task_id)} has "
+                f"status={row['status']!r} -- reconcile is not allowed on "
+                f"terminal tasks (closed/wont_do/retired). Their stale flag "
+                f"is record-only archaeology (D28 + D36 + T156); clearing it "
+                f"would erase the historical signal that an upstream changed. "
+                f"No action needed."
             )
         # No-op guard (D20): reconciling a task that isn't stale changes nothing.
         if bool(row["stale"]):
@@ -1020,22 +1025,23 @@ class Core:
     # D12 - close (with obligation payload) / D14 close-gate
     # ====================================================================
     def close(self, task_id: int) -> CloseResult:
-        """D12 + D14 + T132 + D30 (v0.4) - close a task and return the one-hop
-        set to review. REFUSED while the task is stale (close-gate, ratified
-        2026-05-29). REFUSED on wont_do tasks (T132: already terminal in a
-        different sense -- closed = done; wont_do = decided not to do).
-        REFUSED on design/schema kind (D30 v0.4: living spec; updating a
-        decision is edit(), not close())."""
+        """D12 + D14 + T132 + D30 + D36 (v0.5) - close a task and return the
+        one-hop set to review. REFUSED while the task is stale (close-gate,
+        ratified 2026-05-29). REFUSED on wont_do tasks (T132: already
+        terminal in a different sense -- closed = done; wont_do = decided
+        not to do). REFUSED on status='spec' (design/schema slices, post-
+        partition: living spec; updating a decision is edit(), or retire()
+        if 100% abandoned)."""
         row = self._require_row(task_id)
-        if row["kind"] in ("design", "schema"):
+        if row["status"] == "spec":
             raise InvariantError(
-                f"REFUSED: {prefixed_id(row['kind'], task_id)} is kind={row['kind']!r} -- design and "
-                f"schema slices are LIVING SPEC, not work items (D30 v0.4). "
-                f"They are perma-open by design: updating a decision is "
-                f"edit(), not close(). The description_revisions audit table "
-                f"(D29) preserves the prior verbatim state of any edit, so "
-                f"editing in place is recoverable. To retire a decision, "
-                f"edit the slice to reflect its current state."
+                f"REFUSED: {prefixed_id(row['kind'], task_id)} has "
+                f"status='spec' -- design and schema slices are LIVING SPEC, "
+                f"not work items (D30 + D36). They are perma-open by design: "
+                f"use edit() to refine the decision; use retire() (D36) if "
+                f"the decision is 100% abandoned. The description_revisions "
+                f"audit table (D29) preserves the prior verbatim state on "
+                f"any edit, so editing in place is recoverable."
             )
         if row["status"] == "wont_do":
             raise InvariantError(
@@ -1080,18 +1086,20 @@ class Core:
     # T132 - wont_do (terminal "decided not to do" status, distinct from close)
     # ====================================================================
     def wont_do(self, task_id: int, reason: str, delta: str) -> WontDoResult:
-        """T132 / 2026-06-01 - mark a task as decided-not-to-do, distinct
-        from closed (which means work done). Requires ``reason`` (durable,
-        persists in wont_do_reason column -- the rationale survives forever)
-        and ``delta`` (ephemeral per T117). Locked-forever per T132 pattern:
-        reopen / close / wont_do all REFUSED on wont_do tasks (the change-
-        of-mind path is a fresh task with the new direction). v0.4 allows
-        edit on wont_do (P2 retires T118). REFUSED if the task is stale or
-        in a linked-stale neighborhood (same gate as close, D14). REFUSED
-        if already wont_do (no double-decide). Does NOT fire the cascade
-        (status change, not content edit; symmetric with close). Returns
-        the standard CloseResult-shaped payload of one-hop neighbors for
-        migrate-or-stay review."""
+        """T132 / 2026-06-01 + D36 (v0.5) - mark a task as decided-not-to-do,
+        distinct from closed (which means work done). Requires ``reason``
+        (durable, persists in wont_do_reason column -- the rationale
+        survives forever) and ``delta`` (ephemeral per T117). Locked-forever
+        per T132 pattern: reopen / close / wont_do all REFUSED on wont_do
+        tasks (the change-of-mind path is a fresh task with the new
+        direction). v0.4 allows edit on wont_do (P2 retires T118). REFUSED
+        on status='spec' (design/schema slices: living spec; use edit() or
+        retire()). REFUSED if the task is stale or in a linked-stale
+        neighborhood (same gate as close, D14). REFUSED if already wont_do
+        (no double-decide). Does NOT fire the cascade (status change, not
+        content edit; symmetric with close). Returns the standard
+        CloseResult-shaped payload of one-hop neighbors for migrate-or-stay
+        review."""
         self._record_delta(delta, "wont_do")
         if not reason or not reason.strip():
             raise ValidationError(
@@ -1102,13 +1110,14 @@ class Core:
             )
         _validate_text(reason, "wont_do reason")
         row = self._require_row(task_id)
-        if row["kind"] in ("design", "schema"):
+        if row["status"] == "spec":
             raise InvariantError(
-                f"REFUSED: {prefixed_id(row['kind'], task_id)} is kind={row['kind']!r} -- design and "
-                f"schema slices are LIVING SPEC, not work items (D30 v0.4). "
-                f"wont_do is for dropped work; a design decision can't be "
-                f"'not done' -- it either holds, or it's edited to reflect a "
-                f"changed state. To retire a decision, edit the slice."
+                f"REFUSED: {prefixed_id(row['kind'], task_id)} has "
+                f"status='spec' -- design and schema slices are LIVING SPEC, "
+                f"not work items (D30 + D36). wont_do is for dropped work; a "
+                f"design decision can't be 'not done' -- it either holds, or "
+                f"it's edited to reflect a changed state. Use edit() to refine; "
+                f"use retire() (D36) if the decision is 100% abandoned."
             )
         if row["status"] == "wont_do":
             raise InvariantError(

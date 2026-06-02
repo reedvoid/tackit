@@ -238,6 +238,44 @@ def test_add_empty_label_refused(core):
         core.add("x", kind="production", labels=[""])
 
 
+# --- v0.5 D36: reconcile predicate parametrized over status -----------------
+
+
+@pytest.mark.parametrize(
+    "status,kind",
+    [
+        ("closed", "production"),
+        ("wont_do", "production"),
+        ("retired", "design"),  # partition: retired only valid on design/schema
+    ],
+)
+def test_reconcile_refused_on_terminal_status(core, status, kind):
+    """v0.5 D36: reconcile refusal is status-derived: status IN
+    ('closed','wont_do','retired'). Parametrize covers all three terminal
+    states. Each status is paired with a partition-valid kind (closed/wont_do
+    are production/meta-only; retired is design/schema-only)."""
+    core.add("a", kind=kind)
+    core.conn.execute(
+        "UPDATE tasks SET status = ?, stale = 1 WHERE id = 1;",
+        (status,),
+    )
+    with pytest.raises(InvariantError, match=r"record-only|archaeology"):
+        core.reconcile(1)
+
+
+@pytest.mark.parametrize("status", ["open", "spec"])
+def test_reconcile_allowed_on_live_status(core, status):
+    """v0.5 D36: reconcile is allowed on the live partition: status IN
+    ('open','spec'). Parametrize over both."""
+    # spec only valid on design/schema; open only valid on production/meta.
+    kind = "design" if status == "spec" else "production"
+    core.add("a", kind=kind)
+    core.conn.execute("UPDATE tasks SET stale = 1 WHERE id = 1;")
+    t = core.reconcile(1)
+    assert t.stale is False
+    assert t.status == status  # status preserved
+
+
 def test_ls_stale_filter(core):
     core.add("base", kind="production")  # T1
     core.add("dep", kind="production")

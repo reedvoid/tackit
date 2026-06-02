@@ -42,6 +42,31 @@ def test_stale_worklist_includes_open_stale(core):
     assert 2 in worklist_ids
 
 
+def test_stale_worklist_includes_spec_stale(core):
+    """v0.5 D36: spec is the open-equivalent for design/schema. A stale spec
+    row carries obligation -- it's on the worklist."""
+    core.add("d1", kind="design")  # status='spec' default
+    core.add("p1", kind="production")
+    core.link_add(2, 1, because="prod realizes design", delta="setup")
+    core.edit(2, description="x", delta="prod shifted")  # cascade stales d1
+    assert core.get(1).stale is True and core.get(1).status == "spec"
+    worklist_ids = {t.id for t in core.stale_worklist()}
+    assert 1 in worklist_ids
+
+
+def test_stale_worklist_excludes_retired(core):
+    """v0.5 D36: retired (mig 009 destination for wont_do design/schema) is a
+    terminal status, NOT on the worklist. A retired row's stale flag is
+    record-only -- archaeology, not obligation."""
+    core.add("d1", kind="design")
+    # Seed retired + stale via raw UPDATE (retire() verb arrives Phase 2b).
+    core.conn.execute(
+        "UPDATE tasks SET status = 'retired', stale = 1 WHERE id = 1;"
+    )
+    worklist_ids = {t.id for t in core.stale_worklist()}
+    assert 1 not in worklist_ids
+
+
 @pytest.mark.skip(
     reason="v0.5 D35+D36: the kind-conditional worklist filter is replaced "
     "by `status IN ('open','spec')`. Legacy closed/wont_do design/schema "
@@ -124,6 +149,32 @@ def test_links_expansion_excludes_closed_production(core):
     assert 3 not in ids  # closed prod -> excluded
 
 
+def test_links_expansion_excludes_retired_design(core):
+    """v0.5 D36: retired design/schema slices are excluded from the links
+    candidate filter -- they're no-longer-live spec, not viable link targets.
+    The new predicate status IN ('open','spec') excludes 'retired'."""
+    core.add("anchor", kind="production")  # T1
+    core.add("retired_design", kind="design")  # T2 -- spec status by default
+    core.link_add(2, 1, because="design realized by prod", delta="setup")
+    # Seed retired status (retire() verb arrives Phase 2b).
+    core.conn.execute("UPDATE tasks SET status = 'retired' WHERE id = 2;")
+    out = core.links(ids=[1])
+    ids = {n.id for n in out}
+    assert 2 not in ids  # retired design -> excluded by status filter
+
+
+def test_links_expansion_includes_spec_design(core):
+    """v0.5 D36: spec design/schema slices ARE viable link targets (the
+    open-equivalent for the spec partition). New predicate status IN
+    ('open','spec') keeps them visible."""
+    core.add("anchor", kind="production")  # T1
+    core.add("live_design", kind="design")  # T2 -- spec status by default
+    core.link_add(2, 1, because="design realized by prod", delta="setup")
+    out = core.links(ids=[1])
+    ids = {n.id for n in out}
+    assert 2 in ids  # spec design -> included
+
+
 @pytest.mark.skip(
     reason="v0.5 D35+D36: closed-design slices cannot exist under the kind/"
     "status partition. The links() candidate filter changes from "
@@ -196,7 +247,7 @@ def test_reconcile_refused_on_closed_production(core):
     record-only archaeology; clearing it would erase the signal."""
     core.add("a", kind="production")
     core.close(1)
-    with pytest.raises(InvariantError, match="terminal"):
+    with pytest.raises(InvariantError, match=r"record-only|archaeology"):
         core.reconcile(1)
 
 
@@ -204,7 +255,7 @@ def test_reconcile_refused_on_wont_do_production(core):
     """Same as closed-production -- wont_do production rows are record-only."""
     core.add("a", kind="production")
     core.wont_do(1, reason="not pursuing", delta="dropped")
-    with pytest.raises(InvariantError, match="terminal"):
+    with pytest.raises(InvariantError, match=r"record-only|archaeology"):
         core.reconcile(1)
 
 
@@ -212,15 +263,41 @@ def test_reconcile_refused_on_closed_meta(core):
     """Meta tasks follow the production rule -- closed-stale is record-only."""
     core.add("a", kind="meta")
     core.close(1)
-    with pytest.raises(InvariantError, match="terminal"):
+    with pytest.raises(InvariantError, match=r"record-only|archaeology"):
         core.reconcile(1)
 
 
 def test_reconcile_refused_on_wont_do_meta(core):
     core.add("a", kind="meta")
     core.wont_do(1, reason="dropped", delta="dropped")
-    with pytest.raises(InvariantError, match="terminal"):
+    with pytest.raises(InvariantError, match=r"record-only|archaeology"):
         core.reconcile(1)
+
+
+# v0.5 D36 - reconcile refused on retired status
+def test_reconcile_refused_on_retired_status(core):
+    """v0.5 D36: retired (mig 009 destination for wont_do design/schema) is a
+    terminal status. Reconcile is refused -- a retired row's stale flag is
+    record-only archaeology, same as closed/wont_do; clearing it would erase
+    the historical signal that an upstream changed."""
+    core.add("d1", kind="design")
+    # Seed retired status via raw UPDATE (Phase 2a; retire() verb arrives Phase 2b).
+    core.conn.execute(
+        "UPDATE tasks SET status = 'retired', stale = 1 WHERE id = 1;"
+    )
+    with pytest.raises(InvariantError, match=r"record-only|archaeology|retired"):
+        core.reconcile(1)
+
+
+def test_reconcile_allowed_on_spec_status(core):
+    """v0.5 D36: spec is the open-equivalent for design/schema. Reconcile is
+    ALLOWED on spec (mirrors the worklist filter status IN ('open','spec'))."""
+    core.add("d1", kind="design")  # default status='spec'
+    assert core.get(1).status == "spec"
+    core.conn.execute("UPDATE tasks SET stale = 1 WHERE id = 1;")
+    t = core.reconcile(1)
+    assert t.stale is False
+    assert t.status == "spec"  # status preserved -- reconcile doesn't shift partition
 
 
 @pytest.mark.skip(
@@ -298,32 +375,51 @@ def test_reconcile_open_design_unchanged_by_t156(core):
 # ----------------------------------------------------------------------------
 
 
-def test_close_refused_on_design_kind(core):
-    """close() refuses on kind=design. Living spec; the change-of-mind path
-    is edit()."""
+def test_close_refused_on_spec_status(core):
+    """v0.5 D36: close() refuses on status='spec' (design/schema slices, post-
+    partition). Message must mention status='spec' AND name both edit() (the
+    refine path) and retire() (the 100%-abandoned path)."""
     core.add("d1", kind="design")
-    with pytest.raises(InvariantError, match="LIVING SPEC|living spec|design"):
+    assert core.get(1).status == "spec"  # Phase 1 partition default
+    with pytest.raises(InvariantError) as excinfo:
         core.close(1)
+    msg = str(excinfo.value)
+    assert "spec" in msg
+    assert "edit" in msg.lower()
+    assert "retire" in msg.lower()
 
 
-def test_close_refused_on_schema_kind(core):
+def test_close_refused_on_spec_status_schema(core):
     core.add("s1", kind="schema")
-    with pytest.raises(InvariantError, match="LIVING SPEC|living spec|schema"):
+    assert core.get(1).status == "spec"
+    with pytest.raises(InvariantError) as excinfo:
         core.close(1)
+    msg = str(excinfo.value)
+    assert "spec" in msg
+    assert "edit" in msg.lower()
+    assert "retire" in msg.lower()
 
 
-def test_wont_do_refused_on_design_kind(core):
-    """wont_do() refuses on kind=design. A design decision can't be 'not
-    done' -- it either holds or is edited to reflect a changed state."""
+def test_wont_do_refused_on_spec_status(core):
+    """v0.5 D36: wont_do() refuses on status='spec'. Same wording requirements
+    as close() (edit + retire)."""
     core.add("d1", kind="design")
-    with pytest.raises(InvariantError, match="LIVING SPEC|living spec|design"):
+    with pytest.raises(InvariantError) as excinfo:
         core.wont_do(1, reason="trying to retire", delta="testing")
+    msg = str(excinfo.value)
+    assert "spec" in msg
+    assert "edit" in msg.lower()
+    assert "retire" in msg.lower()
 
 
-def test_wont_do_refused_on_schema_kind(core):
+def test_wont_do_refused_on_spec_status_schema(core):
     core.add("s1", kind="schema")
-    with pytest.raises(InvariantError, match="LIVING SPEC|living spec|schema"):
+    with pytest.raises(InvariantError) as excinfo:
         core.wont_do(1, reason="trying to retire", delta="testing")
+    msg = str(excinfo.value)
+    assert "spec" in msg
+    assert "edit" in msg.lower()
+    assert "retire" in msg.lower()
 
 
 def test_close_allowed_on_production_and_meta(core):

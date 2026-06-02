@@ -79,6 +79,20 @@ def test_links_no_neighbors_returns_empty(core):
     assert core.links(ids=[1]) == []
 
 
+def test_links_expansion_excludes_retired_status(core):
+    """v0.5 D36: the expansion hop filters candidates by status IN
+    ('open','spec'). Retired design/schema rows (mig 009 destinations for
+    legacy wont_do design) are EXCLUDED -- they're not viable link targets
+    for new work."""
+    core.add("anchor", kind="production")  # T1
+    core.add("retired_d", kind="design")  # T2 -- spec by default
+    core.link_add(2, 1, because="design realized by prod", delta="setup")
+    # Seed T2 retired (retire() verb arrives Phase 2b).
+    core.conn.execute("UPDATE tasks SET status = 'retired' WHERE id = 2;")
+    result = core.links(ids=[1])
+    assert [n.id for n in result] == []  # retired excluded
+
+
 def test_links_iterative_walk_pattern(core):
     """The caller-driven iteration pattern: expand layer by layer, accumulating
     `already_seen` so each next call returns only the new frontier."""

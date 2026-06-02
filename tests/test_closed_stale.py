@@ -34,7 +34,7 @@ def test_closed_stale_reconcile_refused_under_v04(core):
     Clearing it would erase the archaeology marker without a corresponding
     meaning. The flag stays as historical signal."""
     _stale_closed_setup(core)
-    with pytest.raises(InvariantError, match="terminal"):
+    with pytest.raises(InvariantError, match=r"record-only|archaeology"):
         core.reconcile(2)
     # The closed-stale state is preserved.
     t2 = core.get(2)
@@ -110,4 +110,21 @@ def test_close_gate_does_not_trip_on_closed_stale_under_v04(core):
     assert core.get(2).status == "closed" and core.get(2).stale is True
     # T3 can close: T2 is closed-stale (record-only), not on the worklist.
     result = core.close(3)
+    assert result.task.status == "closed"
+
+
+def test_close_gate_does_not_trip_on_retired_stale_neighbor(core):
+    """v0.5 D36: retired neighbors are record-only (terminal status). The
+    close-gate's obligation filter excludes them under the new predicate
+    status IN ('open','spec'). Closing T2 succeeds even when T1 is retired+stale."""
+    core.add("d1", kind="design")  # T1 -- spec
+    core.add("p1", kind="production")  # T2
+    core.link_add(2, 1, because="prod realizes design", delta="setup")
+    # Seed T1 as retired+stale (retire() verb arrives Phase 2b).
+    core.conn.execute(
+        "UPDATE tasks SET status = 'retired', stale = 1 WHERE id = 1;"
+    )
+    # T2 must be reconcilable; the cascade from above didn't stale it -- seed
+    # T2 as clean and verify the gate ignores T1's record-only stale flag.
+    result = core.close(2)
     assert result.task.status == "closed"
