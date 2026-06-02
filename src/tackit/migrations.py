@@ -239,6 +239,167 @@ def _mig_008_rebuild_fts_with_prefix(conn: sqlite3.Connection) -> None:
     )
 
 
+def _mig_009_status_extend_and_partition_check(conn: sqlite3.Connection) -> None:
+    """v0.5 / D35 + D36 -- extend tasks.status enum from 3 values to 5
+    (open/closed/wont_do for production/meta; spec/retired for design/schema);
+    add a kind/status partition CHECK constraint; data-migrate design/schema
+    rows to partition-valid statuses (open/closed -> spec; wont_do -> retired);
+    backfill status_transitions for the migrated rows.
+
+    Production/meta rows are NOT touched -- their statuses stay; their
+    transition history stays. Only design/schema rows migrate, because the
+    partition rule maps them to spec/retired.
+
+    Implementation: uses the writable_schema PRAGMA pattern (same as mig_005)
+    rather than a full table rebuild. The table-rebuild approach would require
+    PRAGMA foreign_keys=OFF outside the transaction (per SQLite docs); the
+    migration runner wraps each mig in BEGIN/COMMIT so PRAGMA foreign_keys is
+    silently ignored inside it, and dropping `tasks` would cascade-delete
+    every dependent row (task_labels, links, status_transitions,
+    description_revisions). The in-place writable_schema approach avoids any
+    cascade because the table identity is preserved.
+
+    Steps:
+      1. Use writable_schema to widen the status CHECK enum from 3 to 5 values
+         (replace the CHECK clause text in sqlite_master). After this point
+         the table accepts spec/retired in inserts/updates but no existing
+         rows have been changed.
+      2. UPDATE design/schema rows: wont_do -> retired; open/closed -> spec.
+         Production/meta rows are untouched.
+      3. Backfill status_transitions for the migrated rows (captured BEFORE
+         the UPDATE so we have the original from_status).
+      4. Use writable_schema to append the kind/status partition CHECK clause
+         to the table definition in sqlite_master. After this point the
+         partition rule is enforced on all subsequent writes.
+
+    Idempotency: the migration runner version-gates by SCHEMA_VERSION, so this
+    function is invoked at most once per database upgrade. The body itself is
+    NOT idempotent if invoked twice in the same v9 -> v10 transition (it would
+    double-backfill status_transitions); the runner guarantees single-shot.
+
+    Backs S1 (T37) -- schema extended; D35 (T167) -- spec status; D36 (D171)
+    -- retired status + partition rule; D8 (T50) -- transition history extended."""
+    # The migration timestamp -- captured once at function entry so all backfilled
+    # transition rows share the same `changed_at` (the migration was one event).
+    from datetime import datetime, timezone
+    mig_ts = datetime.now(timezone.utc).isoformat()
+
+    # Capture original (id, status) of design/schema rows BEFORE the UPDATE,
+    # so we can compute correct from_status for the status_transitions backfill
+    # (after the UPDATE the original status is no longer recoverable).
+    pre_update_rows = conn.execute(
+        "SELECT id, status FROM tasks WHERE kind IN ('design', 'schema')"
+    ).fetchall()
+
+    # Step 1: widen the status CHECK enum from 3 to 5 values via writable_schema
+    # (same pattern as mig_005). This is a narrow, well-known string-replace
+    # inside the CHECK clause -- safe.
+    #
+    # After writable_schema edits, bump PRAGMA schema_version so SQLite
+    # recomputes its in-memory schema cache. Without this, the connection
+    # continues to enforce the OLD CHECK constraint for the rest of the
+    # transaction (writable_schema edits sqlite_master but doesn't invalidate
+    # the cache). mig_005 used writable_schema too but didn't refresh -- it
+    # got away with it because its CHECK widening (adding 'wont_do') was
+    # never exercised by a follow-up UPDATE in the same migration. mig_009
+    # DOES need to UPDATE rows to the new 'spec'/'retired' values within the
+    # same transaction, so the refresh is required.
+    old_status_check = "CHECK (status IN ('open', 'closed', 'wont_do'))"
+    new_status_check = (
+        "CHECK (status IN ('open', 'closed', 'wont_do', 'spec', 'retired'))"
+    )
+    conn.execute("PRAGMA writable_schema=ON;")
+    conn.execute(
+        "UPDATE sqlite_master SET sql = REPLACE(sql, ?, ?) "
+        "WHERE type='table' AND name='tasks';",
+        (old_status_check, new_status_check),
+    )
+    conn.execute("PRAGMA writable_schema=OFF;")
+    _bump_schema_cache(conn)
+
+    # Step 2: data migrate design/schema rows to partition-valid statuses.
+    # wont_do -> retired; open/closed -> spec. (After step 1 the widened
+    # CHECK admits these new values; before step 4 the partition CHECK
+    # isn't yet active, so the intermediate state is permitted.)
+    conn.execute(
+        "UPDATE tasks SET status = "
+        "  CASE "
+        "    WHEN status='wont_do' THEN 'retired' "
+        "    ELSE 'spec' "
+        "  END "
+        "WHERE kind IN ('design', 'schema');"
+    )
+
+    # Step 3: backfill status_transitions for the migrated rows. Use the
+    # pre-UPDATE statuses captured above; for each, compute the post-UPDATE
+    # status with the same CASE rule.
+    for task_id, old_status in pre_update_rows:
+        new_status = "retired" if old_status == "wont_do" else "spec"
+        conn.execute(
+            "INSERT INTO status_transitions "
+            "(task_id, from_status, to_status, changed_at) "
+            "VALUES (?, ?, ?, ?);",
+            (task_id, old_status, new_status, mig_ts),
+        )
+
+    # Step 4: append the kind/status partition CHECK clause to the table
+    # definition in sqlite_master. The CREATE TABLE text currently ends with
+    # `updated_at      TEXT    NOT NULL\n);` (the column list closes); we
+    # insert the new CHECK clause before the closing `)`.
+    #
+    # Robust approach: read the current sql, find the final `)` (the table
+    # closure -- inner CHECK parens are balanced and shorter), append a comma
+    # + new CHECK clause before it, write back. This survives any whitespace
+    # variation that ALTER TABLE or prior writable_schema edits introduced.
+    partition_check_clause = (
+        ",\n    CHECK (\n"
+        "        (kind IN ('production', 'meta') "
+        "AND status IN ('open', 'closed', 'wont_do'))\n"
+        "        OR\n"
+        "        (kind IN ('design', 'schema') "
+        "AND status IN ('spec', 'retired'))\n"
+        "    )"
+    )
+    sql_row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks';"
+    ).fetchone()
+    if sql_row is None:
+        raise RuntimeError(
+            "mig_009: tasks table sql not found in sqlite_master; "
+            "schema is in an unexpected state."
+        )
+    current_sql = sql_row[0]
+    last_paren = current_sql.rfind(")")
+    if last_paren < 0:
+        raise RuntimeError(
+            "mig_009: tasks CREATE TABLE sql has no closing `)`; "
+            "schema is in an unexpected state."
+        )
+    new_sql = (
+        current_sql[:last_paren] + partition_check_clause + "\n" + current_sql[last_paren:]
+    )
+    conn.execute("PRAGMA writable_schema=ON;")
+    conn.execute(
+        "UPDATE sqlite_master SET sql = ? "
+        "WHERE type='table' AND name='tasks';",
+        (new_sql,),
+    )
+    conn.execute("PRAGMA writable_schema=OFF;")
+    _bump_schema_cache(conn)
+
+
+def _bump_schema_cache(conn: sqlite3.Connection) -> None:
+    """Force SQLite to recompute its in-memory schema cache after a
+    ``writable_schema`` edit. SQLite's schema cache is keyed by
+    ``PRAGMA schema_version``; bumping it by 1 invalidates the cache so the
+    next statement sees the updated sqlite_master. Required after any
+    writable_schema-based schema mutation that needs to take effect within
+    the same transaction (e.g., a follow-up UPDATE/INSERT that relies on
+    the new constraint shape)."""
+    current = conn.execute("PRAGMA schema_version;").fetchone()[0]
+    conn.execute(f"PRAGMA schema_version = {current + 1};")
+
+
 def _mig_003_dependencies_to_links_symmetric(conn: sqlite3.Connection) -> None:
     """T86 / D5 / D27 -- rebuild the directional `dependencies` table as the
     symmetric `links` table. Each existing (from_task, to_task) edge becomes
@@ -305,6 +466,11 @@ MIGRATIONS: list[Migration] = [
         target_version=9,
         name="rebuild tasks_fts with kind+id name prefix (v0.4 / D32)",
         migrate=_mig_008_rebuild_fts_with_prefix,
+    ),
+    Migration(
+        target_version=10,
+        name="extend status to 5 values + kind/status partition CHECK + design/schema rows migrate to spec/retired (v0.5 / D35 + D36)",
+        migrate=_mig_009_status_extend_and_partition_check,
     ),
 ]
 

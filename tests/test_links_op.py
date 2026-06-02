@@ -7,8 +7,15 @@ Two modes:
 
 
 def _set_kind(core, task_id, kind):
-    """Set kind via raw UPDATE until T94 wires it through `add` properly."""
-    core.conn.execute("UPDATE tasks SET kind = ? WHERE id = ?", (kind, task_id))
+    """Set kind via raw UPDATE. v0.5 (D36): kind/status partition requires
+    status to be set in lockstep with kind, so the helper updates status to
+    a partition-valid default (spec for design/schema, open for
+    production/meta) -- mirrors reclassify()'s cross-partition auto-shift."""
+    new_status = "spec" if kind in ("design", "schema") else "open"
+    core.conn.execute(
+        "UPDATE tasks SET kind = ?, status = ? WHERE id = ?",
+        (kind, new_status, task_id),
+    )
 
 
 def test_links_no_input_returns_anchor_layer(core):

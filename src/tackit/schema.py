@@ -6,7 +6,7 @@ core logic (graph integrity in D14, status/stale rules in D7); see those
 slices for the authoritative formulations.
 """
 
-SCHEMA_VERSION = "9"
+SCHEMA_VERSION = "10"
 
 # D26 task kind taxonomy. The four values are also reserved label strings (D14):
 # label_add / load refuse a label equal to any of them, because S1.kind absorbs
@@ -16,17 +16,31 @@ RESERVED_LABELS = KIND_VALUES
 
 # --- S1 `tasks` -------------------------------------------------------------
 # The atomic item; single source of truth a task's every view is derived from.
+#
+# v0.5 (D35 + D36): status has 5 values (open/closed/wont_do for production/meta;
+# spec/retired for design/schema). The table-level CHECK enforces the kind/status
+# partition: production/meta hold open/closed/wont_do; design/schema hold
+# spec/retired. The partition rule is also enforced at the typed boundary
+# (models.Task partition validator); the DB CHECK is the defense-in-depth
+# backstop. wont_do_reason is the durable terminal-verb reason — set by wont_do()
+# on production/meta rows and by retire() on design/schema rows; the partition
+# guarantees one terminal verb writes the column per row.
 S1_TASKS = """
 CREATE TABLE IF NOT EXISTS tasks (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     name            TEXT    NOT NULL,
     description     TEXT    NOT NULL DEFAULT '',
     kind            TEXT    NOT NULL DEFAULT 'production' CHECK (kind IN ('design', 'schema', 'production', 'meta')),
-    status          TEXT    NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'closed', 'wont_do')),
+    status          TEXT    NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'closed', 'wont_do', 'spec', 'retired')),
     stale           INTEGER NOT NULL DEFAULT 0 CHECK (stale IN (0, 1)),
     wont_do_reason  TEXT,
     created_at      TEXT    NOT NULL,
-    updated_at      TEXT    NOT NULL
+    updated_at      TEXT    NOT NULL,
+    CHECK (
+        (kind IN ('production', 'meta') AND status IN ('open', 'closed', 'wont_do'))
+        OR
+        (kind IN ('design', 'schema') AND status IN ('spec', 'retired'))
+    )
 );
 """
 

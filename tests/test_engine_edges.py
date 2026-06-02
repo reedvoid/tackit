@@ -20,10 +20,18 @@ def test_edit_empty_name_refused(core):
 
 
 def _set_kind(core, task_id, kind):
-    """Test helper -- set a task's kind via raw UPDATE. Once T94 ships, kind
-    will be a required `add` argument and this becomes the proper code path;
-    until then this is the only way to vary kind in tests."""
-    core.conn.execute("UPDATE tasks SET kind = ? WHERE id = ?", (kind, task_id))
+    """Test helper -- change a task's kind via raw UPDATE. Originally needed
+    pre-T94 when kind wasn't an add() argument; kept as a fixture-shaping
+    primitive in the cross-kind-link tests below. v0.5 (D36): kind/status
+    partition requires the status to be set in lockstep with kind, so this
+    helper also updates status to a partition-valid default (spec for
+    design/schema, open for production/meta), mirroring what reclassify()
+    will do under D36 cross-partition auto-shift."""
+    new_status = "spec" if kind in ("design", "schema") else "open"
+    core.conn.execute(
+        "UPDATE tasks SET kind = ?, status = ? WHERE id = ?",
+        (kind, new_status, task_id),
+    )
 
 
 def test_meta_island_refuses_meta_to_production_link(core):

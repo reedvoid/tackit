@@ -42,6 +42,15 @@ def test_stale_worklist_includes_open_stale(core):
     assert 2 in worklist_ids
 
 
+@pytest.mark.skip(
+    reason="v0.5 D35+D36: the kind-conditional worklist filter is replaced "
+    "by `status IN ('open','spec')`. Legacy closed/wont_do design/schema "
+    "rows migrate to spec/retired under mig 009, and the partition CHECK "
+    "refuses creating new ones. The scenario this test exercised (a "
+    "closed-design row on the worklist via raw UPDATE) cannot exist under "
+    "v0.5. Phase 4 (T168 Section F Pass 7) rewrites this to test the new "
+    "spec-only worklist semantics."
+)
 def test_stale_worklist_includes_design_kind_even_if_closed(core):
     """Design slices are 'living spec' even if hand-closed -- the kind clause
     of the filter keeps them visible regardless of status. (Closing a design
@@ -115,6 +124,13 @@ def test_links_expansion_excludes_closed_production(core):
     assert 3 not in ids  # closed prod -> excluded
 
 
+@pytest.mark.skip(
+    reason="v0.5 D35+D36: closed-design slices cannot exist under the kind/"
+    "status partition. The links() candidate filter changes from "
+    "`status='open' OR kind IN (design,schema)` to `status IN ('open','spec')`; "
+    "Phase 4 rewrites this test to verify spec-rows surface and retired-rows "
+    "are excluded."
+)
 def test_links_expansion_keeps_closed_design_slices(core):
     """Closed design slices (rare; only via test seed) still surface in the
     expansion hop -- the kind clause of the candidate filter keeps living
@@ -207,6 +223,12 @@ def test_reconcile_refused_on_wont_do_meta(core):
         core.reconcile(1)
 
 
+@pytest.mark.skip(
+    reason="v0.5 D35+D36: D156's kind-conditional reconcile mirror is "
+    "obviated by mig 009 migrating closed-design to spec. Under v0.5, "
+    "reconcile is refused on status IN ('closed','wont_do','retired'); "
+    "allowed on open/spec. Phase 4 rewrites this to verify the new predicate."
+)
 def test_reconcile_allowed_on_closed_design(core):
     """T156 (v0.4 refinement): reconcile on a CLOSED-design task succeeds --
     design slices stay obligation-bearing under D28 regardless of status (the
@@ -225,6 +247,10 @@ def test_reconcile_allowed_on_closed_design(core):
     assert t.status == "closed"  # status preserved -- reconcile doesn't reopen
 
 
+@pytest.mark.skip(
+    reason="v0.5 D35+D36: closed-schema cannot exist under partition. "
+    "Same rewrite as test_reconcile_allowed_on_closed_design above."
+)
 def test_reconcile_allowed_on_closed_schema(core):
     """Schema slices follow the same T156 rule -- living spec by kind."""
     core.add("s1", kind="schema")
@@ -236,6 +262,11 @@ def test_reconcile_allowed_on_closed_schema(core):
     assert t.status == "closed"
 
 
+@pytest.mark.skip(
+    reason="v0.5 D35+D36: wont_do design rows migrate to status='retired' "
+    "under mig 009. Under v0.5, reconcile is refused on 'retired' (record-"
+    "only archaeology, never cleared). Phase 4 rewrites this scenario."
+)
 def test_reconcile_allowed_on_wont_do_design(core):
     """Wont_do design rows surface too (T109 in the dogfood is exactly this).
     Reconcile must work so they can be cleared after the upstream they

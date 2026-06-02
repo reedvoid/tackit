@@ -13,12 +13,43 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 
 # design.md D7 / schema.md S1: status is informational. T132 added 'wont_do' as
 # a third terminal status distinct from 'closed' -- 'closed' = work done;
 # 'wont_do' = decided not to do, locked forever per T118 semantics.
-Status = Literal["open", "closed", "wont_do"]
+#
+# v0.5 (D35 + D36): two more statuses added for design/schema slices. 'spec' is
+# the living-decision status (perma-living until retired or edited); 'retired' is
+# the terminal status for fully-abandoned decisions (no replacement). The
+# kind/status partition (enforced by Task.partition_validator below) maps
+# production/meta to {open, closed, wont_do} and design/schema to {spec, retired}.
+Status = Literal["open", "closed", "wont_do", "spec", "retired"]
+
+# Frozen sets for the partition validator (D36) and any caller that needs to
+# test partition membership. Kept module-level so add(), reclassify(), and the
+# Pydantic validator share one definition.
+_PROD_META_STATUSES = frozenset({"open", "closed", "wont_do"})
+_DESIGN_SCHEMA_STATUSES = frozenset({"spec", "retired"})
+_PROD_META_KINDS = frozenset({"production", "meta"})
+_DESIGN_SCHEMA_KINDS = frozenset({"design", "schema"})
+
+
+def default_status_for_kind(kind: str) -> str:
+    """D35 + D36 — return the partition-valid default status for ``kind``:
+    'spec' for design/schema; 'open' for production/meta. Single source of
+    truth used by Core.add() and any caller that needs to insert a partition-
+    valid row without explicitly passing status."""
+    if kind in _DESIGN_SCHEMA_KINDS:
+        return "spec"
+    return "open"
 
 # design.md D26 / schema.md S1: kind partitions the graph by "alters running app
 # behavior." Required at create (T94); the default here lets existing call sites
@@ -87,8 +118,36 @@ class Task(BaseModel):
     status: Status = "open"
     stale: bool = False
     wont_do_reason: Optional[str] = None  # T132: non-null iff status='wont_do'
+                                          # v0.5 (D36): also non-null iff
+                                          # status='retired' — partition rule
+                                          # guarantees one terminal verb per row.
     created_at: datetime
     updated_at: datetime
+
+    @model_validator(mode="after")
+    def _check_kind_status_partition(self) -> "Task":
+        """D36 (v0.5) — enforce the kind/status partition at the D2 boundary.
+        Refuses cross-partition combinations: production/meta must hold
+        open/closed/wont_do; design/schema must hold spec/retired. The SQL
+        CHECK constraint on S1 is the DB-layer backstop; this validator
+        catches the violation earlier with a clearer error message."""
+        if self.kind in _PROD_META_KINDS:
+            if self.status not in _PROD_META_STATUSES:
+                raise ValueError(
+                    f"task kind/status partition violation: kind='{self.kind}' "
+                    f"requires status in {{open, closed, wont_do}} "
+                    f"(production/meta) or {{spec, retired}} (design/schema); "
+                    f"got status='{self.status}'."
+                )
+        elif self.kind in _DESIGN_SCHEMA_KINDS:
+            if self.status not in _DESIGN_SCHEMA_STATUSES:
+                raise ValueError(
+                    f"task kind/status partition violation: kind='{self.kind}' "
+                    f"requires status in {{open, closed, wont_do}} "
+                    f"(production/meta) or {{spec, retired}} (design/schema); "
+                    f"got status='{self.status}'."
+                )
+        return self
 
     @computed_field  # type: ignore[prop-decorator]
     @property

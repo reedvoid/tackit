@@ -32,6 +32,7 @@ from .models import (
     StatusTransition,
     Task,
     WontDoResult,
+    default_status_for_kind,
     prefixed_id,
 )
 from .schema import KIND_VALUES
@@ -367,14 +368,20 @@ class Core:
         self.last_label_nudge = None  # D23: reflect only this op
         new_labels = self._new_labels(labels or [])  # D23: detect before they exist
         ts = _now()
+        # v0.5 (D35 + D36): default status is partition-conditional on kind:
+        # design/schema slices live at 'spec' (the living-decision status);
+        # production/meta tasks live at 'open' (the work-item status). The DB
+        # CHECK and Pydantic partition validator both refuse cross-partition
+        # writes, so add() MUST choose the partition-valid default.
+        default_status = default_status_for_kind(kind)
         with self._mutate():
             cur = self.conn.execute(
                 "INSERT INTO tasks(name, description, kind, status, stale, created_at, updated_at) "
-                "VALUES (?, ?, ?, 'open', 0, ?, ?)",
-                (name.strip(), description, kind, ts, ts),
+                "VALUES (?, ?, ?, ?, 0, ?, ?)",
+                (name.strip(), description, kind, default_status, ts, ts),
             )
             task_id = int(cur.lastrowid)
-            self._record_transition(task_id, None, "open")  # D8: creation event
+            self._record_transition(task_id, None, default_status)  # D8: creation event
             for label in labels or []:
                 self._attach_label(task_id, label)
             for dep_id, because in (deps or {}).items():
@@ -780,12 +787,61 @@ class Core:
                 f"create a new task with the desired kind (the old links stay "
                 f"on the historical row)."
             )
+        # v0.5 (D36): cross-partition reclassify auto-shifts status to keep
+        # the kind/status partition valid. open<->spec is the clean translation;
+        # cross-partition with no clean target (closed/wont_do -> design/schema,
+        # or retired -> production/meta) is refused so the caller resolves the
+        # state first rather than losing it in an auto-coercion. Same-partition
+        # reclassify (production<->meta, design<->schema) leaves status alone.
+        current_status = row["status"]
+        src_is_design_schema = row["kind"] in ("design", "schema")
+        dst_is_design_schema = new_kind in ("design", "schema")
+        new_status: str | None = None
+        if src_is_design_schema != dst_is_design_schema:
+            if dst_is_design_schema:
+                # production/meta -> design/schema: open auto-shifts to spec.
+                if current_status == "open":
+                    new_status = "spec"
+                else:
+                    raise InvariantError(
+                        f"REFUSED: cross-partition reclassify of "
+                        f"{prefixed_id(row['kind'], task_id)} at "
+                        f"status='{current_status}' to kind={new_kind!r} "
+                        f"has no clean status target in the destination "
+                        f"partition (spec/retired). Resolve the state first: "
+                        f"reopen() if closed; if the work is dropped, leave "
+                        f"as wont_do (production/meta) -- don't reclassify a "
+                        f"terminal-state task across the partition."
+                    )
+            else:
+                # design/schema -> production/meta: spec auto-shifts to open.
+                if current_status == "spec":
+                    new_status = "open"
+                else:
+                    raise InvariantError(
+                        f"REFUSED: cross-partition reclassify of "
+                        f"{prefixed_id(row['kind'], task_id)} at "
+                        f"status='{current_status}' to kind={new_kind!r} "
+                        f"has no clean status target in the destination "
+                        f"partition (open/closed/wont_do). A retired slice "
+                        f"cannot become a production work item -- if the "
+                        f"decision returned, file a fresh D# under the new "
+                        f"premise; leave the retired row as historical record."
+                    )
         with self._mutate():
             newly_stale = self._mark_linked_stale(task_id)
-            self.conn.execute(
-                "UPDATE tasks SET kind = ?, updated_at = ? WHERE id = ?",
-                (new_kind, _now(), task_id),
-            )
+            if new_status is not None:
+                self.conn.execute(
+                    "UPDATE tasks SET kind = ?, status = ?, updated_at = ? "
+                    "WHERE id = ?",
+                    (new_kind, new_status, _now(), task_id),
+                )
+                self._record_transition(task_id, current_status, new_status)
+            else:
+                self.conn.execute(
+                    "UPDATE tasks SET kind = ?, updated_at = ? WHERE id = ?",
+                    (new_kind, _now(), task_id),
+                )
         return ChangeResult(task=self.get(task_id), newly_stale=newly_stale)
 
     # ====================================================================

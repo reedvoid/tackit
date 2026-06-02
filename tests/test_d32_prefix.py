@@ -95,7 +95,7 @@ def test_task_prefixed_name_in_model_dump():
         id=7,
         name="slice content",
         kind="design",
-        status="open",
+        status="spec",  # v0.5 / D36: design slices live at status='spec'
         stale=False,
         created_at=_ts(),
         updated_at=_ts(),

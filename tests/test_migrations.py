@@ -510,3 +510,585 @@ def test_mig_007_empty_delta_rejected_by_table_check(tmp_path):
             )
     finally:
         c.close_conn()
+
+
+# ============================================================================
+# v0.5 / D35 + D36 / mig_009: extend status to 5 values + kind/status partition
+# CHECK + data migration (open/closed design/schema -> spec; wont_do
+# design/schema -> retired) + status_transitions backfill
+# ============================================================================
+
+# The pre-v10 (v9-state) tasks DDL: 3-value status CHECK, no partition CHECK,
+# wont_do_reason column already present (from mig 005). Inlined here so the
+# test stays correct after schema.py advances to the v10 DDL.
+_V9_TASKS_DDL = """
+CREATE TABLE tasks (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    name            TEXT    NOT NULL,
+    description     TEXT    NOT NULL DEFAULT '',
+    kind            TEXT    NOT NULL DEFAULT 'production' CHECK (kind IN ('design', 'schema', 'production', 'meta')),
+    status          TEXT    NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'closed', 'wont_do')),
+    stale           INTEGER NOT NULL DEFAULT 0 CHECK (stale IN (0, 1)),
+    wont_do_reason  TEXT,
+    created_at      TEXT    NOT NULL,
+    updated_at      TEXT    NOT NULL
+);
+"""
+
+# Pre-v10 FTS sync triggers (D32, same shape as mig_008's). Inlined because
+# schema.py S5_FTS_TRIGGERS won't be re-runnable on a clean v9 (triggers may
+# not yet exist with the prefix CASE) and so the test stays correct across
+# future trigger refactors.
+_V9_FTS_TRIGGERS = """
+CREATE TRIGGER tasks_fts_ai AFTER INSERT ON tasks BEGIN
+    INSERT INTO tasks_fts(rowid, name, description)
+    VALUES (
+        new.id,
+        CASE new.kind
+            WHEN 'design'     THEN 'D'
+            WHEN 'schema'     THEN 'S'
+            WHEN 'production' THEN 'T'
+            WHEN 'meta'       THEN 'M'
+        END || new.id || ' — ' || new.name,
+        new.description
+    );
+END;
+CREATE TRIGGER tasks_fts_ad AFTER DELETE ON tasks BEGIN
+    INSERT INTO tasks_fts(tasks_fts, rowid, name, description)
+    VALUES (
+        'delete',
+        old.id,
+        CASE old.kind
+            WHEN 'design'     THEN 'D'
+            WHEN 'schema'     THEN 'S'
+            WHEN 'production' THEN 'T'
+            WHEN 'meta'       THEN 'M'
+        END || old.id || ' — ' || old.name,
+        old.description
+    );
+END;
+CREATE TRIGGER tasks_fts_au AFTER UPDATE ON tasks BEGIN
+    INSERT INTO tasks_fts(tasks_fts, rowid, name, description)
+    VALUES (
+        'delete',
+        old.id,
+        CASE old.kind
+            WHEN 'design'     THEN 'D'
+            WHEN 'schema'     THEN 'S'
+            WHEN 'production' THEN 'T'
+            WHEN 'meta'       THEN 'M'
+        END || old.id || ' — ' || old.name,
+        old.description
+    );
+    INSERT INTO tasks_fts(rowid, name, description)
+    VALUES (
+        new.id,
+        CASE new.kind
+            WHEN 'design'     THEN 'D'
+            WHEN 'schema'     THEN 'S'
+            WHEN 'production' THEN 'T'
+            WHEN 'meta'       THEN 'M'
+        END || new.id || ' — ' || new.name,
+        new.description
+    );
+END;
+"""
+
+
+def _make_v9_store(tmp_path, seed_rows=None):
+    """Build a v9-state store (post-mig_008, pre-mig_009): tasks table has the
+    3-value status CHECK + no partition CHECK + the wont_do_reason column +
+    D32 prefix-aware FTS triggers. ``seed_rows`` is a list of dicts:
+    ``{name, kind, status, wont_do_reason?}``. The migration's effect on
+    these seeds is what each test asserts."""
+    store_dir = tmp_path / ".tackit"
+    store_dir.mkdir(parents=True, exist_ok=True)
+    (store_dir / "backups").mkdir(exist_ok=True)
+    db_path = store_dir / "tackit.db"
+    conn = sqlite3.connect(str(db_path), isolation_level=None)
+    conn.execute("PRAGMA journal_mode = WAL;")
+    conn.execute("PRAGMA foreign_keys = ON;")
+    conn.executescript(_V9_TASKS_DDL)
+    for ddl in (
+        schema.S2_TASK_LABELS,
+        schema.S3_LINKS,
+        schema.S4_STATUS_TRANSITIONS,
+        schema.S5_TASKS_FTS,
+        _V9_FTS_TRIGGERS,
+        schema.S6_META,
+        schema.S7_DESCRIPTION_REVISIONS,
+    ):
+        conn.executescript(ddl)
+    conn.execute("INSERT INTO meta(key, value) VALUES ('version', '0');")
+    conn.execute("INSERT INTO meta(key, value) VALUES ('synced_sql_hash', '');")
+    conn.execute("INSERT INTO meta(key, value) VALUES ('schema_version', '9');")
+    for row in seed_rows or []:
+        conn.execute(
+            "INSERT INTO tasks(name, description, kind, status, stale, "
+            "wont_do_reason, created_at, updated_at) "
+            "VALUES (?, '', ?, ?, 0, ?, "
+            "'2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00')",
+            (row["name"], row["kind"], row["status"], row.get("wont_do_reason")),
+        )
+    conn.close()
+    return Store(tmp_path)
+
+
+def _run_only_mig_009(store):
+    """Apply only mig_009 to a v9 store (no other migrations, no D18 finalize).
+    Returns the open connection so the caller can introspect post-mig state.
+    Used by tests that want to isolate mig_009's effect without running the
+    entire chain."""
+    conn = connect(store.db_path)
+    conn.execute("BEGIN")
+    try:
+        migrations._mig_009_status_extend_and_partition_check(conn)
+        migrations._set_schema_version(conn, 10)
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        conn.close()
+        raise
+    return conn
+
+
+def test_mig_009_open_design_schema_migrates_to_spec(tmp_path):
+    """v0.5 / D35: open design/schema rows migrate to status='spec' (the
+    living-decision status) and get a status_transitions row from='open'
+    to='spec' documenting the migration event."""
+    seed = [
+        {"name": "D1", "kind": "design", "status": "open"},
+        {"name": "D2", "kind": "design", "status": "open"},
+        {"name": "S1", "kind": "schema", "status": "open"},
+    ]
+    store = _make_v9_store(tmp_path, seed_rows=seed)
+    conn = _run_only_mig_009(store)
+    try:
+        rows = conn.execute(
+            "SELECT name, kind, status FROM tasks ORDER BY id"
+        ).fetchall()
+        assert [(r["name"], r["kind"], r["status"]) for r in rows] == [
+            ("D1", "design", "spec"),
+            ("D2", "design", "spec"),
+            ("S1", "schema", "spec"),
+        ]
+        transitions = conn.execute(
+            "SELECT task_id, from_status, to_status "
+            "FROM status_transitions ORDER BY task_id"
+        ).fetchall()
+        assert [(t["task_id"], t["from_status"], t["to_status"]) for t in transitions] == [
+            (1, "open", "spec"),
+            (2, "open", "spec"),
+            (3, "open", "spec"),
+        ]
+    finally:
+        conn.close()
+
+
+def test_mig_009_closed_design_schema_migrates_to_spec(tmp_path):
+    """v0.5 / D35: legacy closed design/schema rows (pre-D30 closures) also
+    migrate to status='spec'. D156's kind-conditional reconcile mirror is
+    obviated -- the legacy population now lives at a partition-valid status."""
+    seed = [
+        {"name": "D1", "kind": "design", "status": "closed"},
+        {"name": "S1", "kind": "schema", "status": "closed"},
+    ]
+    store = _make_v9_store(tmp_path, seed_rows=seed)
+    conn = _run_only_mig_009(store)
+    try:
+        rows = conn.execute(
+            "SELECT name, status FROM tasks ORDER BY id"
+        ).fetchall()
+        assert [(r["name"], r["status"]) for r in rows] == [
+            ("D1", "spec"),
+            ("S1", "spec"),
+        ]
+        transitions = conn.execute(
+            "SELECT from_status, to_status FROM status_transitions ORDER BY task_id"
+        ).fetchall()
+        assert [(t["from_status"], t["to_status"]) for t in transitions] == [
+            ("closed", "spec"),
+            ("closed", "spec"),
+        ]
+    finally:
+        conn.close()
+
+
+def test_mig_009_wont_do_design_migrates_to_retired(tmp_path):
+    """v0.5 / D36: wont_do design rows (e.g. D25 supersede retired in v0.4)
+    migrate to status='retired' (the terminal status for abandoned specs).
+    The original wont_do_reason column value persists on the row."""
+    seed = [
+        {
+            "name": "D25",
+            "kind": "design",
+            "status": "wont_do",
+            "wont_do_reason": "supersede mechanism retired v0.4",
+        },
+    ]
+    store = _make_v9_store(tmp_path, seed_rows=seed)
+    conn = _run_only_mig_009(store)
+    try:
+        row = conn.execute(
+            "SELECT name, status, wont_do_reason FROM tasks WHERE id=1"
+        ).fetchone()
+        assert row["name"] == "D25"
+        assert row["status"] == "retired"
+        assert row["wont_do_reason"] == "supersede mechanism retired v0.4"
+        t = conn.execute(
+            "SELECT from_status, to_status FROM status_transitions WHERE task_id=1"
+        ).fetchone()
+        assert (t["from_status"], t["to_status"]) == ("wont_do", "retired")
+    finally:
+        conn.close()
+
+
+def test_mig_009_wont_do_schema_migrates_to_retired(tmp_path):
+    """v0.5 / D36: wont_do schema rows are symmetric with design -- they also
+    migrate to retired (the partition rule applies to both kinds)."""
+    seed = [
+        {
+            "name": "S99",
+            "kind": "schema",
+            "status": "wont_do",
+            "wont_do_reason": "schema retired",
+        },
+    ]
+    store = _make_v9_store(tmp_path, seed_rows=seed)
+    conn = _run_only_mig_009(store)
+    try:
+        row = conn.execute(
+            "SELECT status, wont_do_reason FROM tasks WHERE id=1"
+        ).fetchone()
+        assert row["status"] == "retired"
+        assert row["wont_do_reason"] == "schema retired"
+    finally:
+        conn.close()
+
+
+def test_mig_009_production_meta_unchanged(tmp_path):
+    """v0.5 / D35+D36: production/meta rows are NOT touched by mig 009. Their
+    statuses (open/closed/wont_do) stay; no transition rows added for them
+    (only design/schema rows get the backfill)."""
+    seed = [
+        {"name": "T1", "kind": "production", "status": "open"},
+        {"name": "T2", "kind": "production", "status": "closed"},
+        {
+            "name": "T3",
+            "kind": "production",
+            "status": "wont_do",
+            "wont_do_reason": "dropped",
+        },
+        {"name": "M1", "kind": "meta", "status": "open"},
+        {"name": "M2", "kind": "meta", "status": "closed"},
+    ]
+    store = _make_v9_store(tmp_path, seed_rows=seed)
+    conn = _run_only_mig_009(store)
+    try:
+        rows = conn.execute(
+            "SELECT name, kind, status FROM tasks ORDER BY id"
+        ).fetchall()
+        assert [(r["name"], r["kind"], r["status"]) for r in rows] == [
+            ("T1", "production", "open"),
+            ("T2", "production", "closed"),
+            ("T3", "production", "wont_do"),
+            ("M1", "meta", "open"),
+            ("M2", "meta", "closed"),
+        ]
+        # NO transition rows -- only design/schema rows get backfill.
+        count = conn.execute(
+            "SELECT COUNT(*) FROM status_transitions"
+        ).fetchone()[0]
+        assert count == 0
+    finally:
+        conn.close()
+
+
+def test_mig_009_wont_do_reason_preserved_on_retired_migration(tmp_path):
+    """v0.5 / D36: when a wont_do design/schema row migrates to retired, the
+    wont_do_reason column value persists unchanged. Under the partition rule
+    the column now serves both terminal verbs (wont_do for prod/meta, retire
+    for design/schema); one terminal verb writes per row, so reusing the
+    column is partition-safe."""
+    seed = [
+        {
+            "name": "D25",
+            "kind": "design",
+            "status": "wont_do",
+            "wont_do_reason": "verbatim reason preserved",
+        },
+    ]
+    store = _make_v9_store(tmp_path, seed_rows=seed)
+    conn = _run_only_mig_009(store)
+    try:
+        row = conn.execute(
+            "SELECT wont_do_reason FROM tasks WHERE id=1"
+        ).fetchone()
+        assert row["wont_do_reason"] == "verbatim reason preserved"
+    finally:
+        conn.close()
+
+
+def test_mig_009_partition_check_active_post_migration(tmp_path):
+    """v0.5 / D36: after mig 009 lands, the kind/status partition CHECK refuses
+    cross-partition INSERTs at the DB layer (defense in depth alongside the
+    Pydantic Task partition validator)."""
+    store = _make_v9_store(tmp_path)
+    conn = _run_only_mig_009(store)
+    try:
+        # design + open is partition-invalid (design must be spec/retired).
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO tasks(name, description, kind, status, stale, "
+                "created_at, updated_at) "
+                "VALUES ('bad', '', 'design', 'open', 0, "
+                "'2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00');"
+            )
+        # production + spec is also partition-invalid.
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO tasks(name, description, kind, status, stale, "
+                "created_at, updated_at) "
+                "VALUES ('bad', '', 'production', 'spec', 0, "
+                "'2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00');"
+            )
+    finally:
+        conn.close()
+
+
+def test_mig_009_status_check_active_post_migration(tmp_path):
+    """v0.5 / D35+D36: after mig 009 lands, the status CHECK accepts the
+    5-value enum (open, closed, wont_do, spec, retired) and refuses anything
+    else. The partition CHECK still applies on top, so 'spec' on a production
+    row would fail (covered by the partition test); here we just verify the
+    enum widening."""
+    store = _make_v9_store(tmp_path)
+    conn = _run_only_mig_009(store)
+    try:
+        # bogus status is refused.
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO tasks(name, description, kind, status, stale, "
+                "created_at, updated_at) "
+                "VALUES ('bad', '', 'production', 'bogus', 0, "
+                "'2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00');"
+            )
+        # spec on design is accepted (partition-valid).
+        conn.execute(
+            "INSERT INTO tasks(name, description, kind, status, stale, "
+            "created_at, updated_at) "
+            "VALUES ('good_design', '', 'design', 'spec', 0, "
+            "'2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00');"
+        )
+        # retired on schema is accepted (partition-valid).
+        conn.execute(
+            "INSERT INTO tasks(name, description, kind, status, stale, "
+            "created_at, updated_at) "
+            "VALUES ('good_schema', '', 'schema', 'retired', 0, "
+            "'2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00');"
+        )
+    finally:
+        conn.close()
+
+
+def test_mig_009_fts_triggers_recreated(tmp_path):
+    """v0.5: mig 009 rebuilds the tasks table; FTS triggers (D17 + D32 prefix
+    indexing) must be recreated so search() still works post-migration."""
+    seed = [
+        {"name": "searchable", "kind": "design", "status": "open"},
+    ]
+    store = _make_v9_store(tmp_path, seed_rows=seed)
+    conn = _run_only_mig_009(store)
+    try:
+        # The D32 prefix lookup should still resolve.
+        hits = conn.execute(
+            "SELECT rowid FROM tasks_fts WHERE tasks_fts MATCH 'D1'"
+        ).fetchall()
+        assert len(hits) == 1
+        # Search for the literal task name should resolve too.
+        hits = conn.execute(
+            "SELECT rowid FROM tasks_fts WHERE tasks_fts MATCH 'searchable'"
+        ).fetchall()
+        assert len(hits) == 1
+    finally:
+        conn.close()
+
+
+def test_mig_009_d32_prefix_indexing_preserved(tmp_path):
+    """v0.5 / D32: post-mig 009, the synthesized auto-id prefix (D1, T2, etc.)
+    is still indexed in the FTS index -- search by prefix resolves to the
+    right row even after the table rebuild."""
+    seed = [
+        {"name": "design slice", "kind": "design", "status": "open"},
+        {"name": "production task", "kind": "production", "status": "open"},
+    ]
+    store = _make_v9_store(tmp_path, seed_rows=seed)
+    conn = _run_only_mig_009(store)
+    try:
+        # 'D1' should find the design row (kind='design' + id=1 -> prefix 'D1').
+        hits = conn.execute(
+            "SELECT rowid FROM tasks_fts WHERE tasks_fts MATCH 'D1'"
+        ).fetchall()
+        assert [h["rowid"] for h in hits] == [1]
+        # 'T2' should find the production row (kind='production' + id=2 -> 'T2').
+        hits = conn.execute(
+            "SELECT rowid FROM tasks_fts WHERE tasks_fts MATCH 'T2'"
+        ).fetchall()
+        assert [h["rowid"] for h in hits] == [2]
+    finally:
+        conn.close()
+
+
+def test_mig_009_fk_indexes_recreated(tmp_path):
+    """v0.5: FK references on tasks (from task_labels, links,
+    status_transitions, description_revisions) survive the table rebuild --
+    child rows can still be inserted with valid task_id FKs, and orphan-FK
+    INSERTs are refused."""
+    seed = [
+        {"name": "parent", "kind": "production", "status": "open"},
+    ]
+    store = _make_v9_store(tmp_path, seed_rows=seed)
+    conn = _run_only_mig_009(store)
+    try:
+        # Re-enable FK enforcement on this connection (PRAGMA is per-connection
+        # in SQLite and was left ON by _make_v9_store; the migration disables
+        # FK pragma during the table swap but doesn't persist that setting).
+        conn.execute("PRAGMA foreign_keys=ON;")
+        # FK ref to existing task should work.
+        conn.execute(
+            "INSERT INTO task_labels(task_id, label) VALUES (1, 'test_label');"
+        )
+        # FK ref to nonexistent task should fail.
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO task_labels(task_id, label) VALUES (999, 'bad');"
+            )
+    finally:
+        conn.close()
+
+
+def test_mig_009_foreign_key_check_clean(tmp_path):
+    """v0.5: PRAGMA foreign_key_check returns empty after mig 009 (no orphan
+    rows post-rebuild)."""
+    seed = [
+        {"name": "a", "kind": "production", "status": "open"},
+        {"name": "b", "kind": "design", "status": "open"},
+    ]
+    store = _make_v9_store(tmp_path, seed_rows=seed)
+    conn = _run_only_mig_009(store)
+    try:
+        violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+        assert violations == []
+    finally:
+        conn.close()
+
+
+def test_mig_009_idempotent_on_v10_database(tmp_path):
+    """v0.5: running migrations again after mig 009 has applied is a no-op
+    (handled by the runner's version-gated dispatch). The mig_009 function
+    itself is not idempotent (the second tasks_new CREATE would fail), but
+    the runner guarantees single-shot per database upgrade."""
+    seed = [
+        {"name": "a", "kind": "design", "status": "open"},
+    ]
+    _make_v9_store(tmp_path, seed_rows=seed)
+    # First Core.open advances v9 -> v10 (runs mig_009).
+    c = Core.open(start=tmp_path)
+    try:
+        assert migrations.get_schema_version(c.conn) >= 10
+        row1 = c.conn.execute("SELECT status FROM tasks WHERE id=1").fetchone()
+        assert row1["status"] == "spec"
+        count1 = c.conn.execute(
+            "SELECT COUNT(*) FROM status_transitions"
+        ).fetchone()[0]
+        assert count1 == 1
+    finally:
+        c.close_conn()
+    # Second Core.open finds current >= target -> no migs run, no side-effects.
+    c2 = Core.open(start=tmp_path)
+    try:
+        row2 = c2.conn.execute("SELECT status FROM tasks WHERE id=1").fetchone()
+        assert row2["status"] == "spec"
+        count2 = c2.conn.execute(
+            "SELECT COUNT(*) FROM status_transitions"
+        ).fetchone()[0]
+        # No duplicate transition row.
+        assert count2 == 1
+    finally:
+        c2.close_conn()
+
+
+def test_mig_009_does_not_touch_description_revisions(tmp_path):
+    """v0.5: mig 009 is a status migration, not a content edit. The S7
+    description_revisions table is not written to (no spurious audit rows)."""
+    seed = [
+        {"name": "D1", "kind": "design", "status": "open"},
+        {
+            "name": "D2",
+            "kind": "design",
+            "status": "wont_do",
+            "wont_do_reason": "dropped",
+        },
+    ]
+    store = _make_v9_store(tmp_path, seed_rows=seed)
+    conn = _run_only_mig_009(store)
+    try:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM description_revisions"
+        ).fetchone()[0]
+        assert count == 0
+    finally:
+        conn.close()
+
+
+def test_mig_009_row_count_preserved(tmp_path):
+    """v0.5: mig 009 does not lose or add task rows -- the row count is preserved."""
+    seed = [
+        {"name": "t_prod_open", "kind": "production", "status": "open"},
+        {"name": "t_design_open", "kind": "design", "status": "open"},
+        {"name": "t_design_closed", "kind": "design", "status": "closed"},
+        {
+            "name": "t_schema_wont_do",
+            "kind": "schema",
+            "status": "wont_do",
+            "wont_do_reason": "dropped",
+        },
+        {"name": "t_meta_closed", "kind": "meta", "status": "closed"},
+    ]
+    store = _make_v9_store(tmp_path, seed_rows=seed)
+    conn = _run_only_mig_009(store)
+    try:
+        count = conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+        assert count == 5
+    finally:
+        conn.close()
+
+
+def test_mig_009_full_v9_to_v10_round_trip_via_core_open(tmp_path):
+    """v0.5: a v9-state DB opened via Core.open runs mig 009 transparently and
+    reaches schema_version=10 (or higher if future migrations land). Integration
+    smoke test for the full v9 -> v10 path."""
+    seed = [
+        {"name": "D1", "kind": "design", "status": "open"},
+        {
+            "name": "D25",
+            "kind": "design",
+            "status": "wont_do",
+            "wont_do_reason": "supersede retired",
+        },
+        {"name": "T1", "kind": "production", "status": "open"},
+    ]
+    _make_v9_store(tmp_path, seed_rows=seed)
+    c = Core.open(start=tmp_path)
+    try:
+        assert migrations.get_schema_version(c.conn) >= 10
+        rows = c.conn.execute(
+            "SELECT name, status FROM tasks ORDER BY id"
+        ).fetchall()
+        assert [(r["name"], r["status"]) for r in rows] == [
+            ("D1", "spec"),
+            ("D25", "retired"),
+            ("T1", "open"),
+        ]
+    finally:
+        c.close_conn()
