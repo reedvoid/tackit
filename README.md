@@ -171,6 +171,34 @@ get `open`/`closed`/`wont_do`), plus a `stale` bit; one relationship — a
 both directions); freeform labels. Every view (board, status, narrative) is
 *derived* from these, never hand-kept in parallel.
 
+**The mindset these mechanisms assume.** tackit's discipline assumes two general
+operating principles. They aren't tackit-specific — they apply to any work — but
+they're the mindset everything below depends on. Without them, the rest of this
+page is a set of patterns; with them, the patterns become a working discipline.
+Both are reactions to the same default failure mode (a bias toward forward motion
+that routes around broken things), at different moments.
+
+- **Fail loud — never degrade silently.** When something fails, do not continue
+  as if it did not. Diagnose the error and fix the root cause; never reason past
+  it ("probably not important") and move on. Surface failures to the user with
+  recovery options — do not produce "degraded output." Retry or auto-recover only
+  with a specific, stated justification. tackit is built for exactly the failure
+  mode this rule prevents: a stale link, an un-reconciled task, an unfinished
+  bundle that quietly looks finished. Without fail-loud, tackit's worklist and
+  close-gate are just refusable suggestions; with it, they're the mechanism that
+  makes silent drift impossible.
+- **Fix broken things first.** The entry-point variant of fail-loud. On entering
+  a session or starting a task, scan for inherited broken state — unshipped fixes
+  named in fold-back reports, deferred-action notes in memory, `status='open'`
+  items the prior session named as "next," loose ends called out in recent
+  commits. Those are the next task, not whatever forward planning the question
+  seems to invite. "What's next?" with a deferred fix in scope is "fix that" —
+  not "let me enumerate the backlog." Inherited state FEELS like old context
+  (it's from yesterday) even when it's the most actionable item in front of you;
+  the recognition pattern needs to fire deliberately. tackit's worklist is
+  exactly this rule's mechanism — a deferred fix sitting at `status='open'` is
+  the worklist telling you what to ship next.
+
 **What `SKILL.md` holds you to** (the short version — read it there in full):
 
 - **Single source of truth.** Everything goes in tackit, via its tools — never ad-hoc

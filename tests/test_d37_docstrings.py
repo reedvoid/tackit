@@ -330,6 +330,75 @@ def test_skill_md_dev_copies_match_canonical():
         )
 
 
+def test_readme_contains_fail_loud_philosophy():
+    """README "For agents" block carries the fail-loud philosophy as a
+    top-level mindset bullet, not buried inside a tackit-specific rule.
+
+    Pins: the rule title + the distinctive "degraded output" phrase + the
+    explicit framing that connects fail-loud to tackit's purpose (preventing
+    silent broken state). The philosophy is general (cross-project) but is
+    a load-bearing prerequisite for tackit's worklist + close-gate to work
+    as more than refusable suggestions. Lives on the README install-time
+    surface so an agent installing tackit through the agent adopts it
+    alongside the tool, per [[feedback-ship-on-pain]]'s propagation
+    principle.
+    """
+    import pathlib
+    readme = pathlib.Path(__file__).resolve().parent.parent / "README.md"
+    text = readme.read_text()
+    assert "Fail loud" in text, (
+        "README must carry the fail-loud rule title verbatim in the "
+        "'For agents: start here' block. Agents grep for this exact "
+        "phrase when looking up the discipline; renaming it breaks the "
+        "anchor that connects this surface to the global CLAUDE.md "
+        "rule and to [[feedback-fail-loud]] (if/when memorialized)."
+    )
+    assert "degraded output" in text, (
+        "README must carry the 'degraded output' distinctive phrase in "
+        "the fail-loud bullet. It is the specific failure mode the rule "
+        "names -- silent partial success masquerading as success -- and "
+        "is what makes the rule actionable rather than abstract."
+    )
+
+
+def test_readme_contains_fix_broken_things_first_philosophy():
+    """README "For agents" block carries the fix-broken-things-first
+    philosophy as a top-level mindset bullet, paired with fail-loud as
+    the entry-point variant.
+
+    Pins: the rule title + the distinctive session-start framing + the
+    explicit "what's next? = fix that" recognition pattern. The
+    philosophy is the entry-point variant of fail-loud (same anti-pattern
+    family: bias toward forward motion that routes around broken
+    things; different moment: session-start vs mid-work). The
+    recognition pattern is the load-bearing piece -- without it, the
+    rule reads as advisory; with it, the rule names the specific
+    misclassification (treating an inherited deferred fix as "old
+    context / backlog candidate") that the rule exists to prevent.
+    """
+    import pathlib
+    readme = pathlib.Path(__file__).resolve().parent.parent / "README.md"
+    text = readme.read_text()
+    assert "Fix broken things first" in text, (
+        "README must carry the fix-broken-things-first rule title "
+        "verbatim. This is the entry-point variant of fail-loud and "
+        "needs the same agent-greppable anchor."
+    )
+    assert "inherited broken state" in text, (
+        "README must carry the 'inherited broken state' phrase. It "
+        "names the substrate the rule operates on -- state from a "
+        "prior session/turn that feels like archaeology but is "
+        "actually the next actionable item -- and is what makes the "
+        "rule actionable at session start."
+    )
+    assert "enumerate the backlog" in text, (
+        "README must carry the 'enumerate the backlog' anti-pattern "
+        "phrase. It names the specific scan-and-list failure mode the "
+        "rule prevents -- treating a named deferred fix as one option "
+        "among many rather than as THE next task."
+    )
+
+
 def test_readme_contains_granular_description_walkthrough():
     """README has the agent-facing walkthrough for D37 granular-description
     discipline. Pins the section heading + the rule's distinctive phrasing
