@@ -596,7 +596,10 @@ def build_parser() -> argparse.ArgumentParser:
         "schema slice's premise is 100% gone, use retire() instead. If impl "
         "reveals under-defined details, edit() is the mechanism to fold "
         "them back BEFORE close -- closing with an out-of-date description "
-        "destroys granularity for future readers.",
+        "destroys granularity for future readers. **Edits aren't free** -- "
+        "fires the cascade depth-1 + pressures the close-gate; make edits "
+        "consequential and necessary (substantive impact). See SKILL.md "
+        "\"Edits aren't free\" for the discipline.",
     )
     sp.add_argument("id", type=int)
     sp.add_argument("--name")
@@ -617,7 +620,10 @@ def build_parser() -> argparse.ArgumentParser:
         "without retransmitting the whole body. Fires the cascade depth-1 "
         "and writes the description_revisions audit row exactly like edit(). "
         "Refused on empty / whitespace-only content. Cuts large-body edit "
-        "cost ~10x.",
+        "cost ~10x. **Edits aren't free** -- fires the cascade depth-1 + "
+        "pressures the close-gate; make edits consequential and necessary "
+        "(substantive impact). Diff-shape cuts transmission cost, not "
+        "cascade cost. See SKILL.md \"Edits aren't free\" for the discipline.",
     )
     sp.add_argument("id", type=int)
     sp.add_argument(
@@ -639,7 +645,11 @@ def build_parser() -> argparse.ArgumentParser:
         "`--new` in a task's description. Refused if `--old` is empty, not "
         "found, or appears multiple times (caller adds context to "
         "disambiguate). Empty `--new` is a legitimate deletion. Cuts "
-        "large-body edit cost ~10x.",
+        "large-body edit cost ~10x. **Edits aren't free** -- fires the "
+        "cascade depth-1 + pressures the close-gate; make edits "
+        "consequential and necessary (substantive impact). Diff-shape cuts "
+        "transmission cost, not cascade cost. See SKILL.md \"Edits aren't "
+        "free\" for the discipline.",
     )
     sp.add_argument("id", type=int)
     sp.add_argument(

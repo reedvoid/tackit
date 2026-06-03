@@ -124,7 +124,16 @@ def build_server() -> FastMCP:
         Closing with an out-of-date description destroys granularity for
         future readers. Edit is allowed on any status (open/spec/closed/
         wont_do/retired); the wont_do_reason field on wont_do/retired rows
-        is the only frozen part."""
+        is the only frozen part.
+
+        **Edits aren't free.** This fires the cascade depth-1; neighbors
+        with status IN ('open','spec') land on the worklist and pressure
+        the close-gate until cleared. Make edits consequential and
+        necessary; the delta must name a substantive impact. Cosmetic
+        polish, "while I'm here" tweaks, and vague deltas train the FAST
+        filter into rubber-stamping -- genuine drift then gets reconciled
+        away the same way. See SKILL.md "Edits aren't free" for the
+        discipline."""
         with _core() as c:
             return _wrap(c, c.edit(id, delta=delta, name=name, description=description).model_dump(mode="json"))
 
@@ -145,7 +154,15 @@ def build_server() -> FastMCP:
         Refused on empty / whitespace-only ``content`` (a whitespace
         append is almost always a typo'd no-op). D37 -- granular description
         discipline: if impl reveals under-defined details, edit_append is
-        the cheap fold-back mechanism BEFORE close."""
+        the cheap fold-back mechanism BEFORE close.
+
+        **Edits aren't free.** This fires the cascade depth-1 exactly
+        like edit(); neighbors with status IN ('open','spec') land on
+        the worklist and pressure the close-gate until cleared. Make
+        edits consequential and necessary; the delta must name a
+        substantive impact. Diff-shape cuts transmission cost, not
+        cascade cost. See SKILL.md "Edits aren't free" for the
+        discipline."""
         with _core() as c:
             return _wrap(
                 c,
@@ -176,7 +193,15 @@ def build_server() -> FastMCP:
         ``old_string == new_string`` is a no-op (D20): succeeds silently
         with no cascade.
 
-        Required ``delta`` (T117) -- semantic shift in one sentence."""
+        Required ``delta`` (T117) -- semantic shift in one sentence.
+
+        **Edits aren't free.** This fires the cascade depth-1 exactly
+        like edit(); neighbors with status IN ('open','spec') land on
+        the worklist and pressure the close-gate until cleared. Make
+        edits consequential and necessary; the delta must name a
+        substantive impact. Diff-shape cuts transmission cost, not
+        cascade cost. See SKILL.md "Edits aren't free" for the
+        discipline."""
         with _core() as c:
             return _wrap(
                 c,

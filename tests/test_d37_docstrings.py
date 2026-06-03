@@ -304,6 +304,56 @@ def test_skill_md_contains_logical_boundaries_signal():
     )
 
 
+def test_mcp_edit_family_docstrings_carry_edit_quality_discipline():
+    """All three MCP edit verbs (edit, edit_append, edit_replace_substring)
+    carry the edit-quality discipline summary in their docstring -- the
+    invocation-moment teaching surface where the agent reads right
+    before paying the cascade cost. Per D36 propagation: the rule lives
+    on every surface where the agent invokes the cost-incurring verbs.
+
+    Pins three load-bearing phrases ("Edits aren't free" / "consequential
+    and necessary" / "substantive impact") on each docstring. A future
+    edit that softens or drops any phrase on any tool fails here.
+    """
+    from tackit import mcp_server
+    import inspect
+    src = inspect.getsource(mcp_server)
+    boundaries = [
+        ("def edit(", "def edit_append(", "edit"),
+        ("def edit_append(", "def edit_replace_substring(", "edit_append"),
+        ("def edit_replace_substring(", "def close(", "edit_replace_substring"),
+    ]
+    for start_marker, end_marker, tool_name in boundaries:
+        start = src.index(start_marker)
+        end = src.index(end_marker)
+        block = src[start:end]
+        for phrase in ("Edits aren't free", "consequential and necessary", "substantive impact"):
+            assert _contains(block, phrase), (
+                f"MCP {tool_name}() docstring must contain {phrase!r} per "
+                f"the edit-quality discipline (SKILL.md 'Edits aren't free'). "
+                f"Invocation-moment teaching surface -- the agent reads "
+                f"docstrings right before paying the cascade cost; the rule "
+                f"belongs here, not just in SKILL.md."
+            )
+
+
+def test_cli_edit_family_help_carries_edit_quality_discipline(capsys):
+    """All three CLI edit subcommands (edit / edit-append / edit-replace)
+    surface the edit-quality discipline in their --help output. Mirrors
+    the MCP docstring pin -- the typed-command-moment teaching surface
+    for human users.
+    """
+    for subcommand in ("edit", "edit-append", "edit-replace"):
+        out = _cli_help(subcommand, capsys)
+        for phrase in ("Edits aren't free", "consequential and necessary", "substantive impact"):
+            assert _contains(out, phrase), (
+                f"`tackit {subcommand} --help` must contain {phrase!r} per "
+                f"the edit-quality discipline (SKILL.md 'Edits aren't free'). "
+                f"Typed-command-moment teaching surface for humans -- "
+                f"mirrors the MCP docstring rule."
+            )
+
+
 def test_skill_md_contains_edit_quality_discipline():
     """The canonical SKILL.md carries a forceful edit-quality discipline
     section. Every edit verb fires the cascade depth-1; the cost lands
