@@ -579,6 +579,30 @@ fold-back, the next agent reads "Phase 4 finding: enumerated by verb, missed
 sibling pattern — grep the family next time" and skips the same mistake. The
 fold-back is how implementation teaches planning.
 
+### When findings outgrow the body — fold them out to a sibling task
+
+The Phase N finding pattern works once or twice on an umbrella task. On a
+longer epic, the cumulative findings can dwarf the original task scope —
+T168 reached 57k chars during v0.5 with Phase 1 deltas + Phase 4 finding +
+the phase progress table all stacked under one umbrella. Editing such a body
+is expensive (each fold-back pays full-body retransmit cost on `edit`;
+`edit_append` / `edit_replace_substring` mitigate but don't eliminate the
+cognitive load).
+
+**The signal to fold out:** when the cumulative `Phase N finding` sections
+exceed the original task body's length, OR when you reach the 3rd substantial
+finding, file a sibling `<umbrella> — findings` task and link it to the
+umbrella with a `because: "absorbs Phase N+ findings from <umbrella>"`. The
+umbrella's body keeps the original plan + a one-line pointer to the findings
+sibling. Subsequent `edit_append` fold-backs go on the sibling, not the
+umbrella. This keeps the umbrella scannable and the findings searchable
+without losing the implementation-teaches-planning signal.
+
+Apply this *prospectively* — when you're about to add the 3rd or 4th finding,
+file the sibling THEN. Don't retroactively split bodies that have already
+grown; the cost of splitting after the fact often exceeds the cost of
+continuing. (T168 was the cautionary tale; it never got split.)
+
 ### Auto-id name prefix (D32, v0.4)
 Every task carries a deterministic `<kind_letter><id>` prefix in its agent-facing
 display. The letters: design→**D**, schema→**S**, production→**T**, meta→**M**;
@@ -894,6 +918,10 @@ Format:
        T130 · backfill primitives
             what: productized link_rationale + batch op
             reason: scope dropped per user — case-by-case backfill instead
+    ━━━ Fold-backs ━━━━━━━━━━━━━━━━━━━━
+       <task ids edited> · <one short line each on what was folded back>
+       — OR —
+       none — verified <one-line justification>.
     ━━━ state ━━━━━━━━━━━━━━━━━━━━━━━━━━
        N open · N done · ⚠ N stale (open + design/schema only — D28)
        <worry first: stale ids + what they await, refused ops, new labels>
@@ -910,3 +938,24 @@ Format:
   applied. Silence on fold-backs is not reassurance.
 - End with the state line; surface anything worrying first. If nothing is stale and
   nothing was refused, say so — silence is not reassurance.
+
+### Release-cluster pattern — production tasks close in a batch at the end
+
+In multi-phase releases (v0.5's D35+D36+D37 bundle ran 8 phases), production
+tasks often reach **"shipped commit, work done, can't close"** state mid-release
+because the close-gate refuses on stale design/schema neighbors that a later
+phase will sweep. **This is the close-gate doing its job, not a bug.** Don't
+fight it with `link_rm` workarounds or premature close attempts — the cluster
+of done-but-not-closed work is the correct intermediate state.
+
+Report it explicitly in the turn summary: name each shipped-but-stuck-open
+task with a "shipped pending Phase N close" tag so it doesn't get forgotten,
+then close the whole cluster after the final sweep (typically a verification
+task that closes its predecessors atomically). The v0.5 release closed
+T173/T174/T175/T176/T180 + the umbrella T168 + M178 in one Phase 8 batch
+after Phase 7's prose sweep cleared the worklist — exactly the right shape.
+
+The weaker "close --acknowledge-stale-neighbors" form (let close land while
+explicitly recording the deferred staleness) is **rejected** — it would
+erode the close-gate's guarantee; the whole reason the gate exists is that
+"close atop unreconciled drift" is wrong AND invisible.

@@ -407,6 +407,85 @@ def test_skill_md_contains_edit_quality_discipline():
     )
 
 
+def test_skill_md_report_template_includes_foldback_stanza():
+    """The 'Always report what changed' template in SKILL.md literally
+    contains the Fold-backs stanza (not just a prose mention of the
+    discipline). M181 #7 fix: omitting the fold-back line was still
+    possible because the template only mentioned it in prose; embedding
+    the stanza literally makes omission visibly wrong rather than
+    silently missing.
+    """
+    import pathlib
+    skill = (
+        pathlib.Path(__file__).resolve().parent.parent
+        / "src" / "tackit" / "data" / "SKILL.md"
+    )
+    text = skill.read_text()
+    assert "━━━ Fold-backs ━━━" in text, (
+        "SKILL.md report template must literally contain the "
+        "`━━━ Fold-backs ━━━` stanza header. The prose 'End with the "
+        "fold-back line' alone was insufficient -- agents skipped it "
+        "in practice. The visual template stanza forces the agent to "
+        "fill it or explicitly negate it."
+    )
+    assert "none — verified" in text, (
+        "The Fold-backs template must include the 'none — verified' "
+        "negative-case wording so an agent who had no fold-backs writes "
+        "the explicit negation rather than omitting the stanza entirely."
+    )
+
+
+def test_skill_md_contains_release_cluster_pattern():
+    """SKILL.md documents the release-cluster pattern: in multi-phase
+    releases, production tasks reach 'shipped but stuck-open' state
+    because the close-gate refuses on stale design/schema neighbors
+    that a later phase will sweep. This is the close-gate doing its
+    job; the cluster closes in a batch at the end. M181 #6 fix.
+    """
+    import pathlib
+    skill = (
+        pathlib.Path(__file__).resolve().parent.parent
+        / "src" / "tackit" / "data" / "SKILL.md"
+    )
+    text = skill.read_text()
+    assert "Release-cluster pattern" in text, (
+        "SKILL.md must carry a `Release-cluster pattern` subsection. "
+        "Multi-phase releases hit close-gate refusals on stale neighbors "
+        "until a later phase sweeps; the cluster of done-but-not-closed "
+        "work is the correct intermediate state, not a bug to work around."
+    )
+    assert "shipped pending Phase N close" in text, (
+        "SKILL.md must carry the 'shipped pending Phase N close' reporting "
+        "phrase. It is the in-turn-summary tag for stuck-open production "
+        "tasks so they don't get forgotten between phases."
+    )
+
+
+def test_skill_md_contains_findings_overflow_rule():
+    """SKILL.md documents the findings-overflow-to-sibling rule in the
+    Fold-backs section: when cumulative Phase N finding sections exceed
+    the original task body OR you reach the 3rd substantial finding,
+    file a sibling `findings` task and link to the umbrella. M181 #8c
+    fix. T168 at 57k chars is the cautionary tale.
+    """
+    import pathlib
+    skill = (
+        pathlib.Path(__file__).resolve().parent.parent
+        / "src" / "tackit" / "data" / "SKILL.md"
+    )
+    text = skill.read_text()
+    assert _contains(text, "findings outgrow the body"), (
+        "SKILL.md must carry the 'findings outgrow the body' signal "
+        "phrase. It is the actionable trigger -- agents detect 'cumulative "
+        "Phase N finding sections > original body' and file a sibling THEN."
+    )
+    assert _contains(text, "3rd substantial finding"), (
+        "SKILL.md must carry the '3rd substantial finding' threshold "
+        "phrase. Without a concrete threshold, the rule reads as 'split "
+        "when it feels too long' -- with one, agents have a count to track."
+    )
+
+
 def test_skill_md_dev_copies_match_canonical():
     """The canonical SKILL.md (src/tackit/data/SKILL.md, ships in the
     package) and the dev copies (.claude/skills/tackit/SKILL.md, .agents/
