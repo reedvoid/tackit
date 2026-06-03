@@ -10,7 +10,7 @@ survives across sessions and context-window compaction, and a change to one task
 traceable to everything that depends on it. A typed boundary refuses malformed data,
 and a reconcile-on-change discipline surfaces what each change invalidates.
 
-> **Status: alpha (0.5.0).** Data model, interfaces, and sync design are settled
+> **Status: alpha (0.6.0).** Data model, interfaces, and sync design are settled
 > and implemented; 400+ tests across unit / CLI / MCP / Hypothesis property
 > suites. v0.5 added a typed status partition (design/schema slices live at
 > `spec`/`retired`; production/meta at `open`/`closed`/`wont_do`) and a new
