@@ -229,13 +229,39 @@ def test_skill_md_dev_copies_match_canonical():
         )
 
 
-@pytest.mark.skip(
-    reason="Phase 7 / T170 -- README walkthrough is a separate phase."
-)
 def test_readme_contains_granular_description_walkthrough():
-    """README has the agent-facing install walkthrough that includes
-    granular-description guidance."""
+    """README has the agent-facing walkthrough for D37 granular-description
+    discipline. Pins the section heading + the rule's distinctive phrasing
+    + the anti-pattern enumeration so a future README edit can't drop them
+    silently.
+
+    The README is the install-time + Github-front-page surface — it's where
+    a new user (and a new agent on first encounter) learns what the
+    discipline is. The SKILL.md test pins the in-session teaching surface;
+    this test pins the install + browsing surface."""
     import pathlib
     readme = pathlib.Path(__file__).resolve().parent.parent / "README.md"
     text = readme.read_text()
-    assert "granular-description" in text.lower() or "impl-ready" in text
+    # The section exists in the v0.5 highlights walkthrough.
+    assert "Granular-description discipline" in text, (
+        "README must carry the D37 granular-description discipline section "
+        "in the v0.5 highlights walkthrough. The section is the install + "
+        "browsing-surface anchor for the discipline."
+    )
+    # The rule's distinctive phrase is present.
+    assert "implementation-ready" in text, (
+        "README must carry the rule's distinctive phrase 'implementation-"
+        "ready' alongside the SKILL.md surface (per the propagation "
+        "principle: the rule lives on every agent-facing surface)."
+    )
+    # The fresh-session framing.
+    assert "fresh-session" in text, (
+        "README must frame D37 around fresh-session revisit (the negative-"
+        "space test for whether a description is granular enough), "
+        "matching the SKILL.md framing."
+    )
+    # Anti-patterns are called out.
+    assert "Anti-patterns" in text or "anti-patterns" in text, (
+        "README must enumerate the D37 anti-patterns so the install-time "
+        "reader sees what's NOT allowed, not just the abstract rule."
+    )
