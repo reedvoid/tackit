@@ -1408,6 +1408,143 @@ class Core:
             )
         return ChangeResult(task=self.get(task_id), newly_stale=newly_stale)
 
+    # --- T179: diff-shaped description edits (append + substring replace) ---
+    #
+    # Why these exist: ``edit()`` takes the full new description string. For a
+    # 50k-char body the round-trip cost is the full body in *and* the full body
+    # out -- ~30k tokens per fold-back. Diff-shaped ops cut that ~10x: only the
+    # snippet being added or the (old, new) substring pair crosses the wire.
+    #
+    # Both ops share ``_commit_description_edit`` for the post-validation tail
+    # (no-op short-circuit, cascade depth-1, audit row, UPDATE, D31 reminder),
+    # so the contract -- one cascade per real change, one audit row per real
+    # change, identical D31 wording -- is enforced in one place.
+
+    def _commit_description_edit(
+        self,
+        row: sqlite3.Row,
+        new_description: str,
+        delta: str,
+    ) -> ChangeResult:
+        """T179 shared tail for description-only edits (edit_append +
+        edit_replace_substring). Caller has: validated ``delta`` via
+        ``_record_delta``, fetched ``row``, computed ``new_description``,
+        and validated it via ``_validate_text``.
+
+        Handles: no-op short-circuit (D20 -- equal description -> no cascade,
+        no audit row, no version bump), cascade depth-1 (D10), description_
+        revisions audit row preserving prior verbatim name+description+delta
+        (D29 / S7), UPDATE description+updated_at, D31 code-check reminder on
+        design/schema edits."""
+        task_id = row["id"]
+        if new_description == row["description"]:
+            return ChangeResult(task=self.get(task_id), newly_stale=[])
+        with self._mutate():
+            newly_stale = self._mark_linked_stale(task_id)
+            self.conn.execute(
+                "INSERT INTO description_revisions("
+                "  task_id, prev_name, prev_description, delta, edited_at"
+                ") VALUES (?, ?, ?, ?, ?);",
+                (task_id, row["name"], row["description"], delta.strip(), _now()),
+            )
+            self.conn.execute(
+                "UPDATE tasks SET description = ?, updated_at = ? WHERE id = ?",
+                (new_description, _now(), task_id),
+            )
+        if row["kind"] in ("design", "schema"):
+            edited = self.get(task_id)
+            self.last_code_check_reminder = (
+                f"D31: {prefixed_id(row['kind'], task_id)} was edited -- "
+                f"{edited.name!r}. The slice's D#/S# id is referenced in "
+                f"code by convention (SKILL.md code↔task naming rule). "
+                f"Grep for the id and check the associated files for drift."
+            )
+        return ChangeResult(task=self.get(task_id), newly_stale=newly_stale)
+
+    def edit_append(
+        self, task_id: int, content: str, delta: str
+    ) -> ChangeResult:
+        """T179 - append ``content`` to the task's description. Fires the
+        cascade depth-1 like ``edit()``; writes a description_revisions
+        audit row preserving the prior verbatim name+description+delta.
+
+        Diff-shaped vs ``edit()``: only ``content`` crosses the wire, not
+        the full new description. Cuts large-body edit cost ~10x.
+
+        Refused on empty / whitespace-only ``content`` -- a whitespace-only
+        append is almost always a typo'd no-op the caller didn't mean."""
+        self._record_delta(delta, "edit_append")
+        self.last_code_check_reminder = None
+        row = self._require_row(task_id)
+        if not content or not content.strip():
+            raise ValidationError(
+                "edit_append refused: content must be non-empty (no "
+                "whitespace-only -- a whitespace append is almost always "
+                "a typo'd no-op)."
+            )
+        _validate_text(content, "edit_append content")
+        new_description = (row["description"] or "") + content
+        _validate_text(new_description, "task description")
+        return self._commit_description_edit(row, new_description, delta)
+
+    def edit_replace_substring(
+        self,
+        task_id: int,
+        old_string: str,
+        new_string: str,
+        delta: str,
+    ) -> ChangeResult:
+        """T179 - replace exact substring ``old_string`` with ``new_string``
+        in the task's description. Fires the cascade depth-1 like ``edit()``;
+        writes the description_revisions audit row preserving the prior
+        verbatim state.
+
+        Diff-shaped vs ``edit()``: only the (old, new) substring pair crosses
+        the wire, not the full new description. Cuts large-body edit cost ~10x.
+
+        Refusal matrix (fail loud, mirroring the filesystem Edit tool's
+        old_string/new_string pattern):
+          * empty ``old_string`` -> refused (no unambiguous match point).
+          * ``old_string`` not found in description -> refused (caller likely
+            typo'd the substring).
+          * ``old_string`` appears N>1 times -> refused with N; caller adds
+            surrounding context to disambiguate.
+
+        Empty ``new_string`` is ALLOWED -- it is a legitimate deletion of
+        the matched substring. ``old_string == new_string`` is a no-op (D20)
+        and succeeds silently with no cascade.
+
+        Matching is literal -- not regex. '.' matches '.', not 'any char'.
+        ``new_string`` containing ``old_string`` replaces exactly once
+        (str.replace count=1 semantics), not a recursive sweep."""
+        self._record_delta(delta, "edit_replace_substring")
+        self.last_code_check_reminder = None
+        row = self._require_row(task_id)
+        if not old_string:
+            raise ValidationError(
+                "edit_replace_substring refused: old_string must be "
+                "non-empty (an empty substring has no unique match point)."
+            )
+        _validate_text(old_string, "edit_replace_substring old_string")
+        _validate_text(new_string, "edit_replace_substring new_string")
+        current = row["description"] or ""
+        count = current.count(old_string)
+        if count == 0:
+            raise ValidationError(
+                "edit_replace_substring refused: old_string not found in "
+                "description. Verify the exact substring (check whitespace, "
+                "case, hidden characters)."
+            )
+        if count > 1:
+            raise ValidationError(
+                f"edit_replace_substring refused: old_string appears "
+                f"{count} times in description; substring must be unique. "
+                f"Add surrounding context to disambiguate."
+            )
+        new_description = current.replace(old_string, new_string, 1)
+        _validate_text(new_description, "task description")
+        return self._commit_description_edit(row, new_description, delta)
+
     # ====================================================================
     # D15 - query / board (derived views)
     # ====================================================================

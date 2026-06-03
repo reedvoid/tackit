@@ -301,6 +301,61 @@ def test_cli_edit_no_dependents(cli, capsys):
     assert "no dependents" in capsys.readouterr().out.lower()
 
 
+# --- T179: edit-append + edit-replace CLI surface ------------------------
+
+
+def test_cli_edit_append_appends_and_surfaces_stale(cli, capsys):
+    main(["add", "base", "--kind", "production", "--desc", "original"])
+    main(["add", "dep", "--kind", "production"])
+    main(["link", "add", "2", "1", "--because", "T2 reviews T1", "--delta", "seed"])
+    capsys.readouterr()
+    assert main([
+        "edit-append", "1",
+        "--content", " + appended",
+        "--delta", "extended scope",
+    ]) == 0
+    out = capsys.readouterr()
+    assert "appended to" in out.out
+    assert "STALE" in out.err.upper() and "T2" in out.err
+
+    capsys.readouterr()
+    main(["show", "1"])
+    assert "original + appended" in capsys.readouterr().out
+
+
+def test_cli_edit_append_refused_empty_content_exit_1(cli, capsys):
+    main(["add", "a", "--kind", "production"])
+    capsys.readouterr()
+    rc = main(["edit-append", "1", "--content", "", "--delta", "x"])
+    assert rc == 1
+
+
+def test_cli_edit_replace_replaces_substring(cli, capsys):
+    main(["add", "a", "--kind", "production", "--desc", "hello world"])
+    capsys.readouterr()
+    assert main([
+        "edit-replace", "1",
+        "--old", "world",
+        "--new", "universe",
+        "--delta", "renamed token",
+    ]) == 0
+    capsys.readouterr()
+    main(["show", "1"])
+    assert "hello universe" in capsys.readouterr().out
+
+
+def test_cli_edit_replace_multi_match_refused_exit_1(cli, capsys):
+    main(["add", "a", "--kind", "production", "--desc", "foo foo foo"])
+    capsys.readouterr()
+    rc = main([
+        "edit-replace", "1",
+        "--old", "foo",
+        "--new", "bar",
+        "--delta", "seed",
+    ])
+    assert rc == 1
+
+
 def test_cli_restore_by_filename(cli, capsys):
     import re
 

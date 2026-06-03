@@ -129,6 +129,66 @@ def build_server() -> FastMCP:
             return _wrap(c, c.edit(id, delta=delta, name=name, description=description).model_dump(mode="json"))
 
     @mcp.tool()
+    def edit_append(id: int, content: str, delta: str) -> dict:
+        """T179 - append ``content`` to a task's description. Diff-shaped
+        variant of edit(): only the snippet crosses the wire, not the full
+        new description. Cuts large-body edit cost ~10x.
+
+        Fires the cascade depth-1 like edit() and writes the description_
+        revisions audit row (D29 / S7) preserving the prior verbatim
+        name+description+delta.
+
+        Required ``delta`` (T117) -- one short sentence describing what
+        changed semantically. The reconciler compares it against each
+        stale link's `because` rationale to filter relevance.
+
+        Refused on empty / whitespace-only ``content`` (a whitespace
+        append is almost always a typo'd no-op). D37 -- granular description
+        discipline: if impl reveals under-defined details, edit_append is
+        the cheap fold-back mechanism BEFORE close."""
+        with _core() as c:
+            return _wrap(
+                c,
+                c.edit_append(id, content=content, delta=delta).model_dump(
+                    mode="json"
+                ),
+            )
+
+    @mcp.tool()
+    def edit_replace_substring(
+        id: int, old_string: str, new_string: str, delta: str
+    ) -> dict:
+        """T179 - replace exact substring ``old_string`` with ``new_string``
+        in a task's description. Diff-shaped variant of edit(): only the
+        (old, new) pair crosses the wire. Cuts large-body edit cost ~10x.
+
+        Mirrors the filesystem Edit tool's old_string/new_string pattern:
+        substring boundaries are exact (literal match, not regex) and the
+        match must be UNIQUE -- non-unique matches refused loudly so the
+        caller adds surrounding context to disambiguate.
+
+        Refusal matrix:
+          * empty ``old_string`` -> refused (no unambiguous match point).
+          * ``old_string`` not found -> refused (caller likely typo'd).
+          * ``old_string`` appears N>1 times -> refused with N.
+
+        Empty ``new_string`` is ALLOWED -- it's a legitimate deletion.
+        ``old_string == new_string`` is a no-op (D20): succeeds silently
+        with no cascade.
+
+        Required ``delta`` (T117) -- semantic shift in one sentence."""
+        with _core() as c:
+            return _wrap(
+                c,
+                c.edit_replace_substring(
+                    id,
+                    old_string=old_string,
+                    new_string=new_string,
+                    delta=delta,
+                ).model_dump(mode="json"),
+            )
+
+    @mcp.tool()
     def close(id: int) -> dict:
         """Close a task (D12 + D14 + D36). For PRODUCTION + META tasks only.
         REFUSED if the task is stale, or if it transitively depends on a

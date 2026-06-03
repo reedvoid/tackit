@@ -41,8 +41,9 @@ def test_mcp_registers_all_tools(tmp_path, monkeypatch):
         return [t.name for t in listing.tools]
 
     names = _drive(tmp_path, monkeypatch, scenario)
-    assert len(names) == 21  # T128 + reclassify; T132 + wont_do; T174 (D36) + retire
-    expected = {"add", "show", "search", "edit", "close", "reconcile", "link_add",
+    assert len(names) == 23  # +2 T179: edit_append + edit_replace_substring
+    expected = {"add", "show", "search", "edit", "edit_append",
+                "edit_replace_substring", "close", "reconcile", "link_add",
                 "stale", "labels", "load", "board", "reclassify", "wont_do",
                 "retire"}
     assert expected <= set(names)
@@ -201,6 +202,59 @@ def test_mcp_retire_smoke(tmp_path, monkeypatch):
     env = _drive(tmp_path, monkeypatch, scenario)
     assert env["result"]["task"]["status"] == "retired"
     assert env["result"]["task"]["wont_do_reason"] == "premise replaced by D99"
+
+
+# --- T179: edit_append + edit_replace_substring MCP wiring --------------
+
+
+def test_mcp_edit_append_appends_through_protocol(tmp_path, monkeypatch):
+    async def scenario(s):
+        await s.call_tool(
+            "add", {"name": "a", "kind": "production", "description": "original"}
+        )
+        await s.call_tool(
+            "edit_append",
+            {"id": 1, "content": " + appended", "delta": "extend scope"},
+        )
+        return await s.call_tool("show", {"id": 1})
+
+    env = _envelope(_drive(tmp_path, monkeypatch, scenario))
+    assert env["result"]["task"]["description"] == "original + appended"
+
+
+def test_mcp_edit_replace_substring_through_protocol(tmp_path, monkeypatch):
+    async def scenario(s):
+        await s.call_tool(
+            "add", {"name": "a", "kind": "production", "description": "hello world"}
+        )
+        await s.call_tool(
+            "edit_replace_substring",
+            {
+                "id": 1,
+                "old_string": "world",
+                "new_string": "universe",
+                "delta": "renamed token",
+            },
+        )
+        return await s.call_tool("show", {"id": 1})
+
+    env = _envelope(_drive(tmp_path, monkeypatch, scenario))
+    assert env["result"]["task"]["description"] == "hello universe"
+
+
+def test_mcp_edit_replace_substring_multi_match_isError(tmp_path, monkeypatch):
+    async def scenario(s):
+        await s.call_tool(
+            "add", {"name": "a", "kind": "production", "description": "foo foo foo"}
+        )
+        return await s.call_tool(
+            "edit_replace_substring",
+            {"id": 1, "old_string": "foo", "new_string": "bar", "delta": "seed"},
+        )
+
+    result = _drive(tmp_path, monkeypatch, scenario)
+    assert result.isError
+    assert "3 times" in result.content[0].text
 
 
 def test_mcp_labels(tmp_path, monkeypatch):

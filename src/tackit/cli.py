@@ -252,6 +252,39 @@ def _cmd_edit(args) -> int:
     return 0
 
 
+def _cmd_edit_append(args) -> int:
+    with _core_session() as core:
+        result = core.edit_append(args.id, content=args.content, delta=args.delta)
+        text = ["appended to " + _fmt_task(result.task)]
+        if result.newly_stale:
+            text.append("  ⚠ now STALE (review/reconcile these dependents):")
+            for n in result.newly_stale:
+                text.append(f"    - T{n.id} {n.name}")
+        else:
+            text.append("  no dependents to review.")
+        _emit("\n".join(text), _dump(result), args.json)
+    return 0
+
+
+def _cmd_edit_replace(args) -> int:
+    with _core_session() as core:
+        result = core.edit_replace_substring(
+            args.id,
+            old_string=args.old,
+            new_string=args.new,
+            delta=args.delta,
+        )
+        text = ["replaced in " + _fmt_task(result.task)]
+        if result.newly_stale:
+            text.append("  ⚠ now STALE (review/reconcile these dependents):")
+            for n in result.newly_stale:
+                text.append(f"    - T{n.id} {n.name}")
+        else:
+            text.append("  no dependents to review.")
+        _emit("\n".join(text), _dump(result), args.json)
+    return 0
+
+
 def _cmd_close(args) -> int:
     with _core_session() as core:
         result = core.close(args.id)
@@ -575,6 +608,54 @@ def build_parser() -> argparse.ArgumentParser:
         "compares it against each linked task's `because` rationale; future-"
         "you reads it to decide what's relevant. Describe the SHIFT, not "
         "the bytes.",
+    )
+
+    sp = add(
+        "edit-append",
+        _cmd_edit_append,
+        "T179: diff-shaped edit -- append `content` to a task's description "
+        "without retransmitting the whole body. Fires the cascade depth-1 "
+        "and writes the description_revisions audit row exactly like edit(). "
+        "Refused on empty / whitespace-only content. Cuts large-body edit "
+        "cost ~10x.",
+    )
+    sp.add_argument("id", type=int)
+    sp.add_argument(
+        "--content",
+        required=True,
+        help="text to append to the task's description (non-empty, "
+        "non-whitespace-only).",
+    )
+    sp.add_argument(
+        "--delta",
+        required=True,
+        help="One-sentence semantic-change description (T117).",
+    )
+
+    sp = add(
+        "edit-replace",
+        _cmd_edit_replace,
+        "T179: diff-shaped edit -- replace the exact substring `--old` with "
+        "`--new` in a task's description. Refused if `--old` is empty, not "
+        "found, or appears multiple times (caller adds context to "
+        "disambiguate). Empty `--new` is a legitimate deletion. Cuts "
+        "large-body edit cost ~10x.",
+    )
+    sp.add_argument("id", type=int)
+    sp.add_argument(
+        "--old",
+        required=True,
+        help="exact substring to find in the description (must be unique).",
+    )
+    sp.add_argument(
+        "--new",
+        required=True,
+        help="replacement text (may be empty -- that's a deletion).",
+    )
+    sp.add_argument(
+        "--delta",
+        required=True,
+        help="One-sentence semantic-change description (T117).",
     )
 
     sp = add(
