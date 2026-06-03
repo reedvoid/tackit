@@ -469,6 +469,23 @@ def _cmd_status(args) -> int:
 
 
 def _cmd_export(args) -> int:
+    if args.specs_only:
+        # M187 / T193 spec-only mode: emit the spec-layer SQL dump.
+        with _core_session() as core:
+            text = core.export_specs_only()
+        if args.output:
+            from pathlib import Path
+            Path(args.output).write_text(text)
+            _emit(
+                f"wrote spec-only dump -> {args.output} ({len(text)} bytes)",
+                {"path": args.output, "bytes": len(text)},
+                args.json,
+            )
+        else:
+            # stdout: just print the SQL, no envelope -- caller redirects.
+            print(text, end="")
+        return 0
+    # Default: D18 full-sync .db -> tackit.sql (legacy behavior).
     store = require_store()
     v = sync.export(store)
     _emit(f"exported db -> {store.sql_path} (version {v}).", {"version": v}, args.json)
@@ -822,7 +839,29 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("id", type=int)
 
     add("status", _cmd_status, "db version vs tackit.sql + sync verdict (D18)")
-    add("export", _cmd_export, "force-dump .db -> tackit.sql (D18)")
+    sp = add(
+        "export",
+        _cmd_export,
+        "force-dump .db -> tackit.sql (D18 full sync) by default. With "
+        "--specs-only: emit a spec-layer-only SQL dump (design + schema "
+        "slices + their labels + spec-to-spec links + audit rows) per "
+        "M187 / T193 -- the disaster-recovery artifact for the dogfood. "
+        "stdout by default; redirect with > or pass --output FILE.",
+    )
+    sp.add_argument(
+        "--specs-only",
+        action="store_true",
+        help="emit only the spec layer (design + schema slices) per M187 "
+        "design. Excludes production/meta task rows + FTS index + meta "
+        "table. Output is consumable by `tackit import` against a freshly "
+        "initialized store.",
+    )
+    sp.add_argument(
+        "--output",
+        type=str,
+        default=None,
+        help="output file path (--specs-only only). Default: stdout.",
+    )
 
     sp = add("import", _cmd_import, "adopt tackit.sql (backup + rebuild .db) (D18)")
     sp.add_argument("--force", action="store_true", help="adopt even if local db is newer")

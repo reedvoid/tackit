@@ -1729,3 +1729,97 @@ class Core:
                 names.append(sr["name"])
             out.append(LabelUsage(label=r["label"], count=r["n"], samples=names))
         return out
+
+    # ====================================================================
+    # M187 + T193 - spec-only export (disaster-recovery artifact)
+    # ====================================================================
+    def export_specs_only(self) -> str:
+        """T193 / M187 — emit a SQL dump of only the spec layer (design +
+        schema tasks, their labels, spec-to-spec links, and their audit
+        rows from status_transitions + description_revisions). Production
+        and meta rows are excluded; the FTS index (S5) and meta table (S6)
+        are excluded — both are derived/managed by `tackit init` + the
+        migration path.
+
+        The output is consumable by `tackit import` against a freshly
+        initialized store: the schema already exists, this dump appends
+        only the spec-layer INSERT statements. Wrapped in a BEGIN/COMMIT
+        transaction so a partial failure rolls back.
+
+        Per M187 design: this is the disaster-recovery artifact for the
+        tackit-on-tackit dogfood. The `.tackit/tackit.db` is gitignored
+        on a public tool repo; the spec-only dump goes to a committed
+        `examples/specs.sql` so design + schema decisions survive
+        `git clone`. Production + meta task state stays private."""
+        spec_id_rows = self.conn.execute(
+            "SELECT id FROM tasks WHERE kind IN ('design','schema') ORDER BY id"
+        ).fetchall()
+        spec_ids: list[int] = []
+        for row in spec_id_rows:
+            spec_ids.append(row["id"])
+
+        out: list[str] = ["BEGIN TRANSACTION;"]
+
+        for row in self.conn.execute(
+            "SELECT * FROM tasks WHERE kind IN ('design','schema') ORDER BY id"
+        ).fetchall():
+            out.append(_sql_insert("tasks", row))
+
+        # task_labels, links (both endpoints), status_transitions,
+        # description_revisions — only when we have spec rows.
+        if spec_ids:
+            placeholders = ",".join("?" * len(spec_ids))
+
+            for row in self.conn.execute(
+                f"SELECT * FROM task_labels WHERE task_id IN ({placeholders}) "
+                f"ORDER BY task_id, label",
+                spec_ids,
+            ).fetchall():
+                out.append(_sql_insert("task_labels", row))
+
+            for row in self.conn.execute(
+                f"SELECT * FROM links WHERE task_a IN ({placeholders}) "
+                f"AND task_b IN ({placeholders}) ORDER BY id",
+                spec_ids + spec_ids,
+            ).fetchall():
+                out.append(_sql_insert("links", row))
+
+            for row in self.conn.execute(
+                f"SELECT * FROM status_transitions WHERE task_id IN ({placeholders}) "
+                f"ORDER BY id",
+                spec_ids,
+            ).fetchall():
+                out.append(_sql_insert("status_transitions", row))
+
+            for row in self.conn.execute(
+                f"SELECT * FROM description_revisions WHERE task_id IN ({placeholders}) "
+                f"ORDER BY id",
+                spec_ids,
+            ).fetchall():
+                out.append(_sql_insert("description_revisions", row))
+
+        out.append("COMMIT;")
+        return "\n".join(out) + "\n"
+
+
+def _sql_insert(table: str, row) -> str:
+    """Build a literal `INSERT INTO {table} (cols) VALUES (vals);` statement
+    from a sqlite3.Row. Used by export_specs_only (T193 / M187)."""
+    cols: list[str] = []
+    vals: list[str] = []
+    for col in row.keys():
+        cols.append(col)
+        vals.append(_sql_literal(row[col]))
+    return f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({', '.join(vals)});"
+
+
+def _sql_literal(v) -> str:
+    """Format a Python value as a SQLite literal, escaping single quotes."""
+    if v is None:
+        return "NULL"
+    if isinstance(v, (int, float)):
+        return str(v)
+    if isinstance(v, bytes):
+        return "X'" + v.hex() + "'"
+    s = str(v)
+    return "'" + s.replace("'", "''") + "'"
