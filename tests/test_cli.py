@@ -368,3 +368,52 @@ def test_cli_restore_by_filename(cli, capsys):
     capsys.readouterr()
     assert main(["restore", "--backup", match.group(0)]) == 0
     assert "restored" in capsys.readouterr().out
+
+
+def test_cli_help_for_every_subcommand_has_substantive_description():
+    """M181 #8a: every CLI subcommand's --help output must be non-trivially
+    longer than its bare argparse usage line. Catches the class of bug where
+    argparse's `description=` was omitted when registering the subcommand,
+    leaving --help with only the auto-generated usage skeleton (no prose).
+
+    Phase 3 of v0.5 (T175) fixed this for the existing subcommands by passing
+    `description=help_text` alongside `help=help_text` in the `add()` helper.
+    This test guards the rule prospectively -- any future subcommand
+    registered without `description=` (e.g., bypassing the helper) regresses
+    here, with a failure message naming the subcommand path and root cause.
+    """
+    import argparse
+    from tackit.cli import build_parser
+
+    parser = build_parser()
+
+    subparsers_action = None
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            subparsers_action = action
+            break
+    assert subparsers_action is not None, (
+        "CLI parser must have a subparsers action -- something has changed "
+        "in build_parser() that this test no longer recognizes."
+    )
+
+    def _walk(subparser_action, prefix=""):
+        for name, subparser in subparser_action.choices.items():
+            full_name = f"{prefix}{name}" if prefix else name
+            usage_len = len(subparser.format_usage())
+            help_len = len(subparser.format_help())
+            extra = help_len - usage_len
+            assert extra > 50, (
+                f"CLI subcommand `tackit {full_name} --help` is missing or "
+                f"too thin -- only {extra} chars beyond the bare usage line. "
+                f"Likely cause: argparse `description=` was not passed when "
+                f"registering this subcommand (the Phase 3 / v0.5 bug). Add "
+                f"a description= matching help= when calling add_parser() "
+                f"so the prose lands at typed-command moment."
+            )
+            # Recurse into nested subparsers (link has add/rm; label has add/rm).
+            for nested in subparser._actions:
+                if isinstance(nested, argparse._SubParsersAction):
+                    _walk(nested, prefix=f"{full_name} ")
+
+    _walk(subparsers_action)
