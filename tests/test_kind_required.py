@@ -37,6 +37,31 @@ def test_add_all_four_kinds_accepted(core, kind):
     assert core.get(t.id).kind == kind  # persisted, not just on the returned model
 
 
+@pytest.mark.parametrize(
+    "kind,expected_status",
+    [
+        ("design", "spec"),
+        ("schema", "spec"),
+        ("production", "open"),
+        ("meta", "open"),
+    ],
+)
+def test_add_default_status_by_kind_partition(core, kind, expected_status):
+    """v0.5 D36 / T176: Core.add() applies the kind/status partition
+    default at create time: design/schema land at status='spec' (the
+    living-spec layer), production/meta land at status='open' (the
+    active-work layer). Parametrize covers all four kinds so the
+    partition contract is pinned by construction, not by assertion on
+    a single fixture."""
+    t = core.add(f"a {kind} task", kind=kind)
+    assert t.status == expected_status, (
+        f"add(kind={kind!r}) should default to status={expected_status!r}; "
+        f"got {t.status!r}. D36 v0.5 partition violated."
+    )
+    # Persisted, not just on the returned model:
+    assert core.get(t.id).status == expected_status
+
+
 def test_add_none_kind_refused(core):
     """Explicit None is just as invalid as omitted -- the Optional[str] shape
     isn't allowed for a required field."""

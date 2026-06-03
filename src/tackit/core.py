@@ -444,13 +444,18 @@ class Core:
                 _validate_text(s["name"], "task name")
                 _validate_text(s["desc"], "task description")
                 ts = _now()
+                # D36 v0.5: kind/status partition default. design/schema land
+                # at 'spec' (the living-spec layer); production/meta land at
+                # 'open' (the active-work layer). Mirrors Core.add()'s
+                # default so the parser path obeys the same partition rule.
+                default_status = "spec" if s["kind"] in ("design", "schema") else "open"
                 cur = self.conn.execute(
                     "INSERT INTO tasks(name, description, kind, status, stale, created_at, updated_at) "
-                    "VALUES (?, ?, ?, 'open', 0, ?, ?)",
-                    (s["name"].strip(), s["desc"], s["kind"], ts, ts),
+                    "VALUES (?, ?, ?, ?, 0, ?, ?)",
+                    (s["name"].strip(), s["desc"], s["kind"], default_status, ts, ts),
                 )
                 tid = int(cur.lastrowid)
-                self._record_transition(tid, None, "open")
+                self._record_transition(tid, None, default_status)
                 keymap[s["key"]] = tid
                 for label in s["labels"]:
                     self._attach_label(tid, label)
@@ -952,10 +957,13 @@ class Core:
                 f"decision has returned, file a fresh D# with the new "
                 f"direction; do not reanimate this row."
             )
-        # No-op guard (D20): reopening an already-open task changes nothing, so it must
-        # not bump version / re-dump tackit.sql (which would be spurious git churn
-        # and a false "newer" signal for D18 ordering).
-        if row["status"] != "open":
+        # No-op guard (D20 + D36 v0.5): reopening a row already in its
+        # kind's LIVE status changes nothing -- skip the UPDATE to avoid
+        # spurious version bumps AND a partition CHECK violation (setting
+        # status='open' on a design/schema row is illegal under D36).
+        # Live status is 'open' for production/meta, 'spec' for design/
+        # schema; both are no-ops.
+        if row["status"] not in ("open", "spec"):
             with self._mutate():
                 self._set_status(task_id, "open", clear_stale=False)
         return self.get(task_id)

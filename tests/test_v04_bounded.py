@@ -67,32 +67,20 @@ def test_stale_worklist_excludes_retired(core):
     assert 1 not in worklist_ids
 
 
-@pytest.mark.skip(
-    reason="v0.5 D35+D36: the kind-conditional worklist filter is replaced "
-    "by `status IN ('open','spec')`. Legacy closed/wont_do design/schema "
-    "rows migrate to spec/retired under mig 009, and the partition CHECK "
-    "refuses creating new ones. The scenario this test exercised (a "
-    "closed-design row on the worklist via raw UPDATE) cannot exist under "
-    "v0.5. Phase 4 (T168 Section F Pass 7) rewrites this to test the new "
-    "spec-only worklist semantics."
-)
-def test_stale_worklist_includes_design_kind_even_if_closed(core):
-    """Design slices are 'living spec' even if hand-closed -- the kind clause
-    of the filter keeps them visible regardless of status. (Closing a design
-    slice is refused by D30 in normal API use, but the filter is robust to
-    test seeds / migration shims that might bypass it.)"""
-    # Use a raw SQL UPDATE to bypass D30's refusal -- simulating the test/
-    # migration seed case the kind clause defends against.
-    core.add("d_slice", kind="design")  # T1
+def test_stale_worklist_includes_spec_design_when_stale(core):
+    """v0.5 D36 / T176: design slices live at status='spec' (partition
+    default). A spec design row that is stale carries obligation -- the
+    worklist surfaces it under the new status-derived filter
+    (status IN ('open','spec'))."""
+    core.add("d_slice", kind="design")  # T1, spec by default
     core.add("p_slice", kind="production")  # T2
     core.link_add(2, 1, because="impl realizes design", delta="setup")
-    # Forcibly close T1 (bypassing D30 — only possible in test fixtures).
-    core.conn.execute(
-        "UPDATE tasks SET status = 'closed', stale = 1 WHERE id = 1;"
-    )
+    # Editing T2 stales its neighbor T1 (cascade).
+    core.edit(2, description="x", delta="prod shifted")
+    t1 = core.get(1)
+    assert t1.status == "spec" and t1.stale is True
     worklist_ids = {t.id for t in core.stale_worklist()}
-    # D30/D28 belt-and-suspenders: design+closed+stale still surfaces.
-    assert 1 in worklist_ids
+    assert 1 in worklist_ids  # spec stale -> on worklist
 
 
 # ----------------------------------------------------------------------------
@@ -175,25 +163,22 @@ def test_links_expansion_includes_spec_design(core):
     assert 2 in ids  # spec design -> included
 
 
-@pytest.mark.skip(
-    reason="v0.5 D35+D36: closed-design slices cannot exist under the kind/"
-    "status partition. The links() candidate filter changes from "
-    "`status='open' OR kind IN (design,schema)` to `status IN ('open','spec')`; "
-    "Phase 4 rewrites this test to verify spec-rows surface and retired-rows "
-    "are excluded."
-)
-def test_links_expansion_keeps_closed_design_slices(core):
-    """Closed design slices (rare; only via test seed) still surface in the
-    expansion hop -- the kind clause of the candidate filter keeps living
-    spec visible regardless of status."""
+def test_links_expansion_keeps_spec_design_excludes_retired(core):
+    """v0.5 D36 / T176: the links() expansion candidate filter
+    (status IN ('open','spec')) keeps SPEC design slices visible (the
+    live spec layer) and excludes RETIRED design slices (dead specs --
+    not viable link targets)."""
     core.add("anchor", kind="production")  # T1
-    core.add("design_nbr", kind="design")  # T2
-    core.link_add(2, 1, because="setup", delta="setup")
-    # Bypass D30 via raw UPDATE to simulate a force-closed design slice.
-    core.conn.execute("UPDATE tasks SET status = 'closed' WHERE id = 2;")
+    core.add("spec_design", kind="design")  # T2 (spec)
+    core.add("retired_design", kind="design")  # T3 (will be retired)
+    core.link_add(2, 1, because="prod realizes spec design", delta="setup")
+    core.link_add(3, 1, because="prod once realized retired design", delta="setup")
+    # Force T3 retired via raw UPDATE (mirroring mig 009's destination).
+    core.conn.execute("UPDATE tasks SET status = 'retired' WHERE id = 3;")
     out = core.links(ids=[1])
     ids = {n.id for n in out}
-    assert 2 in ids  # design kind keeps it visible even though closed
+    assert 2 in ids  # spec design -> viable
+    assert 3 not in ids  # retired design -> excluded
 
 
 # ----------------------------------------------------------------------------
@@ -300,62 +285,48 @@ def test_reconcile_allowed_on_spec_status(core):
     assert t.status == "spec"  # status preserved -- reconcile doesn't shift partition
 
 
-@pytest.mark.skip(
-    reason="v0.5 D35+D36: D156's kind-conditional reconcile mirror is "
-    "obviated by mig 009 migrating closed-design to spec. Under v0.5, "
-    "reconcile is refused on status IN ('closed','wont_do','retired'); "
-    "allowed on open/spec. Phase 4 rewrites this to verify the new predicate."
-)
-def test_reconcile_allowed_on_closed_design(core):
-    """T156 (v0.4 refinement): reconcile on a CLOSED-design task succeeds --
-    design slices stay obligation-bearing under D28 regardless of status (the
-    kind clause of the worklist filter), so reconcile must mirror that to
-    avoid pinning legacy closed-design rows on the worklist with no exit
-    path. Bypassing D30 to seed the closed-design state, since D30 refuses
-    close() on design at the op layer."""
-    core.add("d1", kind="design")
-    # Force-close + stale, simulating a pre-D30 row that's now obligation-
-    # bearing per D28's kind clause.
-    core.conn.execute(
-        "UPDATE tasks SET status = 'closed', stale = 1 WHERE id = 1;"
-    )
+def test_reconcile_allowed_on_stale_spec_design(core):
+    """v0.5 D36 / T176: reconcile is allowed on stale SPEC design rows
+    -- spec is the open-equivalent for the design/schema partition, and
+    the worklist filter (status IN ('open','spec')) puts them on the
+    obligation list. Reconcile clears the flag without changing status."""
+    core.add("d1", kind="design")  # spec by default
+    assert core.get(1).status == "spec"
+    core.conn.execute("UPDATE tasks SET stale = 1 WHERE id = 1;")
     t = core.reconcile(1)
     assert t.stale is False  # reconcile cleared the flag
-    assert t.status == "closed"  # status preserved -- reconcile doesn't reopen
+    assert t.status == "spec"  # status preserved -- reconcile doesn't shift partition
 
 
-@pytest.mark.skip(
-    reason="v0.5 D35+D36: closed-schema cannot exist under partition. "
-    "Same rewrite as test_reconcile_allowed_on_closed_design above."
-)
-def test_reconcile_allowed_on_closed_schema(core):
-    """Schema slices follow the same T156 rule -- living spec by kind."""
+def test_reconcile_allowed_on_stale_spec_schema(core):
+    """Schema slices follow the same partition rule -- spec is the live
+    status for schema, and stale spec is reconcilable."""
     core.add("s1", kind="schema")
-    core.conn.execute(
-        "UPDATE tasks SET status = 'closed', stale = 1 WHERE id = 1;"
-    )
+    assert core.get(1).status == "spec"
+    core.conn.execute("UPDATE tasks SET stale = 1 WHERE id = 1;")
     t = core.reconcile(1)
     assert t.stale is False
-    assert t.status == "closed"
+    assert t.status == "spec"
 
 
-@pytest.mark.skip(
-    reason="v0.5 D35+D36: wont_do design rows migrate to status='retired' "
-    "under mig 009. Under v0.5, reconcile is refused on 'retired' (record-"
-    "only archaeology, never cleared). Phase 4 rewrites this scenario."
-)
-def test_reconcile_allowed_on_wont_do_design(core):
-    """Wont_do design rows surface too (T109 in the dogfood is exactly this).
-    Reconcile must work so they can be cleared after the upstream they
-    referenced changes again."""
+def test_reconcile_refused_on_retired_design(core):
+    """v0.5 D36 / T176: legacy wont_do design rows migrate to
+    status='retired' under mig 009. Under v0.5, reconcile is REFUSED on
+    retired -- a retired row's stale flag is record-only archaeology;
+    clearing it would erase the historical signal that an upstream
+    changed. This pins the new partition's terminal-status semantics
+    (was previously allowed under the v0.4 D28 kind-clause)."""
     core.add("d1", kind="design")
+    # Seed retired+stale via raw UPDATE (retire() verb landed in Phase 2b
+    # but this test predates it for migration-shim scenarios).
     core.conn.execute(
-        "UPDATE tasks SET status = 'wont_do', stale = 1, "
-        "wont_do_reason = 'retired' WHERE id = 1;"
+        "UPDATE tasks SET status = 'retired', stale = 1 WHERE id = 1;"
     )
-    t = core.reconcile(1)
-    assert t.stale is False
-    assert t.status == "wont_do"
+    with pytest.raises(InvariantError, match=r"record-only|archaeology|retired"):
+        core.reconcile(1)
+    # The retired+stale state is preserved.
+    t = core.get(1)
+    assert t.status == "retired" and t.stale is True
 
 
 def test_reconcile_open_design_unchanged_by_t156(core):

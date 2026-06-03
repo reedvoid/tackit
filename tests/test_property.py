@@ -5,10 +5,15 @@ at a real store and re-checks the core invariants after EVERY step, hunting for 
 interleaving that breaks one. Hypothesis shrinks any failure to a minimal repro.
 
 Invariants asserted (the always-true laws, not the close-time-only ones):
-  * stale => open                      (D7 / schema S1)
-  * version is monotonic               (D18 ordering; D20 no-op = no decrease)
-  * the dependency graph stays acyclic (D14)
-  * tackit.sql round-trips the db      (D18: dump -> rebuild reproduces state)
+  * version is monotonic                       (D18 ordering; D20 no-op = no decrease)
+  * links stored canonical + no duplicates     (T86 / D5)
+  * audit table append-only                    (D29 v0.4)
+  * kind/status partition holds                (D36 v0.5)
+  * worklist filter: status IN ('open','spec') (D36 v0.5)
+  * links() anchor excludes retired            (T180)
+  * retired is terminal forever                (D36 + T132 generalized)
+  * wont_do rows have non-null reason          (T132 + D7 v0.4)
+  * tackit.sql round-trips the db              (D18: dump -> rebuild reproduces state)
 
 Note: "a closed task never sits atop stale upstream" is deliberately NOT an
 invariant here — it holds at close time (the gate), but a transitive edit can leave
@@ -41,6 +46,14 @@ _chars = st.characters(codec="utf-8", exclude_characters="\x00")
 _names = st.text(_chars, min_size=1, max_size=12).filter(lambda s: s.strip())
 _labels = st.text(_chars, min_size=1, max_size=6).filter(lambda s: s.strip())
 _pick = st.integers(min_value=0, max_value=50)
+# D36 v0.5: kind/status partition. Sample all four kinds; the per-kind status
+# default is applied in Core.add() so the partition holds by construction.
+_kinds = st.sampled_from(("design", "schema", "production", "meta"))
+# D33 + D36 (v0.5): non-placeholder reasons for the wont_do / retire happy path.
+_RESERVED_PLACEHOLDERS = {"tbd", "todo", "obsolete", "no longer needed"}
+_reasons = st.text(_chars, min_size=1, max_size=20).filter(
+    lambda s: s.strip() and s.strip().lower() not in _RESERVED_PLACEHOLDERS
+)
 
 
 class TackitMachine(RuleBasedStateMachine):
@@ -51,6 +64,10 @@ class TackitMachine(RuleBasedStateMachine):
         self.core = Core.open(start=self.dir)
         self.ids: list[int] = []
         self.last_version = sync.get_version(self.core.conn)
+        # T176: track ids that ever reached status='retired' so the
+        # retired_terminal_no_status_change invariant can verify the row
+        # stays retired across subsequent rules (D36 + T132 generalized).
+        self._retired_ids: set[int] = set()
 
     def teardown(self):
         self.core.close_conn()
@@ -61,9 +78,12 @@ class TackitMachine(RuleBasedStateMachine):
 
     # ---- operations (rules) ----
 
-    @rule(name=_names)
-    def add(self, name):
-        t = self.core.add(name, kind="production")
+    @rule(name=_names, kind=_kinds)
+    def add(self, name, kind):
+        """T176: kind is randomized over all four. Core.add() sets the
+        partition-correct default status (spec for design/schema, open
+        otherwise) per D36."""
+        t = self.core.add(name, kind=kind)
         self.ids.append(t.id)
 
     @precondition(lambda self: self.ids)
@@ -149,6 +169,70 @@ class TackitMachine(RuleBasedStateMachine):
             # InvariantError so Hypothesis doesn't shrink to this case.)
             pass
 
+    @precondition(lambda self: self.ids)
+    @rule(i=_pick, reason=_reasons)
+    def retire(self, i, reason):
+        """T176 / D36: random retire across all ids. Refused if the row
+        isn't status='spec', isn't design/schema, is stale, has a stale
+        linked neighbor, has an open linked neighbor, or the reason is a
+        placeholder. The machine doesn't care which refusal path fires --
+        partition_holds + retired_terminal_no_status_change invariants
+        cover the post-conditions whichever branch we took."""
+        target = self._id(i)
+        try:
+            self.core.retire(target, reason=reason, delta="property test")
+        except (InvariantError, ValidationError):
+            return
+        # Success: row is now status='retired'. Track for the terminal
+        # invariant.
+        self._retired_ids.add(target)
+
+    @precondition(lambda self: self.ids)
+    @rule(i=_pick, kind=_kinds)
+    def reclassify_cross_partition(self, i, kind):
+        """T176 / D36: random reclassify, which may cross the partition
+        boundary (production/meta <-> design/schema). Core.reclassify()
+        auto-shifts status (open<->spec) when the source status has a
+        clean target; otherwise refuses. The machine catches both paths;
+        partition_holds checks the post-condition."""
+        try:
+            self.core.reclassify(
+                self._id(i), kind, delta="property test reclassify"
+            )
+        except InvariantError:
+            pass
+
+    @rule()
+    def retire_with_open_neighbor(self):
+        """T176 / D36: targeted rule -- create a fresh spec design + an
+        open production neighbor + link them, then call retire() and
+        assert refusal names the neighbor + because rationale. Validates
+        the (i)/(ii) decision-tree message bank under hypothesis-driven
+        scheduling."""
+        d = self.core.add("prop d-target", kind="design")
+        p = self.core.add("prop p-neighbor", kind="production")
+        rationale = "prop test rationale linking d to p"
+        self.core.link_add(d.id, p.id, because=rationale, delta="prop test")
+        self.ids.append(d.id)
+        self.ids.append(p.id)
+        try:
+            self.core.retire(d.id, reason="trying", delta="prop test")
+        except InvariantError as e:
+            msg = str(e)
+            assert f"T{p.id}" in msg, (
+                f"retire refusal must name open neighbor T{p.id}; got: {msg}"
+            )
+            assert rationale in msg, (
+                f"retire refusal must include the link's `because` rationale; "
+                f"got: {msg}"
+            )
+            return
+        # If retire SUCCEEDED that's wrong -- p is open and freshly linked.
+        raise AssertionError(
+            f"retire succeeded on D{d.id} despite open neighbor T{p.id}; "
+            f"open-neighbor gate (D36 step 6) failed."
+        )
+
     # ---- invariants (checked after every rule) ----
 
     @invariant()
@@ -204,19 +288,80 @@ class TackitMachine(RuleBasedStateMachine):
 
     @invariant()
     def worklist_filter_holds(self):
-        """T147 / D28 v0.4 - the stale_worklist must only contain tasks
-        where status='open' OR kind in {design, schema}. A closed/wont_do
-        production/meta task carrying stale=True is record-only and must
-        be excluded from the worklist; this catches a future regression
-        where the filter is loosened (which would re-introduce the v0.3-
-        era never-emptying-worklist problem on hub-spec edits)."""
+        """T176 / D36 v0.5 - the stale_worklist must only contain tasks
+        where status IN ('open','spec'). Closed/wont_do production/meta
+        and retired design/schema rows are record-only -- their stale
+        flag does NOT pressure the worklist. This catches a future
+        regression where the filter is loosened (which would re-
+        introduce the v0.3-era never-emptying-worklist problem on hub-
+        spec edits) OR tightened to exclude live spec (which would hide
+        legitimate obligation)."""
         for t in self.core.stale_worklist():
-            assert (
-                t.status == "open" or t.kind in ("design", "schema")
-            ), (
+            assert t.status in ("open", "spec"), (
                 f"task {t.id} (status={t.status}, kind={t.kind}) is on the "
-                f"worklist but violates D28's filter: should be excluded as "
-                f"record-only stale."
+                f"worklist but violates D36's filter: must be status IN "
+                f"('open','spec'). Closed/wont_do/retired stale is record-only."
+            )
+
+    @invariant()
+    def partition_holds(self):
+        """T176 / D36 v0.5 - the kind/status partition is the schema-level
+        CHECK that ships in Phase 1; this invariant asserts the same shape
+        at the property-machine layer so a regression in app code that
+        bypasses the CHECK (e.g. a future op that updates status without
+        re-validating) gets caught here even if the SQLite CHECK is
+        somehow disabled."""
+        rows = self.core.conn.execute(
+            "SELECT id, kind, status FROM tasks"
+        ).fetchall()
+        for r in rows:
+            kind = r["kind"]
+            status = r["status"]
+            if kind in ("production", "meta"):
+                assert status in ("open", "closed", "wont_do"), (
+                    f"task {r['id']} kind={kind} status={status} violates "
+                    f"the production/meta partition (D36 v0.5)."
+                )
+            elif kind in ("design", "schema"):
+                assert status in ("spec", "retired"), (
+                    f"task {r['id']} kind={kind} status={status} violates "
+                    f"the design/schema partition (D36 v0.5)."
+                )
+            else:
+                raise AssertionError(
+                    f"task {r['id']} has unknown kind={kind!r}; the closed "
+                    f"taxonomy is design|schema|production|meta (D26)."
+                )
+
+    @invariant()
+    def links_anchor_excludes_retired(self):
+        """T176 / T180 - the links() no-input mode returns the anchor
+        layer of LIVE design+schema slices. Retired specs must NOT
+        surface there -- they're dead decisions, not viable link targets
+        for new work. Pins the T180 anchor-query status filter."""
+        for n in self.core.links():
+            assert n.status != "retired", (
+                f"anchor task {n.id} kind={n.kind} status=retired surfaced "
+                f"from links() no-input mode; T180 anchor-query status "
+                f"filter (status IN ('open','spec')) violated."
+            )
+
+    @invariant()
+    def retired_terminal_no_status_change(self):
+        """T176 / D36 + T132 generalized - once retired, the row's status
+        is terminal forever. retire/close/wont_do/reopen all refuse on a
+        retired row, and the only state mutator that touches status
+        (_set_status, called by reopen) is fenced off. This invariant
+        catches a regression where one of the verb refusals is loosened
+        or a new verb forgets the retired-state check."""
+        for tid in self._retired_ids:
+            row = self.core.conn.execute(
+                "SELECT status FROM tasks WHERE id = ?", (tid,)
+            ).fetchone()
+            assert row is not None, f"retired task {tid} disappeared"
+            assert row["status"] == "retired", (
+                f"task {tid} was retired but status is now {row['status']!r}; "
+                f"retired is terminal forever (D36 + T132 generalized)."
             )
 
     @invariant()

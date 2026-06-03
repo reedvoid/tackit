@@ -285,6 +285,21 @@ def test_wont_do_refused_on_retired(core):
         core.wont_do(1, reason="trying", delta="trying")
 
 
+def test_reopen_on_spec_is_noop(core):
+    """v0.5 D36: reopen on a row already at its kind's live status (spec
+    for design/schema, open for production/meta) is a no-op -- the row
+    stays put, no version bump, no partition CHECK violation. Reopen()
+    used to assume the only live status was 'open', which under D36
+    would have triggered an UPDATE setting status='open' on a design
+    row -- a partition CHECK violation. The no-op guard now includes
+    'spec'. Caught by the T176 property machine."""
+    core.add("d1", kind="design")
+    assert core.get(1).status == "spec"
+    t = core.reopen(1)
+    assert t.status == "spec"  # still spec, not 'open'
+    assert core.get(1).status == "spec"
+
+
 def test_reopen_refused_on_retired_with_fresh_D_message(core):
     """Reopen on a retired row is refused; message names the 'fresh D#'
     path as the right move when the decision returns."""

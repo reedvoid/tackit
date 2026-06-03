@@ -140,6 +140,10 @@ def test_search_prefix_distinguishes_kinds(core: Core):
     # Two tasks at adjacent ids; different kinds.
     core.add("alpha bravo", kind="production")  # T1
     core.add("charlie delta", kind="design")  # D2
+    # v0.5 D36 / T176: kind/status partition defaults apply at create time
+    # -- production lands at status='open', design lands at status='spec'.
+    assert core.get(1).status == "open"
+    assert core.get(2).status == "spec"
     # T1 finds only the production task.
     t_hits = core.search("T1")
     assert [h.id for h in t_hits] == [1]

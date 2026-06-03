@@ -176,6 +176,25 @@ def test_load_is_a_single_version_bump(core):
     assert sync.get_version(core.conn) == v0 + 1  # atomic: one bump for the whole plan
 
 
+def test_load_design_and_schema_land_at_spec_status(core):
+    """v0.5 D36 / T176: bulk plan import honors the kind/status partition
+    default per row -- design/schema rows land at status='spec', not
+    'open'. Pins the parser+loader path (separate from the direct add()
+    path tested in test_kind_required) so a regression that hardcodes
+    status='open' at load time gets caught here."""
+    plan = (
+        "[d] a design slice\n  kind: design\n"
+        "[s] a schema slice\n  kind: schema\n"
+        "[p] a production task\n  kind: production\n"
+        "[m] a meta task\n  kind: meta\n"
+    )
+    keymap = core.load(parse_plan(plan))
+    assert core.get(keymap["d"]).status == "spec"
+    assert core.get(keymap["s"]).status == "spec"
+    assert core.get(keymap["p"]).status == "open"
+    assert core.get(keymap["m"]).status == "open"
+
+
 def test_load_reports_new_labels(core):  # T67 anti-sprawl summary
     core.add("seed", kind="production", labels=["existing"])
     core.last_label_nudge = None

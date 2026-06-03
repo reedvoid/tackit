@@ -220,7 +220,7 @@ def test_reconcile_refused_on_wont_do_stale_under_v04(core):
     core.link_add(2, 1, because="setup", delta="setup")
     core.wont_do(2, reason="dropped", delta="dropped")
     core.edit(1, description="x", delta="staling")
-    with pytest.raises(InvariantError, match="terminal"):
+    with pytest.raises(InvariantError, match=r"record-only|archaeology"):
         core.reconcile(2)
     t2 = core.get(2)
     assert t2.stale is True  # preserved as record
