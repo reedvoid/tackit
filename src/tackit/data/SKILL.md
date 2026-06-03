@@ -117,12 +117,37 @@ which broke down in practice when only one of several facets was invalidated.
 The v0.4+ model: edits are allowed on any status, and an append-only audit
 table preserves prior verbatim state.)
 
-| Verb     | When                                  | Partition  | Cascade? | Reversible?      |
-|----------|---------------------------------------|------------|----------|------------------|
-| `edit`   | content change on any task            | any        | **yes**  | n/a              |
-| `close`  | production/meta work shipped          | open/etc.  | no       | `reopen`         |
-| `wont_do`| production/meta work dropped          | open/etc.  | no       | terminal forever |
-| `retire` | design/schema spec 100% abandoned     | spec/retired | no     | terminal forever |
+| Verb                      | When                                       | Partition    | Cascade? | Reversible?      |
+|---------------------------|--------------------------------------------|--------------|----------|------------------|
+| `edit`                    | content change on any task (full-body)     | any          | **yes**  | n/a              |
+| `edit_append`             | T179: append `content` to description      | any          | **yes**  | n/a              |
+| `edit_replace_substring`  | T179: replace exact unique substring       | any          | **yes**  | n/a              |
+| `close`                   | production/meta work shipped               | open/etc.    | no       | `reopen`         |
+| `wont_do`                 | production/meta work dropped               | open/etc.    | no       | terminal forever |
+| `retire`                  | design/schema spec 100% abandoned          | spec/retired | no       | terminal forever |
+
+The three edit verbs (`edit`, `edit_append`, `edit_replace_substring`) are
+**operationally equivalent** — same cascade, same audit row, same D31
+reminder, same delta requirement. They differ only in how the new
+description is computed:
+
+- `edit` takes the full new `description` (use for sweeping rewrites or
+  when small-diff doesn't help — small bodies, or when you've already
+  composed the new prose in your head).
+- `edit_append(id, content, delta)` — append `content` to the description.
+  Diff-shaped: only `content` crosses the wire. Use for "Phase N finding"
+  blocks on umbrella tasks, addenda, deltas.
+- `edit_replace_substring(id, old_string, new_string, delta)` — replace
+  the exact substring `old_string` with `new_string`. Match must be
+  UNIQUE (non-unique refused loudly with the count; caller adds
+  surrounding context to disambiguate). Empty `new_string` is a deletion.
+  Use for typo fixes, phrase corrections, single-section rewrites without
+  retransmitting the whole prose.
+
+**When in doubt prefer the diff ops** — the cost difference compounds
+over a long session. The v0.5 release ate ~60k tokens per fold-back
+across 4 fold-backs because the diff ops weren't yet shipped; ship-on-pain
+is the rule that catches this.
 
 **The all-or-nothing rule** (D36, front and center): is the spec 100% gone,
 with no replacement? → `retire`. *Any* partial change — including big
@@ -669,6 +694,112 @@ failure tackit exists to prevent.
 (this section), `add()` MCP docstring + CLI help ("impl-ready granularity at
 create time"), `edit()` MCP docstring + CLI help ("Use edit for ALL partial
 changes" / "fold them back BEFORE close"), README writing-tasks walkthrough.
+
+## Ship-on-pain — don't endure friction you can fix (THE rule the others serve)
+
+**This is the most load-bearing discipline rule here. Read it twice.**
+
+If you're feeling friction right now from a deferred fix's absence — a
+workaround eating tokens (large-body edit retransmits, "drop into Python"
+bypass of MCP, repeated session restarts, manual step on the Nth iteration)
+— **the workaround itself is the forcing function**. The next task is
+already chosen for you: stop, ship the fix, then continue with the
+friction gone.
+
+**This rule OVERRIDES "finish the current bundle first."** Deferring the
+fix means paying its avoided cost on every remaining unit of the current
+work, and that compounding cost almost always exceeds the cost of pausing
+to ship. The opposite of ship-on-pain is *"I'll deal with this in v(N+1)"*
+dressed up as planning discipline — that is exactly the failure mode this
+section exists to prevent.
+
+**Why this is THE rule the other discipline rules serve.** Fold-backs, the
+granular-description discipline, the propagation principle — all assume
+ship-on-pain is operating. Without it the others are intellectualized:
+patterns you can describe at session start but don't act on under release
+pressure. A "discipline" that bends every time friction would force a hard
+call isn't a discipline; it's a slogan.
+
+### The anchoring incident (v0.5 / T179)
+
+T179 (diff-edit ops `edit_append` + `edit_replace_substring`, cuts
+large-body edit cost ~10×) was filed during v0.5 brainstorm and labeled
+"Standalone — NOT part of the v0.5 bundle" in the first line of its body.
+That phrase was load-bearing: once classed "not in this bundle" it stayed
+background-deferred regardless of leverage. It sat at `status='open'`
+through 8 release phases. Phases 4 / 6 / 7 / 8 each shipped fold-back
+findings against the *strengthened* fold-back rule that landed mid-v0.5
+— which explicitly raised the per-fold-back cost by making the
+end-of-turn report mandatory. Each fold-back round-tripped a ~57k-char
+T168 body, ~60k tokens per fold-back, paid in full. **The exact commit
+that raised the per-fold-back cost was also the moment to recognize
+T179's leverage had doubled and ship it.** Instead the higher cost was
+paid four more times. T179 shipped in ~30 minutes the moment the user
+explicitly said "this is a huge one, shouldn't have been deferred." The
+fix had been sitting at `status='open'` the entire time.
+
+### How to apply
+
+1. **Mid-build pause test.** Ask: am I executing a workaround whose cost
+   per occurrence × remaining occurrences > "stop and ship the fix"
+   cost? If yes, the next task is the fix — the workaround itself is the
+   forcing function. Don't keep absorbing the friction; the math is
+   already against you.
+
+2. **"Standalone / NOT part of this bundle" is a smell, not a category.**
+   Once you write that phrase in a task body you've classed it as
+   background-deferred. Either fold it into current work with an
+   explicit reason for *why now*, or write the explicit "defer because X"
+   reason in the body — never the passive "standalone" framing.
+
+3. **Backlog filing IS triage.** Every backlog filing decision is *also*
+   a "ship-this-release? yes/no with reason" decision, made **at filing
+   time**. Default-deferred items don't get triaged at end-of-release;
+   they become the v(N+1) honorable-mention list and silently grow. A
+   backlog row filed without a triage decision is a graveyard plot.
+
+4. **Bundles can grow** if the addition is higher-leverage than the slip
+   cost. The released-bundle scope is not a fixed contract — "adding
+   scope mid-release" is only bad when the addition is lower-leverage
+   than continuing. Otherwise it's the *cheapest* way to ship the
+   remainder. v0.5 + T179 would have shipped as v0.5; nothing about the
+   version number required deferring T179.
+
+5. **Watch for cost-raising signals on previously-deferred fixes.** When
+   you tighten a discipline rule that uses a deferred mechanism (e.g.
+   strengthening fold-backs while diff-edit ops sat unshipped), the
+   leverage of the deferred fix just rose. That moment is the
+   second-best time to promote the deferred task to active. The best
+   time was before the rule change; second-best is now.
+
+6. **Mandatory friction check on multi-phase releases.** Before
+   declaring the next phase done, ask: "is anything I'm doing right now
+   a workaround for something at `status='open'` in tackit?" If yes,
+   evaluate per (1). The release-cluster pattern hides this — finishing
+   the bundle feels productive even when the bundle is paying
+   compounding cost to skip a fix.
+
+**This discipline propagates** (per the Propagation Principle above):
+SKILL.md (this section), README "for-agents" discipline block, global
+agent guidance (`~/.claude/CLAUDE.md`), and lived in the v0.5 / T179
+fold-back as the anchoring incident. The rule is general; the surfaces
+catch the agent at every moment friction could be silently absorbed.
+
+### See also: T179 (the diff-edit ops the incident produced)
+
+`edit_append(id, content, delta)` and `edit_replace_substring(id, old, new, delta)`
+are the diff-shaped descendants of `edit()` that landed from the T179
+incident. Use them whenever you'd otherwise round-trip a large body:
+appending a "Phase N finding" block to an umbrella task, fixing a
+specific phrase in a slice without retransmitting the whole prose,
+correcting a typo in a 50k-char description. Both fire the cascade
+depth-1 and write the description_revisions audit row exactly like
+`edit()`; the diff is in how the new description is computed, not in
+what happens after. Refusal matrix: `edit_append` refuses empty /
+whitespace-only content; `edit_replace_substring` refuses empty
+`old_string`, not-found, or non-unique match (with count) — empty
+`new_string` is allowed as a deletion; `old == new` is a no-op. Both
+take the standard required `delta`.
 
 ## Always report what changed
 After you create, alter, or remove tasks, report it back — but make it **scannable**, not a

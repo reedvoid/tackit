@@ -204,6 +204,24 @@ both directions); freeform labels. Every view (board, status, narrative) is
   on fold-backs is not reassurance. See `SKILL.md` "Fold-backs" for the per-
   discovery format and the enumeration meta-lesson (grep the pattern family,
   not the verb name).
+- **Ship on pain — don't endure friction you can fix.** This is **the rule the
+  other discipline rules serve**. If you're feeling friction *right now* from a
+  deferred fix's absence — a workaround eating tokens (large-body retransmits,
+  "drop into Python" bypass, repeated session restarts, manual step on the Nth
+  iteration) — the workaround itself is the forcing function. The next task is
+  already chosen for you: stop, ship the fix, then continue with the friction
+  gone. This **overrides "finish the current bundle first"**: deferring the fix
+  means paying its avoided cost on every remaining unit of work, and that
+  compounding cost almost always exceeds the cost of pausing to ship. The
+  smell: a task body that opens with "Standalone — NOT part of the current
+  bundle" is classed background-deferred regardless of leverage. Either fold
+  it into current work with a reason, or write the explicit "defer because X"
+  reason — never passive. Backlog filing is *also* a "ship-this-release? yes/no
+  with reason" decision made **at filing time**; default-deferred items become
+  graveyard plots. The v0.5 release ate ~60k tokens × 4 fold-backs absorbing
+  the cost the `edit_append` / `edit_replace_substring` ops would have cut ~10×
+  — that fix sat at `status='open'` the entire time. See `SKILL.md`
+  "Ship-on-pain" for the full anchoring incident and the six application rules.
 
 ### v0.5 highlights
 
@@ -393,9 +411,14 @@ tackit mcp     # serve the stdio MCP server (the agent's primary door)
 The agent's primary door is the MCP server: the harness pushes typed tool schemas
 into the agent's tool zone (no `--help` round-trip, no shell quoting, can't
 hallucinate a flag that doesn't exist). Tool names are the bare verbs — `add`,
-`show`, `search`, `edit`, `close`, `reopen`, `reconcile`, `wont_do`, `retire`,
-`reclassify`, `link_add`, `link_rm`, `label_add`, `label_rm`, `ls`, `board`,
-`stale`, `labels`, `render`, `history`, `load`. Input schemas are generated
+`show`, `search`, `edit`, `edit_append`, `edit_replace_substring`, `close`,
+`reopen`, `reconcile`, `wont_do`, `retire`, `reclassify`, `link_add`,
+`link_rm`, `label_add`, `label_rm`, `ls`, `board`, `stale`, `labels`,
+`render`, `history`, `load`. (T179: the two `edit_*` ops are diff-shaped
+variants of `edit` — only the snippet or the `(old, new)` pair crosses the
+wire — designed for the "append a Phase N finding" / "fix one phrase"
+patterns that otherwise round-trip a large body. Same cascade, same audit
+row, same delta requirement.) Input schemas are generated
 from the Python type hints, so they can't drift from the real interface. Every
 result is wrapped as `{stale_alert, label_nudge, delta, code_check_reminder,
 result}` so the outstanding stale set + per-op nudges ride along on every call;

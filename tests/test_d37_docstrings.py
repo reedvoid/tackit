@@ -203,6 +203,73 @@ def test_skill_md_contains_foldback_discipline_section():
     )
 
 
+def test_skill_md_contains_ship_on_pain_section():
+    """The canonical SKILL.md (src/tackit/data/SKILL.md) carries the
+    ship-on-pain discipline section. T179 / T182.
+
+    Ship-on-pain is THE rule the other discipline rules serve: when
+    friction NOW > cost of pausing to ship the fix, the workaround IS the
+    forcing function. Without this rule, fold-backs / granular-description
+    / propagation become slogans. The pin asserts the section heading,
+    the overrides-bundle-first principle (so a "soften it" edit fails
+    here), and the anchoring incident reference (so the lesson can't be
+    sanitized out of the prose).
+    """
+    import pathlib
+    skill = (
+        pathlib.Path(__file__).resolve().parent.parent
+        / "src" / "tackit" / "data" / "SKILL.md"
+    )
+    text = skill.read_text()
+    # Top-level section exists.
+    assert "## Ship-on-pain" in text, (
+        "SKILL.md must carry a top-level `## Ship-on-pain` section. The "
+        "rule is the most load-bearing discipline in the file -- without "
+        "ship-on-pain, the other rules (fold-backs, granular-description, "
+        "propagation) are intellectualized patterns that bend under release "
+        "pressure. The section heading is what an agent greps for."
+    )
+    # The overrides-bundle-first principle is present.
+    assert "OVERRIDES" in text and "finish the current bundle first" in text, (
+        "SKILL.md must state explicitly that ship-on-pain OVERRIDES "
+        "'finish the current bundle first' -- this is the load-bearing "
+        "tension the rule resolves. A softer phrasing returns the "
+        "discipline to advisory status."
+    )
+    # The T179 anchoring incident is referenced.
+    assert "T179" in text and "Standalone" in text, (
+        "SKILL.md must reference the T179 anchoring incident (the diff-edit "
+        "ops that sat at status='open' through 8 release phases) and the "
+        "'Standalone -- NOT part of the current bundle' smell pattern. The "
+        "incident is what makes the rule actionable; without it the rule "
+        "reads as a slogan."
+    )
+
+
+def test_skill_md_verb_taxonomy_mentions_diff_edit_ops():
+    """The verb taxonomy section in canonical SKILL.md mentions both T179
+    diff-shaped edit ops (edit_append + edit_replace_substring). Pins the
+    follow-up that T179's own body flagged for a separate task. Without
+    the mention, agents reading the verb taxonomy at session start won't
+    know the diff ops exist and will default to full-body edit() forever.
+    """
+    import pathlib
+    skill = (
+        pathlib.Path(__file__).resolve().parent.parent
+        / "src" / "tackit" / "data" / "SKILL.md"
+    )
+    text = skill.read_text()
+    assert "edit_append" in text, (
+        "SKILL.md verb taxonomy / discipline sections must mention "
+        "edit_append (T179). It is operationally equivalent to edit() but "
+        "diff-shaped; agents need to know it exists."
+    )
+    assert "edit_replace_substring" in text, (
+        "SKILL.md verb taxonomy / discipline sections must mention "
+        "edit_replace_substring (T179) with its unique-match contract."
+    )
+
+
 def test_skill_md_dev_copies_match_canonical():
     """The canonical SKILL.md (src/tackit/data/SKILL.md, ships in the
     package) and the dev copies (.claude/skills/tackit/SKILL.md, .agents/
