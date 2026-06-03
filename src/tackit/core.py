@@ -154,18 +154,26 @@ def stale_alert_text(stale_tasks: list[Task]) -> str:
     )
 
 
-def stale_alert_payload(stale_tasks: list[Task]) -> dict | None:
+def stale_alert_payload(stale_tasks: list[Task], short: bool = False) -> dict | None:
     """Structured form of the stale alert for the MCP result envelope; None when
-    nothing is stale. Carries the same wording as :func:`stale_alert_text`."""
+    nothing is stale. Carries the same wording as :func:`stale_alert_text` by
+    default; when ``short=True``, emits a compact one-line message instead
+    (M181 #8b — cuts ~2k tokens per call on browse-heavy sessions; reads use
+    this, writes keep the full obligation paragraph as the at-cost teaching
+    moment). ``count`` and ``stale_task_ids`` are unchanged either way."""
     if not stale_tasks:
         return None
     ids = []
     for t in stale_tasks:
         ids.append(t.id)
+    if short:
+        message = f"⚠ {len(stale_tasks)} stale — see `stale` for the list."
+    else:
+        message = stale_alert_text(stale_tasks)
     return {
         "count": len(stale_tasks),
         "stale_task_ids": ids,
-        "message": stale_alert_text(stale_tasks),
+        "message": message,
     }
 
 

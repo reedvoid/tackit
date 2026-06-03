@@ -29,15 +29,19 @@ def _core():
         core.close_conn()
 
 
-def _wrap(core: Core, result):
+def _wrap(core: Core, result, short_alert: bool = False):
     """D19 - envelope every tool result as ``{"stale_alert": ..., "result": ...}`` so
     the built-in stale check surfaces in MCP exactly as it does on the CLI (design.md
     "Enforcement" tier 2). ``stale_alert`` is None when nothing is stale; otherwise it
     carries the count, the stale task ids, and the strongly-worded obligation
     message. Reflects post-op state, so a tool that creates new stale tasks (e.g.
-    ``edit``) returns them right here in the same result."""
+    ``edit``) returns them right here in the same result.
+
+    M181 #8b: read ops pass ``short_alert=True`` so the message is a compact
+    one-liner ("⚠ N stale — see `stale` for the list"); writes keep the full
+    obligation paragraph as the at-cost teaching moment."""
     return {
-        "stale_alert": stale_alert_payload(core.stale_worklist()),
+        "stale_alert": stale_alert_payload(core.stale_worklist(), short=short_alert),
         "label_nudge": core.last_label_nudge,  # D23: set iff a new label was created
         "delta": core.last_delta,  # T117: set iff a delta-bearing op just ran
         # D31 (v0.4): set iff an edit just landed on a design/schema slice.
@@ -88,7 +92,7 @@ def build_server() -> FastMCP:
     def show(id: int) -> dict:
         """Slice fetch (D9): a task plus its dependencies, dependents, and labels."""
         with _core() as c:
-            return _wrap(c, c.show(id).model_dump(mode="json"))
+            return _wrap(c, c.show(id).model_dump(mode="json"), short_alert=True)
 
     @mcp.tool()
     def search(terms: str, limit: int = 20) -> dict:
@@ -98,7 +102,7 @@ def build_server() -> FastMCP:
             hits = []
             for h in c.search(terms, limit=limit):
                 hits.append(h.model_dump(mode="json"))
-            return _wrap(c, hits)
+            return _wrap(c, hits, short_alert=True)
 
     @mcp.tool()
     def edit(id: int, delta: str, name: str | None = None, description: str | None = None) -> dict:
@@ -362,7 +366,7 @@ def build_server() -> FastMCP:
             tasks = []
             for t in c.ls(status=status, label=label, stale=stale_filter):
                 tasks.append(t.model_dump(mode="json"))
-            return _wrap(c, tasks)
+            return _wrap(c, tasks, short_alert=True)
 
     @mcp.tool()
     def stale() -> dict:
@@ -371,7 +375,7 @@ def build_server() -> FastMCP:
             tasks = []
             for t in c.stale_worklist():
                 tasks.append(t.model_dump(mode="json"))
-            return _wrap(c, tasks)
+            return _wrap(c, tasks, short_alert=True)
 
     @mcp.tool()
     def labels() -> dict:
@@ -382,13 +386,13 @@ def build_server() -> FastMCP:
             out = []
             for i in c.labels_summary():
                 out.append(i.model_dump(mode="json"))
-            return _wrap(c, out)
+            return _wrap(c, out, short_alert=True)
 
     @mcp.tool()
     def render(label: str) -> dict:
         """Render the tasks under a label into one markdown narrative (D16)."""
         with _core() as c:
-            return _wrap(c, c.render(label))
+            return _wrap(c, c.render(label), short_alert=True)
 
     @mcp.tool()
     def history(id: int) -> dict:
@@ -398,7 +402,7 @@ def build_server() -> FastMCP:
         plus the delta rationale, so archaeology can recover what the task
         used to say -- the backstop for edit-on-closed under v0.4."""
         with _core() as c:
-            return _wrap(c, c.history(id).model_dump(mode="json"))
+            return _wrap(c, c.history(id).model_dump(mode="json"), short_alert=True)
 
     @mcp.tool()
     def load(plan: str) -> dict:
@@ -425,7 +429,7 @@ def build_server() -> FastMCP:
             cards = []
             for t in c.ls(status=status, label=label, stale=stale_filter):
                 cards.append(c.show(t.id).model_dump(mode="json"))
-            return _wrap(c, cards)
+            return _wrap(c, cards, short_alert=True)
 
     return mcp
 

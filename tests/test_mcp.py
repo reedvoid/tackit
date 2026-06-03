@@ -268,3 +268,75 @@ def test_mcp_labels(tmp_path, monkeypatch):
     assert "core" in names and "docs" in names
     core_info = next(l for l in env["result"] if l["label"] == "core")
     assert core_info["count"] == 2 and len(core_info["samples"]) >= 1
+
+
+def _setup_stale_scenario(s):
+    """Helper for M181 #8b tests: produce a system with exactly one stale
+    task. Add two production tasks, link them, edit one -> the other goes
+    stale. Returns nothing; caller drives the read or write under test."""
+    return [
+        s.call_tool("add", {"name": "a", "kind": "production"}),
+        s.call_tool("add", {"name": "b", "kind": "production"}),
+        s.call_tool("link_add", {
+            "a": 1, "b": 2,
+            "because": "test fixture coupling",
+            "delta": "test fixture wire",
+        }),
+        s.call_tool("edit", {
+            "id": 1,
+            "delta": "test fixture edit to stale neighbor b",
+            "description": "edited body",
+        }),
+    ]
+
+
+def test_mcp_stale_alert_short_form_on_reads(tmp_path, monkeypatch):
+    """M181 #8b: read MCP ops emit a SHORT stale_alert message instead of
+    the strongly-worded obligation paragraph. `count` and `stale_task_ids`
+    are unchanged. Cuts envelope size ~10× on browse-heavy sessions while
+    preserving the signal (caller can `stale()` for the full list when
+    they want to act).
+    """
+    async def scenario(s):
+        for coro in _setup_stale_scenario(s):
+            await coro
+        return await s.call_tool("show", {"id": 1})
+
+    env = _envelope(_drive(tmp_path, monkeypatch, scenario))
+    assert env["stale_alert"] is not None
+    msg = env["stale_alert"]["message"]
+    assert "⚠" in msg and "see `stale` for the list" in msg, (
+        f"Read op `show` must emit the short stale_alert form per M181 #8b "
+        f"(M181 #8b: cuts ~2k tokens/call on browse-heavy sessions); got: "
+        f"{msg!r}"
+    )
+    assert "STALE TASKS OUTSTANDING" not in msg, (
+        "Read op must NOT emit the verbose long-form alert -- the "
+        "teaching moment is at-write, not at-browse."
+    )
+    assert env["stale_alert"]["count"] == 1
+    assert env["stale_alert"]["stale_task_ids"] == [2]
+
+
+def test_mcp_stale_alert_full_form_on_writes(tmp_path, monkeypatch):
+    """M181 #8b: write MCP ops emit the FULL strongly-worded stale_alert
+    paragraph -- the at-cost teaching moment is preserved. Without this,
+    the discipline rule ("never end a turn with worklist non-empty")
+    loses its teeth at exactly the moment it's supposed to fire.
+    """
+    async def scenario(s):
+        for coro in _setup_stale_scenario(s):
+            await coro
+        # Add another task -- write op -- envelope should carry full alert.
+        return await s.call_tool("add", {"name": "c", "kind": "production"})
+
+    env = _envelope(_drive(tmp_path, monkeypatch, scenario))
+    assert env["stale_alert"] is not None
+    msg = env["stale_alert"]["message"]
+    assert "STALE TASKS OUTSTANDING" in msg, (
+        f"Write op `add` must emit the FULL stale_alert form per M181 #8b. "
+        f"The discipline pressure ('never end a turn with worklist non-empty') "
+        f"belongs at the at-cost moment; got: {msg!r}"
+    )
+    assert env["stale_alert"]["count"] == 1
+    assert env["stale_alert"]["stale_task_ids"] == [2]
