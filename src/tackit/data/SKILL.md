@@ -305,6 +305,69 @@ already-closed under v0.4 and stayed put (record-only stale acceptable);
 a couple linked to the D29 audit-table slice via fresh `link_add` since
 that was the live replacement.
 
+## Edits aren't free — the edit-quality discipline (FORCEFUL, not optional)
+
+**This section is FORCEFUL.** Read it as a contract.
+
+Every edit verb (`edit`, `edit_append`, `edit_replace_substring`) fires the
+staling cascade depth-1 on the task's linked neighbors. Neighbors with
+`status IN ('open', 'spec')` land on the obligation worklist; closed /
+wont_do / retired neighbors carry the flag as record-only archaeology
+(D28+D36) but do not appear on the worklist. **The worklist must be
+cleared before any `close()` or `wont_do()` is allowed** (the close-gate).
+This is the mechanism — there is no way to edit without incurring this
+cost, on this surface, across the project.
+
+**The rule:** every edit must be consequential and necessary. The `delta`
+you write at edit time must name a real semantic shift — a corrected
+fact, a refined contract, a fold-back finding, a stale reference now
+updated — not a "while I'm here" tweak. **Only create deltas that
+actually and necessarily have a substantive impact on the task and the
+overall project.** If you can't articulate what the edit changes that
+matters downstream, **do not make the edit.**
+
+**Anti-patterns this discipline forbids:**
+
+- **Cosmetic polish** — rewording for tone or flow when the meaning is
+  unchanged. Aesthetic preference is not a delta.
+- **"While I'm here" cleanup** — fixing a phrasing you noticed mid-task
+  that wasn't the task. File a separate task if it's worth doing; do not
+  fold it into the current edit.
+- **Stylistic alignment** — reshaping a body to match a neighbor's
+  structure when the content is already correct.
+- **Defensive elaboration** — adding a clarification "just in case a
+  reader misreads," with no actual misreading observed.
+- **Empty / vague deltas** — `delta="small fix"` / `"updated for clarity"`
+  / `"prose alignment"` tells the reconciler nothing. The cascade cost is
+  the same; the signal that lets the reader FAST-filter is gone. The
+  reader then either rubber-stamps or opens the full task; neither is
+  what the discipline is for.
+
+**Why this matters (the failure mode):** every low-quality edit grows
+the worklist by N (its link count). Volume pressures bulk-reconciling.
+Bulk-reconciling erodes per-row review. The honor-system filter
+(`delta × because`) becomes a rubber stamp. The cascade then fires
+correctly on a future *substantive* edit and gets reconciled away with
+the same rubber stamp. The discipline that catches genuine drift dies
+by being trained on noise. **The cascade is only as useful as the
+signal you feed it.**
+
+**What IS allowed (and required when applicable):**
+
+- Substantive content changes — corrected facts, refined contracts,
+  framing shifts, fold-back findings from implementation discoveries.
+- Stale reference fixes — a closed / retired id needs updating, a
+  task name changed, a file path moved. The reference matters; fix it.
+- Typo fixes ONLY if the wrong character genuinely impedes meaning.
+  `teh` → `the` is fine; a number digit wrong in a SQL recipe is fine;
+  swapping a synonym for stylistic preference is not.
+
+**The test before you edit:** "What would a downstream reader,
+FAST-filtering this stale flag against the link's `because`, learn
+that justifies the cost of opening their task to review?" If the
+answer is "nothing meaningful" — close the editor. The edit is not
+worth its cascade.
+
 ## The reconciliation discipline (the core of using tackit well)
 tackit tracks not just tasks but whether they're still in sync after changes.
 **The app checks for stale tasks itself, on every single call, and puts the

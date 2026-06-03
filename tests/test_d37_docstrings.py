@@ -304,6 +304,59 @@ def test_skill_md_contains_logical_boundaries_signal():
     )
 
 
+def test_skill_md_contains_edit_quality_discipline():
+    """The canonical SKILL.md carries a forceful edit-quality discipline
+    section. Every edit verb fires the cascade depth-1; the cost lands
+    on neighbors and pressures the close-gate. Agents need to know
+    edits aren't free at session-start context load, before they reach
+    for edit / edit_append / edit_replace_substring.
+
+    Surfaced 2026-06-03 from M181 Issue #2 discussion: the proposed
+    `prose_only=True` mechanism failed under scrutiny (no honest
+    "wording-only" edit category exists -- if you bothered to edit, the
+    reason is the cascade signal). Real fix: edits must be substantive
+    and necessary; low-quality edits train the cascade discipline into
+    rubber-stamping.
+
+    Pins: the "Edits aren't free" section heading + the "substantive
+    impact" rule phrase + the "consequential and necessary" framing +
+    the "trained on noise" failure-mode wording. The discipline
+    matters more than the exact phrasing, but a future edit that
+    softens or drops the load-bearing phrases fails here.
+    """
+    import pathlib
+    skill = (
+        pathlib.Path(__file__).resolve().parent.parent
+        / "src" / "tackit" / "data" / "SKILL.md"
+    )
+    text = skill.read_text()
+    assert "## Edits aren't free" in text, (
+        "SKILL.md must carry a top-level `## Edits aren't free` section. "
+        "The heading is the agent-greppable anchor and the load-bearing "
+        "framing -- without it, the rule reads as 'edit carefully' which "
+        "is advisory; with it, the rule names the actual cost (every "
+        "edit fires the cascade)."
+    )
+    assert "consequential and necessary" in text, (
+        "SKILL.md must carry the 'consequential and necessary' rule "
+        "phrase verbatim -- it is the agent-facing two-word test for "
+        "whether an edit is worth its cascade cost."
+    )
+    assert "substantive impact" in text, (
+        "SKILL.md must carry the 'substantive impact' phrase verbatim "
+        "in the delta-quality rule. This is the user's specific "
+        "wording from the 2026-06-03 discussion; it pairs with "
+        "'consequential and necessary' to bound delta-write discipline."
+    )
+    assert "trained on noise" in text, (
+        "SKILL.md must carry the 'trained on noise' failure-mode "
+        "phrase. It names what the discipline is preventing: the "
+        "FAST-filter (delta x because) becoming a rubber stamp because "
+        "the cascade has been firing on low-quality edits, so genuine "
+        "drift gets reconciled away with the same rubber stamp."
+    )
+
+
 def test_skill_md_dev_copies_match_canonical():
     """The canonical SKILL.md (src/tackit/data/SKILL.md, ships in the
     package) and the dev copies (.claude/skills/tackit/SKILL.md, .agents/
