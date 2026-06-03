@@ -1409,13 +1409,17 @@ class Core:
         label: str | None = None,
         stale: bool | None = None,
     ) -> list[Task]:
-        """D15 + T157 - list/filter tasks by status, label, and/or stale. The
-        work queue and any board are *queries over the fields*, not maintained
-        lists. Status filter accepts the full v0.4 set (open, closed, wont_do)
-        per D7's three-status taxonomy."""
-        if status is not None and status not in ("open", "closed", "wont_do"):
+        """D15 + T157 + D36 (v0.5) - list/filter tasks by status, label, and/
+        or stale. The work queue and any board are *queries over the fields*,
+        not maintained lists. Status filter accepts the full v0.5 set
+        (open, closed, wont_do for production/meta; spec, retired for
+        design/schema) per D7+D36's five-status partitioned taxonomy."""
+        if status is not None and status not in (
+            "open", "closed", "wont_do", "spec", "retired"
+        ):
             raise ValidationError(
-                "status filter must be 'open', 'closed', or 'wont_do' (D7 v0.4)."
+                "status filter must be one of open, closed, wont_do (production/"
+                "meta) or spec, retired (design/schema) per D7 + D36 v0.5."
             )
         clauses, params = [], []
         join = ""

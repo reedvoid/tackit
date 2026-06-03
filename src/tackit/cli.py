@@ -276,6 +276,20 @@ def _cmd_wont_do(args) -> int:
     return 0
 
 
+def _cmd_retire(args) -> int:
+    with _core_session() as core:
+        result = core.retire(args.id, reason=args.reason, delta=args.delta)
+        text = [
+            f"retired " + _fmt_task(result.task),
+            f"  reason: {result.task.wont_do_reason}",
+            "  review obligations (one hop):",
+        ]
+        text += _fmt_neighbors("depends on", result.dependencies)
+        text += _fmt_neighbors("depended on by", result.dependents)
+        _emit("\n".join(text), _dump(result), args.json)
+    return 0
+
+
 def _cmd_reopen(args) -> int:
     with _core_session() as core:
         t = core.reopen(args.id)
@@ -491,13 +505,27 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="command", required=True)
 
     def add(name, handler, help_text, parents=(common,)):
-        sp = sub.add_parser(name, help=help_text, parents=list(parents))
+        # Pass help_text as BOTH the short help (shown in parent --help) AND
+        # the subcommand's description (shown by `tackit <name> --help`).
+        # Without description=, the subcommand-level --help drops the prose.
+        sp = sub.add_parser(
+            name, help=help_text, description=help_text, parents=list(parents)
+        )
         sp.set_defaults(func=handler)
         return sp
 
     add("init", _cmd_init, "create DB/schema + gitignore the .db (D1)")
 
-    sp = add("add", _cmd_add, "create a task (D3)")
+    sp = add(
+        "add",
+        _cmd_add,
+        "create a task (D3 + D36 + D37). Status defaults to 'spec' for "
+        "design/schema, 'open' for production/meta. Aim for impl-ready "
+        "granularity: a fresh-session agent should be able to implement "
+        "the task from its description alone -- avoid vague verbs, "
+        "conversation references, TBD/TODO placeholders, pointer-only "
+        "bodies.",
+    )
     sp.add_argument("name")
     sp.add_argument(
         "--kind",
@@ -527,7 +555,16 @@ def build_parser() -> argparse.ArgumentParser:
     sp = add("show", _cmd_show, "slice fetch: task + deps + dependents + labels (D9)")
     sp.add_argument("id", type=int)
 
-    sp = add("edit", _cmd_edit, "change a task -> stale its dependents (D13/D10)")
+    sp = add(
+        "edit",
+        _cmd_edit,
+        "change a task -> stale its dependents (D13/D10 + D36 + D37). Use "
+        "edit for ALL partial changes including major rewrites. If a design/"
+        "schema slice's premise is 100% gone, use retire() instead. If impl "
+        "reveals under-defined details, edit() is the mechanism to fold "
+        "them back BEFORE close -- closing with an out-of-date description "
+        "destroys granularity for future readers.",
+    )
     sp.add_argument("id", type=int)
     sp.add_argument("--name")
     sp.add_argument("--desc")
@@ -540,16 +577,30 @@ def build_parser() -> argparse.ArgumentParser:
         "the bytes.",
     )
 
-    sp = add("close", _cmd_close, "close (refused if stale) + print neighbors (D12/D14)")
+    sp = add(
+        "close",
+        _cmd_close,
+        "close (refused if stale or status='spec') + print neighbors "
+        "(D12 / D14 / D36). For production+meta only. Use edit() to refine "
+        "a design/schema decision; retire() if 100% abandoned.",
+    )
     sp.add_argument("id", type=int)
 
-    sp = add("reopen", _cmd_reopen, "closed -> open, logged (D7/D8); refused on wont_do (T132)")
+    sp = add(
+        "reopen",
+        _cmd_reopen,
+        "closed -> open, logged (D7/D8). Refused on wont_do (T132) and "
+        "retired (D36) -- both terminal forever; file a fresh D# if the "
+        "decision returned.",
+    )
     sp.add_argument("id", type=int)
 
     sp = add(
         "wont-do",
         _cmd_wont_do,
-        "mark task as decided-not-to-do; locked forever, distinct from closed (T132)",
+        "mark task as decided-not-to-do; locked forever, distinct from "
+        "closed (T132). For production+meta only -- design/schema use "
+        "retire() (D36).",
     )
     sp.add_argument("id", type=int)
     sp.add_argument(
@@ -563,7 +614,35 @@ def build_parser() -> argparse.ArgumentParser:
         help="one-sentence semantic-change description (T117)",
     )
 
-    sp = add("reconcile", _cmd_reconcile, "clear stale without changing (reviewed-OK, D11)")
+    sp = add(
+        "retire",
+        _cmd_retire,
+        "retire a design/schema slice: spec -> retired (D36). Use ONLY when "
+        "the decision is 100% gone with NO replacement -- partial changes "
+        "use edit(). Refused on open neighbors (resolve via link_rm + "
+        "wont_do or link_rm alone first).",
+    )
+    sp.add_argument("id", type=int)
+    sp.add_argument(
+        "--reason",
+        required=True,
+        help="durable rationale for retiring this decision (persists "
+        "forever). Placeholders (empty / 'TBD' / 'TODO' / 'obsolete' / "
+        "'no longer needed') refused per D33 extension.",
+    )
+    sp.add_argument(
+        "--delta",
+        required=True,
+        help="one-sentence semantic-change description (T117)",
+    )
+
+    sp = add(
+        "reconcile",
+        _cmd_reconcile,
+        "clear stale without changing (reviewed-OK, D11). Refused on "
+        "status IN ('closed','wont_do','retired') -- stale on these is "
+        "record-only archaeology (D28 + D36).",
+    )
     sp.add_argument("id", type=int)
 
     sp = add(
@@ -584,7 +663,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="one-sentence semantic-change description (T117 / T124)",
     )
 
-    sp = add("link", _cmd_link, "add/remove a symmetric link (D5)")
+    sp = add(
+        "link",
+        _cmd_link,
+        "add/remove a symmetric link (D5). link add refused if either "
+        "endpoint has status='retired' (D36): retired specs accept no new "
+        "edges.",
+    )
     link_sub = sp.add_subparsers(dest="link_action", required=True)
     for act in ("add", "rm"):
         lsp = link_sub.add_parser(act, parents=[common])
@@ -614,7 +699,7 @@ def build_parser() -> argparse.ArgumentParser:
         lsp.set_defaults(func=_cmd_label)
 
     sp = add("ls", _cmd_ls, "query/board: filter by status/label/stale (D15)")
-    sp.add_argument("--status", choices=["open", "closed", "wont_do"])
+    sp.add_argument("--status", choices=["open", "closed", "wont_do", "spec", "retired"])
     sp.add_argument("--label")
     sp.add_argument("--stale", action="store_true", help="only stale tasks")
 
@@ -623,7 +708,7 @@ def build_parser() -> argparse.ArgumentParser:
     add("labels", _cmd_labels, "list all labels with usage: count + sample tasks (D21)")
 
     sp = add("board", _cmd_board, "rich board view (open/label/stale) with dependency edges (D22)")
-    sp.add_argument("--status", choices=["open", "closed", "wont_do"])
+    sp.add_argument("--status", choices=["open", "closed", "wont_do", "spec", "retired"])
     sp.add_argument("--label")
     sp.add_argument("--stale", action="store_true", help="only stale tasks")
 

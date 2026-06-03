@@ -92,6 +92,25 @@ def test_cli_close_clean_succeeds(cli):
     assert main(["close", "1"]) == 0
 
 
+def test_cli_retire_clean_succeeds(cli, capsys):
+    """T175 Phase 3: `tackit retire` subcommand reaches Core.retire() end-
+    to-end, status spec->retired."""
+    main(["add", "d1 living spec", "--kind", "design"])
+    capsys.readouterr()  # flush prior output
+    exit_code = main([
+        "retire", "1",
+        "--reason", "premise replaced by D99",
+        "--delta", "retiring D1",
+    ])
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "retired" in out.lower()
+    # verify state
+    main(["show", "1", "--json"])
+    show_out = capsys.readouterr().out
+    assert '"status": "retired"' in show_out
+
+
 def test_cli_not_found_exit_1(cli, capsys):
     assert main(["show", "999"]) == 1
     assert "tackit:" in capsys.readouterr().err

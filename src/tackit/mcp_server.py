@@ -57,18 +57,29 @@ def build_server() -> FastMCP:
         labels: list[str] | None = None,
         deps: dict[int, str] | None = None,
     ) -> dict:
-        """Create a task (D3 + T94 + D33). ``kind`` is REQUIRED -- one of
-        design | schema | production | meta (D26). Classify by the 'alters
-        running-app behavior' rule: design = a decision slice, schema = the
-        store's shape, production = changes the app's behavior (source, tests
-        that pin contracts, README/SKILL), meta = bookkeeping / release tracking
-        / experiments. The kind boundary bounds the cascade (D26 meta-island);
-        a stray choice silently corrupts cascade reach, so refuse missing/invalid
-        loudly via D2. Optionally attach labels (D4) and symmetric links via
-        ``deps``: under D33 / T164 (v0.4) each entry is ``{dep_id: because}``
-        where ``because`` is the per-edge one-sentence coupling rationale
-        (placeholder/empty rationales are refused). Returns the new task's
-        slice plus any ``stale_alert``."""
+        """Create a task (D3 + T94 + D33 + D36 + D37). ``kind`` is REQUIRED --
+        one of design | schema | production | meta (D26). Classify by the
+        'alters running-app behavior' rule: design = a decision slice, schema
+        = the store's shape, production = changes the app's behavior (source,
+        tests that pin contracts, README/SKILL), meta = bookkeeping / release
+        tracking / experiments. The kind boundary bounds the cascade (D26
+        meta-island); a stray choice silently corrupts cascade reach, so
+        refuse missing/invalid loudly via D2.
+
+        Defaults status to 'spec' for design/schema, 'open' for production/
+        meta (D36 partition rule). Optionally attach labels (D4) and
+        symmetric links via ``deps``: under D33 / T164 each entry is
+        ``{dep_id: because}`` where ``because`` is the per-edge one-sentence
+        coupling rationale (placeholder/empty rationales are refused).
+
+        D37 -- granular-description discipline: aim for impl-ready
+        granularity at create time. A fresh-session agent should be able to
+        implement the task from its description alone -- avoid vague verbs,
+        conversation references, TBD/TODO placeholders, pointer-only bodies.
+        If a task feels too small to describe in concrete terms, it likely
+        belongs as a sub-step inside a larger named unit of work.
+
+        Returns the new task's slice plus any ``stale_alert``."""
         with _core() as c:
             t = c.add(name, kind=kind, description=description, labels=labels, deps=deps)
             return _wrap(c, c.show(t.id).model_dump(mode="json"))
@@ -91,23 +102,42 @@ def build_server() -> FastMCP:
 
     @mcp.tool()
     def edit(id: int, delta: str, name: str | None = None, description: str | None = None) -> dict:
-        """Edit a task (D13) + T117. First marks its direct linked tasks stale
-        (D10); returns the task plus the now-stale set you must review.
+        """Edit a task (D13 + T117 + D29 + D36 + D37). First marks its direct
+        linked tasks stale (D10); returns the task plus the now-stale set you
+        must review.
 
         Required ``delta`` -- one short sentence describing what changed
         semantically. The reconciler compares this against each stale link's
         `because` rationale to filter relevance, so write it for future-you:
         "shifted D5 from directed to symmetric link" beats "updated the task
         to reflect the new design." Auto-diff is worthless here -- the agent
-        already knows what it did."""
+        already knows what it did.
+
+        Use edit for ALL partial changes including major rewrites. If a
+        design/schema slice's premise is 100% gone with no replacement, use
+        retire() instead (D36 all-or-nothing rule). The audit table (D29)
+        preserves the verbatim prior name + description + delta, so editing
+        in place is recoverable.
+
+        D37 -- granular-description discipline: if impl reveals under-defined
+        details, edit() is the mechanism to fold them back BEFORE close.
+        Closing with an out-of-date description destroys granularity for
+        future readers. Edit is allowed on any status (open/spec/closed/
+        wont_do/retired); the wont_do_reason field on wont_do/retired rows
+        is the only frozen part."""
         with _core() as c:
             return _wrap(c, c.edit(id, delta=delta, name=name, description=description).model_dump(mode="json"))
 
     @mcp.tool()
     def close(id: int) -> dict:
-        """Close a task (D12). REFUSED if the task is stale, or if it transitively
-        depends on a stale task (reconcile that upstream first, D14). On success
-        returns the task's dependencies and dependents to review."""
+        """Close a task (D12 + D14 + D36). For PRODUCTION + META tasks only.
+        REFUSED if the task is stale, or if it transitively depends on a
+        stale task (reconcile that upstream first, D14). REFUSED if
+        status='spec' -- design/schema slices are living spec, not work
+        items. Use edit() to refine a decision; retire() if 100% abandoned
+        with no replacement (D36). REFUSED on wont_do / retired (no double-
+        decide). On success returns the task's dependencies and dependents
+        to review."""
         with _core() as c:
             return _wrap(c, c.close(id).model_dump(mode="json"))
 
@@ -115,41 +145,86 @@ def build_server() -> FastMCP:
     def reopen(id: int) -> dict:
         """Move a closed task back to open (D7/D8, logged). REFUSED on
         wont_do tasks (T132: terminal forever; change-of-mind path is a
-        fresh task with the new direction)."""
+        fresh task with the new direction). REFUSED on retired (D36: same
+        terminal rationale -- file a fresh D# if the decision returned)."""
         with _core() as c:
             return _wrap(c, c.reopen(id).model_dump(mode="json"))
 
     @mcp.tool()
     def wont_do(id: int, reason: str, delta: str) -> dict:
         """Mark a task as decided-not-to-do, distinct from closed=done (T132).
-        ``reason`` is durable (persists forever in wont_do_reason);
-        ``delta`` is ephemeral per T117. Locked-forever per T132: reopen /
-        close / wont_do refused on wont_do tasks (change-of-mind path is a
-        fresh task with the new direction). REFUSED if task is stale or in
-        a linked-stale neighborhood (D14 close-gate). REFUSED on already-
-        wont_do or closed tasks (no double-decide). Does not fire the
-        staling cascade -- returns one-hop neighbors for migrate-or-stay
-        review like close."""
+        For PRODUCTION + META tasks only. ``reason`` is durable (persists
+        forever in wont_do_reason); ``delta`` is ephemeral per T117.
+
+        Locked-forever per T132: reopen / close / wont_do refused on wont_do
+        tasks (change-of-mind path is a fresh task with the new direction).
+        REFUSED if task is stale or in a linked-stale neighborhood (D14
+        close-gate). REFUSED on already-wont_do / closed / retired tasks (no
+        double-decide). REFUSED if status='spec' (D36: design/schema can't
+        be 'not done' -- use edit() to refine, or retire() if 100%
+        abandoned). Does not fire the staling cascade -- returns one-hop
+        neighbors for migrate-or-stay review like close."""
         with _core() as c:
             return _wrap(c, c.wont_do(id, reason=reason, delta=delta).model_dump(mode="json"))
 
     @mcp.tool()
+    def retire(id: int, reason: str, delta: str) -> dict:
+        """Retire a design/schema slice (D36): status spec -> retired. For
+        DESIGN + SCHEMA only. Use ONLY when the decision is 100% gone with
+        NO replacement -- partial-change path is edit() and let the cascade
+        prompt link review.
+
+        ``reason`` is durable (persists forever in wont_do_reason -- the
+        decision rationale survives even after the slice is dead). ``delta``
+        is ephemeral per T117. Placeholder reasons (empty / 'TBD' / 'TODO'
+        / 'obsolete' / 'no longer needed') refused per D33 extension.
+
+        Refusal order (fail-fast, 6 checks):
+          1. reason validation (non-empty + non-placeholder).
+          2. status='spec' (only living specs can be retired).
+          3. kind IN ('design','schema').
+          4. stale gate.
+          5. linked-stale gate (transitive close-gate logic).
+          6. open-neighbor gate -- refused if ANY linked neighbor has
+             status='open'. Refusal lists each open neighbor with its
+             `because` rationale and presents the (i)/(ii) decision tree
+             (link_rm + wont_do vs link_rm alone) inline.
+
+        Terminal-state semantics: retired is forever per T132 generalized.
+        reopen / close / wont_do / retire all refused on retired rows.
+        edit() IS still allowed (D29 audit-table backstop). link_add
+        refused if either endpoint has status='retired'. Returns one-hop
+        neighbors for migrate-or-stay review like wont_do/close."""
+        with _core() as c:
+            return _wrap(c, c.retire(id, reason=reason, delta=delta).model_dump(mode="json"))
+
+    @mcp.tool()
     def reconcile(id: int) -> dict:
-        """Clear a task's stale flag after reviewing it as still-correct (D11).
-        Does not cascade (no content changed)."""
+        """Clear a task's stale flag after reviewing it as still-correct
+        (D11 + D28 + D36). Does not cascade (no content changed).
+
+        REFUSED on status IN ('closed','wont_do','retired') -- stale on
+        these is record-only archaeology (D28 + D36); clearing it would
+        erase the historical signal that an upstream changed."""
         with _core() as c:
             return _wrap(c, c.reconcile(id).model_dump(mode="json"))
 
     @mcp.tool()
     def reclassify(id: int, kind: str, delta: str) -> dict:
-        """Change a task's kind after creation (T128). Required ``delta``
-        names the semantic shift (T117). REFUSED if the new kind would
-        create a cross-kind link with any current neighbor (meta-island,
-        D26) -- the agent must link_rm those edges first or create a new
-        task carrying the desired kind. Fires the staling
-        cascade on linked neighbors (kind is a semantic property; the link
-        relationship may need re-review). Closed neighbors stay closed +
-        stale per T123."""
+        """Change a task's kind after creation (T128 + D36). Required
+        ``delta`` names the semantic shift (T117). REFUSED if the new kind
+        would create a cross-kind link with any current neighbor (meta-
+        island, D26) -- the agent must link_rm those edges first or create
+        a new task carrying the desired kind.
+
+        Cross-partition kind change auto-shifts status (D36): production/
+        meta ('open') <-> design/schema ('spec'); refused if the source
+        status has no clean target (e.g. closed production -> design would
+        leave the closed work-done semantics with no spec equivalent).
+
+        Fires the staling cascade on linked neighbors (kind is a semantic
+        property; the link relationship may need re-review). Closed/wont_do/
+        retired neighbors stay terminal + stale per D28 (record only)."""
         with _core() as c:
             return _wrap(c, c.reclassify(id, kind, delta=delta).model_dump(mode="json"))
 
@@ -160,7 +235,10 @@ def build_server() -> FastMCP:
         (ephemeral one-sentence description of this change, T117). Argument
         order doesn't matter -- the row is stored canonically. Refused on
         self-link (D14), cross-kind meta links (D26 meta-island), empty
-        ``because``, or empty ``delta``. Returns ``a``'s slice."""
+        ``because``, or empty ``delta``. Refused if either endpoint has
+        status='retired' (D36): retired specs accept no new edges --
+        there is no realization relationship to a dead decision. Returns
+        ``a``'s slice."""
         with _core() as c:
             return _wrap(
                 c,
@@ -191,7 +269,9 @@ def build_server() -> FastMCP:
     def ls(
         status: str | None = None, label: str | None = None, stale: bool = False
     ) -> dict:
-        """Query/board (D15): filter tasks by status, label, and/or stale."""
+        """Query/board (D15): filter tasks by status, label, and/or stale.
+        ``status`` choices (D36 v0.5): open | closed | wont_do | spec |
+        retired. spec/retired are the design/schema partition equivalents."""
         with _core() as c:
             stale_filter = True if stale else None
             tasks = []
@@ -251,9 +331,10 @@ def build_server() -> FastMCP:
     def board(
         status: str | None = None, label: str | None = None, stale: bool = False
     ) -> dict:
-        """Dependency-aware board (D22): the filtered tasks, each as a full slice (task +
-        dependencies + dependents + labels), so you see the whole graph's structure in
-        ONE call (richer than `ls`). Filters: status (open/closed/wont_do), label, stale."""
+        """Dependency-aware board (D22 + D36): the filtered tasks, each as a
+        full slice (task + dependencies + dependents + labels), so you see
+        the whole graph's structure in ONE call (richer than `ls`). Filters:
+        status (open|closed|wont_do|spec|retired), label, stale."""
         with _core() as c:
             stale_filter = True if stale else None
             cards = []

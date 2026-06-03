@@ -41,9 +41,10 @@ def test_mcp_registers_all_tools(tmp_path, monkeypatch):
         return [t.name for t in listing.tools]
 
     names = _drive(tmp_path, monkeypatch, scenario)
-    assert len(names) == 20  # T128: + reclassify; T132: + wont_do
+    assert len(names) == 21  # T128 + reclassify; T132 + wont_do; T174 (D36) + retire
     expected = {"add", "show", "search", "edit", "close", "reconcile", "link_add",
-                "stale", "labels", "load", "board", "reclassify", "wont_do"}
+                "stale", "labels", "load", "board", "reclassify", "wont_do",
+                "retire"}
     assert expected <= set(names)
 
 
@@ -185,6 +186,21 @@ def test_mcp_remaining_tools_all_work(tmp_path, monkeypatch):
     assert out["stale"]["result"] == []  # nothing stale
     assert isinstance(out["render"]["result"], str)
     assert len(out["history"]["result"]) >= 1
+
+
+def test_mcp_retire_smoke(tmp_path, monkeypatch):
+    """T175 Phase 3: the retire MCP tool reaches Core.retire() end-to-end.
+    Verifies status spec->retired + reason persisted + envelope shape."""
+    async def scenario(s):
+        await s.call_tool("add", {"name": "d1 living spec", "kind": "design"})
+        return _envelope(await s.call_tool(
+            "retire",
+            {"id": 1, "reason": "premise replaced by D99", "delta": "retiring"},
+        ))
+
+    env = _drive(tmp_path, monkeypatch, scenario)
+    assert env["result"]["task"]["status"] == "retired"
+    assert env["result"]["task"]["wont_do_reason"] == "premise replaced by D99"
 
 
 def test_mcp_labels(tmp_path, monkeypatch):
