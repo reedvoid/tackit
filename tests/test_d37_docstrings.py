@@ -136,6 +136,69 @@ def test_skill_md_contains_granular_description_section():
     assert "granular-description" in text.lower() or "impl-ready" in text
 
 
+def test_skill_md_contains_foldback_discipline_section():
+    """The canonical SKILL.md (src/tackit/data/SKILL.md, the version shipped
+    in the package) carries the mandatory fold-back discipline section.
+    Distinctive phrases pinned: the section heading + the mandatory end-of-
+    turn report wording + the meta-lesson on enumeration by pattern.
+
+    Pins the strengthened fold-back rule landed alongside v0.5 so a future
+    edit that drops or weakens any of those three load-bearing pieces fails
+    here. The discipline matters more than the wording, but the wording is
+    what survives across context resets — so the pins are on phrases that
+    encode the discipline."""
+    import pathlib
+    skill = pathlib.Path(__file__).resolve().parent.parent / "src" / "tackit" / "data" / "SKILL.md"
+    text = skill.read_text()
+    # The section exists and is top-level (## heading), not buried in a bullet.
+    assert "## Fold-backs" in text, (
+        "SKILL.md must carry a top-level `## Fold-backs` section -- the "
+        "mandatory fold-back discipline. Was previously a single bullet "
+        "inside the code↔task traceability section, where it got skipped "
+        "in practice. Promoting it to a top-level section is load-bearing."
+    )
+    # The mandatory end-of-turn report requirement is present verbatim.
+    assert "Mandatory end-of-turn fold-back report" in text, (
+        "SKILL.md must require the end-of-turn fold-back line explicitly. "
+        "The 'none -- verified' negative case is what makes the positive "
+        "case credible; dropping the requirement returns the discipline to "
+        "permissive 'if you remember' status."
+    )
+    # The enumeration meta-lesson is present (grep pattern, not verb name).
+    assert "grep for the pattern family" in text, (
+        "SKILL.md must carry the enumeration meta-lesson learned from the "
+        "v0.5 Phase 4 bugs: enumerate by pattern (grep the family), not by "
+        "named verb. Both Phase 4 bugs (reopen-on-spec, load-status) traced "
+        "to the same root failure mode."
+    )
+
+
+def test_skill_md_dev_copies_match_canonical():
+    """The canonical SKILL.md (src/tackit/data/SKILL.md, ships in the
+    package) and the dev copies (.claude/skills/tackit/SKILL.md, .agents/
+    skills/tackit/SKILL.md, populated by `tackit setup`) must agree, so
+    this session's loaded skill is the same content that ships to users.
+    A drift between them is how the canonical rule reaches users while
+    THIS session's agent keeps running on stale guidance."""
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parent.parent
+    canonical = (root / "src" / "tackit" / "data" / "SKILL.md").read_text()
+    for dev_copy in [
+        root / ".claude" / "skills" / "tackit" / "SKILL.md",
+        root / ".agents" / "skills" / "tackit" / "SKILL.md",
+    ]:
+        if not dev_copy.exists():
+            # Dev copies are optional (populated by `tackit setup`); only
+            # assert agreement when present.
+            continue
+        assert dev_copy.read_text() == canonical, (
+            f"{dev_copy} drifted from the canonical "
+            f"src/tackit/data/SKILL.md. Re-run `tackit setup` (or just "
+            f"`cp`) to re-sync. The canonical version is what ships; the "
+            f"dev copy is what loads in-session."
+        )
+
+
 @pytest.mark.skip(
     reason="Phase 7 / T170 -- README walkthrough is a separate phase."
 )

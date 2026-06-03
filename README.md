@@ -171,6 +171,17 @@ in parallel.
   preserved verbatim in the description_revisions audit table.)
 - **Find, wire, right-size.** `search` before you create; wire dependencies explicitly
   (including among tasks you add together); keep tasks describable units of work.
+- **Fold back what implementation reveals.** No plan is complete; the call site
+  nobody listed, the partition CHECK nobody simulated, the message wording that
+  reads wrong only in practice — these emerge only at implementation time, and
+  they are the *highest-value* signal the work produces. When a commit fixes a
+  bug or changes behavior the responsible task body doesn't describe, edit that
+  task body to record the finding alongside the commit — the commit message is
+  not searchable from the task graph. The end-of-turn summary must include a
+  fold-back line (which task bodies were updated, or *none — verified*); silence
+  on fold-backs is not reassurance. See `SKILL.md` "Fold-backs" for the per-
+  discovery format and the enumeration meta-lesson (grep the pattern family,
+  not the verb name).
 
 One convention is worth explaining in full right here — it's the one people skip and
 then regret, and it belongs in your always-on settings, not just in tackit:
@@ -229,6 +240,14 @@ point:
   `what:` (enough to recall it) and `did:` (roughly what changed); end with the state
   (N open/done/stale) and any worry up front (stale ids, refused ops). Not prose, not
   a bare id.
+- Fold-back is mandatory and goes in the report. When a code commit fixes a bug or
+  changes behavior the responsible task body doesn't describe, edit that body to
+  record the finding (symptom, root cause, fix, why missed, pinning test) — the
+  commit message is not searchable from the task graph. Every turn with a code
+  change names the fold-backs explicitly, or states "Fold-backs: none — verified."
+  Silence is not reassurance. Implementation discoveries are higher signal than
+  any plan; capturing them in the task body is how the next session inherits the
+  lesson.
 ```
 
 ### MCP tools

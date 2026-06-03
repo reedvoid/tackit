@@ -234,14 +234,104 @@ and your code doesn't know its task. The bridge is *nothing but how you write bo
   comments should echo the task's distinctive terms, so reading the code and reading
   the task line up and a search for one finds the other. If the task says "token
   rotation," the code says "token rotation" — not "key cycling."
-- **Keep both sides honest.** If coding reveals the task/design is wrong,
-  edit the task (it's the source of truth); never let the code silently
-  diverge. Edits on design/schema slices fire the D31 code-check reminder
-  to prompt a grep of the slice id — use it.
+- **Keep both sides honest.** When code and task disagree, the task is the source
+  of truth — edit it. Never let the code silently diverge. The strong version of
+  this rule lives below in **Fold-backs**: implementation-time discoveries are
+  the highest-value signal you'll get; they have a discipline of their own.
+  Edits on design/schema slices fire the D31 code-check reminder to prompt a
+  grep of the slice id — use it.
 
 Treat a vague task title or a code↔task vocabulary mismatch as a **defect**, not a
 style nit. The system's ability to recover intent across context resets depends
 entirely on this.
+
+## Fold-backs — implementation discoveries are higher signal than any plan
+
+This is the most under-practiced and highest-leverage rule in this skill. Read it
+twice.
+
+**The premise.** No matter how thoroughly a task body is planned, implementation
+reveals things planning cannot: the call site nobody listed, the partition CHECK
+nobody simulated, the message-bank wording that reads wrong only after agents see
+it, the sibling code path with no self-explaining name. These discoveries are not
+noise — they are **the most valuable feedback the work produces**. Planning
+predicts; implementation tests the prediction. Every gap is signal about what the
+spec missed and what to look for next time.
+
+**The rule (mandatory, not "if you remember").** When a commit fixes a bug or
+changes behavior that the responsible task body does not describe — that is a
+**scope gap**. The fix and the fold-back ship together. Never one without the
+other. "I caught it in the commit message" is not a fold-back; commit messages
+are not searchable from the task graph, and the next agent reading the task body
+will not see them. The task body is what survives.
+
+**What "responsible task body" means.** Trace backwards: which task's "what will
+change" / "files" / "call sites" enumeration *should* have included this code
+path? That task gets edited — usually with a brief appended "Phase N finding"
+section naming the missed call site, the symptom, the root cause, the fix, and
+why the original enumeration missed it. If the discovery invalidates the design
+itself, edit the D# slice; if it just exposes an under-enumeration, edit the
+impl task.
+
+**Per-discovery format (append to the responsible task body):**
+
+> ### Phase N finding — \<short label\>
+>
+> **Symptom:** \<the failing test / refusal / error / behavior, named concretely\>
+>
+> **Root cause:** \<the missed line / call site / predicate / assumption,
+> citing file:line where useful\>
+>
+> **Fix:** \<one or two sentences naming what the commit changed\>
+>
+> **Why missed:** \<the enumeration discipline that failed — usually
+> "enumerated by named verb / refusal, missed the sibling code path that
+> doesn't have a self-explaining name"\>
+>
+> **Pinning test:** \<the test that catches a future regression\>
+>
+> **Status:** Fixed in commit \<hash\>; the task body's pre-existing plan is
+> otherwise current. This finding records the scope gap; it does not invalidate
+> the work that shipped.
+
+**The discovery → enumeration meta-lesson.** Most fold-backs trace back to the
+same root: the original task enumerated by *named verb* ("close", "wont_do",
+"reconcile") and missed *sibling code paths* ("`reopen()`'s no-op guard",
+"`load()`'s INSERT") that touch the same primitive without a self-explaining
+name. The discipline that catches this: at the end of an enumeration sweep,
+**grep for the pattern family** (`status =`, `INSERT.*status`, `WHERE status`,
+the SQL or Python construct the rule is about), not for the verb names. Every
+match either (a) belongs in the enumerated set or (b) is provably unaffected.
+Apply this on every sweep.
+
+**Mandatory end-of-turn fold-back report.** Every turn that produces a code
+commit or a behavior change MUST include a fold-back line in the end-of-turn
+summary — even if the answer is *none*. The negative case is what makes the
+positive case credible:
+
+> **Fold-backs this turn:**
+> - **T173** — appended Phase 4 finding for the `reopen()` call site missed in Phase 2a's 6-call-site enumeration.
+> - **T168** — appended Phase 4 finding for the `core.load()` row-creating path missed in Phase 1's default-by-kind enumeration.
+
+Or, when no fold-back applied:
+
+> **Fold-backs this turn:** none — verified the commits don't reveal a scope gap
+> in any task body (no missed call sites; the changes match what the responsible
+> task body described).
+
+A turn whose end-of-turn summary omits this line is incomplete. Treat the
+omission as a refusal-message-shaped defect — fix before declaring done.
+
+**Why this is worth the friction.** The two bugs found in v0.5 Phase 4
+(`reopen()` partition CHECK violation, `load()` hardcoded status) were exactly
+the kind of discovery no upfront plan could have produced — they emerged from
+the property-test machine probing combinations the human plan didn't enumerate.
+The commit messages captured the bugs; nothing captured the *scope gap in the
+planning task*. Without fold-back, that signal evaporates when the session ends
+and the next agent re-enumerates from the same incomplete planning lens. With
+fold-back, the next agent reads "Phase 4 finding: enumerated by verb, missed
+sibling pattern — grep the family next time" and skips the same mistake. The
+fold-back is how implementation teaches planning.
 
 ### Auto-id name prefix (D32, v0.4)
 Every task carries a deterministic `<kind_letter><id>` prefix in its agent-facing
@@ -345,10 +435,14 @@ Format:
        <worry first: stale ids + what they await, refused ops, new labels>
 
 - Group by verb: Added / Edited / Closed / Reopened / Reconciled / Linked /
-  Tagged / Wont_do / Reclassified.
+  Tagged / Wont_do / Reclassified / Retired.
 - Per task: one short line each for `what:` (the task — enough to recall it) and
   `did:` (the change — roughly, not blow-by-blow). A clause each, not a paragraph.
-- For Wont_do entries name the durable reason; for Linked entries name the
-  because rationale.
+- For Wont_do / Retired entries name the durable reason; for Linked entries name
+  the because rationale.
+- **End with the fold-back line** (see the Fold-backs section above) — every turn
+  that produces a code commit or behavior change names which task bodies were
+  edited to absorb implementation discoveries, OR states explicitly that none
+  applied. Silence on fold-backs is not reassurance.
 - End with the state line; surface anything worrying first. If nothing is stale and
   nothing was refused, say so — silence is not reassurance.
