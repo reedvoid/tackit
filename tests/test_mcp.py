@@ -270,6 +270,40 @@ def test_mcp_labels(tmp_path, monkeypatch):
     assert core_info["count"] == 2 and len(core_info["samples"]) >= 1
 
 
+def test_mcp_search_name_only_parameter(tmp_path, monkeypatch):
+    """M181 #8d: the MCP `search` tool exposes `name_only`. End-to-end:
+    two rows, one with the term in name only, one in description only;
+    `name_only=True` returns the name match; default returns both."""
+    async def scenario(s):
+        await s.call_tool("add", {
+            "name": "polaris probe",
+            "kind": "production",
+            "description": "the body mentions cassiopeia once",
+        })
+        await s.call_tool("add", {
+            "name": "vega probe",
+            "kind": "production",
+            "description": "polaris appears here in description only",
+        })
+        default = await s.call_tool("search", {"terms": "polaris"})
+        nameonly = await s.call_tool(
+            "search", {"terms": "polaris", "name_only": True}
+        )
+        return (default, nameonly)
+
+    default, nameonly = _drive(tmp_path, monkeypatch, scenario)
+    default_env = _envelope(default)
+    nameonly_env = _envelope(nameonly)
+    assert len(default_env["result"]) == 2, (
+        f"Default search must match both rows; got: {default_env['result']!r}"
+    )
+    assert len(nameonly_env["result"]) == 1, (
+        f"name_only search must match only the name row; got: "
+        f"{nameonly_env['result']!r}"
+    )
+    assert nameonly_env["result"][0]["id"] == 1
+
+
 def _setup_stale_scenario(s):
     """Helper for M181 #8b tests: produce a system with exactly one stale
     task. Add two production tasks, link them, edit one -> the other goes

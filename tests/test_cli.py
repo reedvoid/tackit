@@ -370,6 +370,40 @@ def test_cli_restore_by_filename(cli, capsys):
     assert "restored" in capsys.readouterr().out
 
 
+def test_cli_search_name_only_flag(cli, capsys):
+    """M181 #8d: `tackit search --name-only` scopes the FTS5 match to the
+    name column. Two tasks, one with the term in name and one only in
+    description -- --name-only returns the name match only."""
+    main(["add", "--kind", "production",
+          "--desc", "this body mentions sirius once", "alpha hub"])
+    main(["add", "--kind", "production",
+          "--desc", "sirius appears here only in description", "beta hub"])
+    capsys.readouterr()
+
+    # Default: matches both (one via name, one via description).
+    main(["search", "sirius"])
+    out = capsys.readouterr().out
+    assert "T1" in out and "T2" in out, (
+        f"Default search must match both rows; got:\n{out!r}"
+    )
+
+    # --name-only: matches only the name hit (the description "sirius" is
+    # absent from name, so it's filtered).
+    main(["search", "sirius", "--name-only"])
+    out = capsys.readouterr().out
+    assert "(no matches)" in out, (
+        f"`search sirius --name-only` should find no rows (sirius only "
+        f"in descriptions, not names); got:\n{out!r}"
+    )
+
+    # Direct name match works via --name-only.
+    main(["search", "alpha", "--name-only"])
+    out = capsys.readouterr().out
+    assert "T1" in out and "T2" not in out, (
+        f"`search alpha --name-only` should find only T1; got:\n{out!r}"
+    )
+
+
 def test_cli_help_for_every_subcommand_has_substantive_description():
     """M181 #8a: every CLI subcommand's --help output must be non-trivially
     longer than its bare argparse usage line. Catches the class of bug where

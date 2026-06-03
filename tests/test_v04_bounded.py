@@ -801,3 +801,32 @@ def test_links_op_neighbors_have_no_because_or_delta(core):
     candidates = core.links()  # anchor layer (no input -> design+schema)
     assert all(n.because is None for n in candidates)
     assert all(n.last_edit_delta is None for n in candidates)
+
+
+def test_search_name_only_excludes_description_hits(core):
+    """M181 #8d: name_only=True scopes the FTS5 match to the name column,
+    so a term that appears only in description does NOT surface. Default
+    (name_only=False) still matches name+description per D17.
+    """
+    # Term "auriga" appears only in DESCRIPTION; "aldebaran" only in NAME.
+    core.add("aldebaran lookup", kind="production",
+             description="this body mentions auriga only")
+    core.add("vega lookup", kind="production",
+             description="aldebaran appears here in description only")
+
+    # Default search: matches both (one via name, one via description).
+    default_hits = core.search("aldebaran")
+    assert len(default_hits) == 2
+
+    # name_only: only the row whose NAME contains 'aldebaran'.
+    name_hits = core.search("aldebaran", name_only=True)
+    assert len(name_hits) == 1
+    assert name_hits[0].id == 1
+
+    # name_only excludes description-only matches entirely.
+    auriga_name_hits = core.search("auriga", name_only=True)
+    assert len(auriga_name_hits) == 0
+    # And the description-default version finds it.
+    auriga_default_hits = core.search("auriga")
+    assert len(auriga_default_hits) == 1
+    assert auriga_default_hits[0].id == 1

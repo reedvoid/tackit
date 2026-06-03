@@ -1624,15 +1624,22 @@ class Core:
     # ====================================================================
     # D17 - full-text search (FTS5)
     # ====================================================================
-    def search(self, query: str, limit: int = 20) -> list[SearchHit]:
+    def search(self, query: str, limit: int = 20, name_only: bool = False) -> list[SearchHit]:
         """D17 + D28 (v0.4) - ranked keyword search over name+description via
         FTS5. Returns ids+titles+scores+status (and wont_do_reason for
         wont_do hits), best first. The status field lets adapters tag
         historical hits inline so the agent doesn't have to open each
         result to know whether it's live work or record. ``search -> show``
-        is tackit's retrieval loop. Score is -bm25 (higher = more relevant)."""
+        is tackit's retrieval loop. Score is -bm25 (higher = more relevant).
+
+        M181 #8d: ``name_only=True`` scopes the match to the name column
+        only (FTS5 column-filter syntax ``{name}: <query>``). Useful for
+        looking up tasks by distinctive title phrase without description
+        hits adding noise."""
         if not query or not query.strip():
             raise ValidationError("search query must be non-empty (D17).")
+        if name_only:
+            query = "{name}: " + query
         try:
             rows = self.conn.execute(
                 "SELECT t.id AS id, t.name AS name, t.status AS status, t.kind AS kind, "

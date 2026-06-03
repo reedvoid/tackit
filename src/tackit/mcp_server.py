@@ -95,12 +95,16 @@ def build_server() -> FastMCP:
             return _wrap(c, c.show(id).model_dump(mode="json"), short_alert=True)
 
     @mcp.tool()
-    def search(terms: str, limit: int = 20) -> dict:
+    def search(terms: str, limit: int = 20, name_only: bool = False) -> dict:
         """Ranked FTS keyword search over name+description (D17). `search -> show`
-        is the retrieval loop. Returns ids+titles+scores, best first."""
+        is the retrieval loop. Returns ids+titles+scores, best first.
+
+        M181 #8d: ``name_only=True`` scopes the match to the name column only
+        (FTS5 ``{name}: <query>`` filter). Useful for looking up tasks by
+        distinctive title phrase without description hits adding noise."""
         with _core() as c:
             hits = []
-            for h in c.search(terms, limit=limit):
+            for h in c.search(terms, limit=limit, name_only=name_only):
                 hits.append(h.model_dump(mode="json"))
             return _wrap(c, hits, short_alert=True)
 

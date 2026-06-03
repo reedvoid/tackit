@@ -229,7 +229,7 @@ def _cmd_load(args) -> int:
 
 def _cmd_search(args) -> int:
     with _core_session() as core:
-        hits = core.search(args.terms)
+        hits = core.search(args.terms, name_only=args.name_only)
         text = (
             "\n".join(f"T{h.id}  ({h.score:+.3f})  {h.name}" for h in hits)
             if hits
@@ -579,8 +579,20 @@ def build_parser() -> argparse.ArgumentParser:
         "every link requires a real one-sentence coupling rationale (T164).",
     )
 
-    sp = add("search", _cmd_search, "ranked FTS keyword search -> ids (D17)")
+    sp = add(
+        "search",
+        _cmd_search,
+        "ranked FTS keyword search -> ids (D17). M181 #8d: --name-only "
+        "scopes the match to the name column (FTS5 {name}: filter) when "
+        "you want to look up tasks by distinctive title phrase without "
+        "description hits adding noise.",
+    )
     sp.add_argument("terms")
+    sp.add_argument(
+        "--name-only",
+        action="store_true",
+        help="scope match to the name column only (no description hits).",
+    )
 
     sp = add("load", _cmd_load, "bulk-import a plan: [key] tasks + depends_on by key (D24)")
     sp.add_argument("file", nargs="?", help="plan file (omit to read stdin)")
