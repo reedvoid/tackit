@@ -25,23 +25,63 @@ that drift and contradict each other.
   belong to your memory, not here. Keep tackit to actionable tasks + dependencies.
 
 ## Kinds — every task is classified by what it touches
+
+**Spec-vs-impl is the load-bearing distinction.** Under v0.5, kind is not just a
+classification — it is **coupled to status by partition** (the schema CHECK
+enforces it). Design/schema slices are **specifications**: they capture
+decisions and live in a `spec`/`retired` partition. Production/meta tasks are
+**implementations**: they realize specs in code and live in an
+`open`/`closed`/`wont_do` partition. The verb you reach for follows the
+partition: edit/retire on specs; close/wont_do on impl.
+
+| kind        | partition       | meaning                                  | terminal verb  |
+|-------------|-----------------|------------------------------------------|----------------|
+| design      | spec / retired  | specification: captures decisions        | retire (D36)   |
+| schema      | spec / retired  | specification: captures store shape      | retire (D36)   |
+| production  | open / closed / wont_do | implementation: realizes specs in code | close / wont_do |
+| meta        | open / closed / wont_do | bookkeeping: release tracking, exps    | close / wont_do |
+
 Every task carries a required `kind` (set at create time, T94) from this closed
 taxonomy:
 
 - **design** — a decision slice (D# in the design doc). Captures what is decided,
   not how it is built. Editing a design changes what the system means; impl tasks
-  link back to design tasks they realize. **Perma-open under v0.4 (D30):**
-  `close()` and `wont_do()` are refused on design slices; updating a decision is
-  edit(), not close. To retire a decision, edit the slice to reflect its current
-  state — the description_revisions audit table (D29) preserves the prior
-  verbatim version, so editing is recoverable.
+  link back to design tasks they realize. **Lives at status='spec'** (the live
+  partition state) and only ever moves to **status='retired'** via `retire()`
+  when the decision is 100% abandoned with no replacement. `close()` and
+  `wont_do()` are refused on `status='spec'`; updating a decision is `edit()`,
+  not close. The description_revisions audit table (D29) preserves prior
+  verbatim state on every edit, so editing in place is recoverable. If the
+  decision returns after retire, file a fresh D# (no double-decide per T132
+  generalized).
 - **schema** — a store-shape slice (S# in the schema doc). The DDL contract.
-  Schema changes typically require migrations. **Same perma-open rule as design.**
+  Schema changes typically require migrations. **Same partition as design:**
+  `status='spec'` live; `retire()` to retired when fully abandoned.
 - **production** — code that **alters the running app's behavior**. Source under
   `tackit/`, tests that pin behavior contracts, and the README/SKILL.md **count
-  as production** because they alter the agent's behavior of the app.
+  as production** because they alter the agent's behavior of the app. Lives at
+  `status='open'`; closes via `close()` (work shipped) or `wont_do()` (scope
+  dropped).
 - **meta** — work that does **not** alter the running app. Release bookkeeping,
-  experiments, observation writeups, side-investigations, dogfood notes.
+  experiments, observation writeups, side-investigations, dogfood notes. Same
+  open/closed/wont_do partition as production.
+
+### The kind/status partition rule (the v0.5 invariant)
+
+Every row obeys the partition: `kind ∈ {production, meta}` ⟹
+`status ∈ {open, closed, wont_do}`; `kind ∈ {design, schema}` ⟹
+`status ∈ {spec, retired}`. The boundary is enforced at two layers:
+
+1. **Typed (Pydantic):** `Core.add()` applies the partition-correct default
+   status at create time. `Core.load()` and `Core.reclassify()` do the same.
+2. **Database (CHECK constraint on S1.tasks):** any UPDATE/INSERT that
+   would land an illegal `(kind, status)` pair fails with an IntegrityError.
+
+**Cross-partition reclassify auto-shifts status**: open ↔ spec lands cleanly
+(the live statuses of each partition). Cross-partition reclassify with no
+clean target — e.g. `closed`-production → `design` — is refused; resolve the
+source state first (reopen, then reclassify; or accept the refusal and file
+a fresh task).
 
 ### The classifier rule (apply to every new task)
 Ask: would landing this task touch `core.py`, `models.py`, `SKILL.md`, `README.md`,
@@ -68,13 +108,28 @@ meta) are also **reserved label strings** — attaching one of them as a label i
 refused, because the `kind` property already encodes that distinction.
 
 ## The verb taxonomy — when to use which
-Tackit (v0.4) has three verbs that change a task's state. They are not
-interchangeable and the mechanism enforces the distinctions. (v0.3's
-`supersede` verb was retired — it required tasks to be atomic enough that
-"premise replaced" applied to the whole bundle, which broke down in practice
-when only one of several facets was invalidated. The simpler model: edits
-are allowed on any status, and an append-only audit table preserves prior
-verbatim state.)
+
+Tackit (v0.5) has **four** verbs that change a task's state. They are not
+interchangeable and the mechanism enforces the distinctions via partition-
+aware refusals. (v0.3's `supersede` verb was retired in v0.4 — it required
+tasks to be atomic enough that "premise replaced" applied to the whole bundle,
+which broke down in practice when only one of several facets was invalidated.
+The v0.4+ model: edits are allowed on any status, and an append-only audit
+table preserves prior verbatim state.)
+
+| Verb     | When                                  | Partition  | Cascade? | Reversible?      |
+|----------|---------------------------------------|------------|----------|------------------|
+| `edit`   | content change on any task            | any        | **yes**  | n/a              |
+| `close`  | production/meta work shipped          | open/etc.  | no       | `reopen`         |
+| `wont_do`| production/meta work dropped          | open/etc.  | no       | terminal forever |
+| `retire` | design/schema spec 100% abandoned     | spec/retired | no     | terminal forever |
+
+**The all-or-nothing rule** (D36, front and center): is the spec 100% gone,
+with no replacement? → `retire`. *Any* partial change — including big
+rewrites — uses `edit`. Edit's cascade IS the partial-change re-evaluation
+mechanism; retire's "no cascade + open-neighbor refusal + immutable reason"
+embodies the 100%-gone contract. If you find yourself wanting to migrate some
+links to a new spec, you weren't retiring — you were editing.
 
 ### edit — change a task's content
 Use when a task's content needs to change: typo fix, clearer wording, added
@@ -96,35 +151,134 @@ the code↔task naming convention; grep it and verify the associated files.
 
 ### close — work done
 Use when the task's deliverable has shipped. Refused if the task is stale or
-shares a link with any obligation-bearing stale task (close-gate; v0.4
-bounded by D28 — closed/wont_do production neighbors carrying stale=1 are
-record-only and do NOT trip the gate). **Refused on kind in {design, schema}**
-(D30) — those are living spec, not work items; edit() is the right verb. On
-close, the obligation payload returns one-hop neighbors so you can review
-whether anything needs follow-up.
+shares a link with any obligation-bearing stale task (close-gate; bounded
+by D28 — closed/wont_do production neighbors and retired design/schema
+neighbors carrying stale=1 are record-only and do NOT trip the gate).
+**Refused on `status='spec'`** (D30 + D36) — those are living specifications,
+not work items; `edit()` to refine a decision, or `retire()` if 100%
+abandoned. **Refused on retired** (D36 — no double-decide). On close, the
+obligation payload returns one-hop neighbors so you can review whether
+anything needs follow-up.
 
 ### wont_do — decided not to do
 Use when the scope is dropped, not delivered. **Distinct from close** — close
 means "we did this," wont_do means "we decided not to do this." Takes a
 durable `reason` (persists forever in the row, no edit path) plus the
-standard `delta`. **Refused on kind in {design, schema}** (D30) — a design
+standard `delta`. **Refused on `status='spec'`** (D30 + D36) — a design
 decision can't be "not done"; it either holds or is edited to reflect a
-changed state. **Refused on already-closed/already-wont_do tasks** (T132: no
-double-decide). The change-of-mind path on a wont_do task is to create a
-fresh task with the new direction — the old wont_do row stays as historical
-record. wont_do does NOT fire the staling cascade (status change, not
-content edit). Edit IS allowed on wont_do tasks under v0.4 — only the
-`reason` field is frozen.
+changed state. **Refused on already-closed/already-wont_do/retired tasks**
+(T132 generalized: no double-decide). The change-of-mind path on a wont_do
+task is to create a fresh task with the new direction — the old wont_do row
+stays as historical record. wont_do does NOT fire the staling cascade
+(status change, not content edit). Edit IS allowed on wont_do tasks — only
+the `reason` field is frozen.
+
+### retire — design/schema spec 100% abandoned
+Use ONLY when a design or schema slice's premise is 100% gone with **no
+replacement**. Partial changes — including big rewrites — use `edit()` and
+let the cascade prompt link review. The all-or-nothing contract is enforced
+by retire's refusal matrix; the partition guarantees only design/schema
+slices ever reach this verb.
+
+Takes a durable `reason` (persists forever in `wont_do_reason`; the column
+is reused per partition — wont_do reason on production/meta, retire reason
+on design/schema). Placeholder reasons refused (D33 extension):
+empty / whitespace-only / `TBD` / `TODO` / `obsolete` / `no longer needed`.
+
+**Refusal matrix (fail-fast, 6 checks):**
+1. reason validation (non-empty + non-placeholder).
+2. `status='spec'` — only living specs can be retired.
+3. `kind ∈ {design, schema}` (redundant under partition; explicit for error
+   clarity).
+4. Stale gate — refused if the target is stale.
+5. Linked-stale gate — refused if any obligation-bearing stale task sits
+   in the transitive linked neighborhood.
+6. **Open-neighbor gate** — refused if ANY linked neighbor has
+   `status='open'`. The refusal lists each open neighbor with its
+   `because` rationale and presents the (i)/(ii) decision tree (link_rm +
+   wont_do vs link_rm alone) inline.
+
+retire does NOT fire the staling cascade (status change, not content edit;
+symmetric with close and wont_do). Terminal forever — reopen / close /
+wont_do / retire all refused on a retired row. `edit()` is still allowed
+on retired rows (D29 audit-table backstop); D31 code-check reminder fires
+("verify no lingering code references this dead decision"). `link_add` is
+refused if either endpoint has `status='retired'`.
+
+If the retired decision later returns, file a fresh D# with the new
+direction; do not reanimate the retired row.
 
 ### The decision tree
-Task's content needs to change (any status) → **edit**.
-Task's deliverable has shipped → **close** (production/meta only;
-design/schema are perma-open).
-Task's scope is being dropped, we are not doing this → **wont_do**
-(production/meta only).
-A premise has been replaced and the new direction is too different to
-re-use the task → **create a new task with the new direction**; leave the
-old one as historical record. Link the two if the coupling matters.
+
+| Situation | Right verb |
+|-----------|------------|
+| Task's content needs to change (any status) | `edit` |
+| Production/meta deliverable has shipped | `close` |
+| Production/meta scope being dropped | `wont_do` |
+| Design/schema spec 100% gone, no replacement | `retire` |
+| Design/schema spec partially changed | `edit` (and let cascade prompt link review) |
+| A premise has been replaced and the new direction is too different to re-use | **create a new task**; leave the old one as historical record. Link if coupling matters. |
+
+## Retiring a spec — workflow walkthrough
+
+`retire()` is uncommon. It is the right verb only when a decision is truly
+dead with nowhere to go; most "spec change" scenarios are partial and use
+`edit()`. The walkthrough below names when retire applies, how to clear
+the open-neighbor gate, and what happens after.
+
+**When `retire` is the right verb:**
+- The decision is fully abandoned.
+- There is no replacement spec the impl can move to.
+- Links from production tasks cannot be migrated meaningfully — either the
+  production work itself is also dead (`wont_do`) or it links to other
+  living specs and can simply drop the edge.
+- If *any* partial replacement exists — even "we're keeping half the rule" —
+  the right verb is `edit`. Edit's cascade IS the partial-change mechanism.
+
+**The open-neighbor gate** (D36 step 6 in the refusal matrix above) is what
+forces this discipline. retire is refused if any linked neighbor has
+`status='open'`; the refusal lists each open neighbor + its `because` and
+presents the (i)/(ii) decision tree inline. Resolve each before retrying:
+
+- **(i) the neighbor's work realizes ONLY this dying decision:**
+  `link_rm` the edge, then `wont_do(neighbor, reason=…)` — the work is
+  dead too. Now the retire can land.
+- **(ii) the neighbor's work has other living-spec dependencies:**
+  `link_rm` the edge only. The work continues under its remaining live
+  premises. Then retry retire.
+
+**The fresh-D# rule** (T132 generalized — no double-decide on a terminal
+state): if the retired decision later returns, file a new design slice with
+the new direction. Do NOT reanimate the retired row. The new slice can
+reference the retired one's id in its prose if the historical coupling
+matters; `link_add` to a retired endpoint is refused (see D36).
+
+**Post-retire link behavior:**
+- Existing edges to the retired row stay as historical archaeology.
+  `show(retired_id)` still lists them.
+- New `link_add` is refused (D36).
+- `edit()` on retired is allowed (D29 backstop). The audit table records
+  the prose change; D31's code-check reminder fires; cascade depth-1
+  flags neighbors stale (record-only on terminal-status neighbors).
+
+**Worked example — D25 retired in v0.4:** the supersede mechanism was
+fully replaced by edit + description_revisions (S7); no partial migration
+possible (every supersede link's intent collapsed into "edit the row"
+under the new mechanism). The retire call:
+
+```text
+retire(D25,
+       reason="supersede mechanism retired v0.4 — replaced by edit + S7 "
+              "description_revisions audit table; no partial migration "
+              "possible; see mig_006 + the D29 design slice",
+       delta="retiring D25 — supersede gone per v0.4 D29")
+```
+
+The obligation payload returned one-hop linked neighbors (the production
+tasks that had implemented supersede); each got reviewed: most were
+already-closed under v0.4 and stayed put (record-only stale acceptable);
+a couple linked to the D29 audit-table slice via fresh `link_add` since
+that was the live replacement.
 
 ## The reconciliation discipline (the core of using tackit well)
 tackit tracks not just tasks but whether they're still in sync after changes.
@@ -141,21 +295,19 @@ you see a stale alert, act on it.
 - **Cascade is symmetric.** Every link is bidirectional in the cascade sense
   — editing either endpoint stales the other. There is no "depends_on
   direction" to fire the cascade only one way.
-- **Bounded obligation (D28 v0.4): closed and wont_do PRODUCTION/META tasks
-  CAN be stale, but the flag is RECORD ONLY.** The cascade still writes
-  stale=1 on them mechanically (depth-1, unchanged), but they're NOT on the
-  worklist and they do NOT pressure the close-gate. The flag stays as
-  historical signal that an upstream changed; archaeology can see it in
-  `show()`. The worklist filter: `status='open' OR kind in {design,schema}`.
-  Closed-stale production/meta is acceptable and doesn't block anything; you
-  don't have to reconcile it. `reconcile()` is refused on closed/wont_do
-  PRODUCTION/META (clearing a record-only marker would erase the signal
-  without meaning). Closed/wont_do DESIGN/SCHEMA tasks (T156 v0.4
-  refinement, 2026-06-02) are obligation-bearing AND reconcilable — the
-  refusal filter mirrors the worklist filter exactly, so what surfaces is
-  what can be cleared. Reconciling a closed-design slice acknowledges its
-  spec prose still describes truth after the upstream changed (legacy
-  pre-D30 rows can finally drain off the worklist).
+- **Bounded obligation (D28 + D36 v0.5): terminal-status tasks
+  (closed / wont_do / retired) CAN be stale, but the flag is RECORD ONLY.**
+  The cascade still writes stale=1 on them mechanically (depth-1, unchanged),
+  but they're NOT on the worklist and they do NOT pressure the close-gate.
+  The flag stays as historical signal that an upstream changed; archaeology
+  can see it in `show()`. The worklist filter is now status-derived:
+  **`status IN ('open', 'spec')`** — open production/meta and spec design/
+  schema rows carry obligation; everything terminal is record-only.
+  `reconcile()` is refused on `status IN ('closed', 'wont_do', 'retired')`
+  (clearing a record-only marker would erase the signal without meaning);
+  allowed on `status IN ('open', 'spec')` — what surfaces on the worklist
+  is exactly what can be cleared. Reconciling a stale spec slice
+  acknowledges its prose still describes truth after the upstream changed.
 - **Use delta × because to FAST-filter.** Every link carries a durable
   `because` (set at link_add time) describing why the two tasks are coupled.
   Every cascade-firing op carries a `delta` describing the semantic shift.
@@ -182,13 +334,16 @@ you see a stale alert, act on it.
   refusal names a closed/wont_do task that's record-only, you can ignore it
   (the gate wouldn't have refused on its account).
 
-### Edit on closed/wont_do — safe under v0.4
-v0.3's "no-edit-closed" rule is retired. Editing a closed or wont_do task is
-now a normal edit: it fires the cascade depth-1 (closed/wont_do neighbors
-flagged record-only per D28) and records a row in the description_revisions
-audit table (S7) preserving the prior verbatim name+description+delta. Use
-this for prose fixes on shipped work — fixing a misleading description on a
-closed task no longer destroys history; the audit table is the backstop.
+### Edit on terminal-status rows — safe (D29 backstop)
+v0.3's "no-edit-closed" rule is retired (D29 v0.4). Editing a closed,
+wont_do, or **retired** task is a normal edit: it fires the cascade depth-1
+(terminal-status neighbors flagged record-only per D28+D36) and records a
+row in the description_revisions audit table (S7) preserving the prior
+verbatim name+description+delta. Use this for prose fixes on shipped or
+abandoned work — fixing a misleading description on a closed task no longer
+destroys history; the audit table is the backstop. The `wont_do_reason`
+field (which holds both wont_do and retire reasons per partition) is the
+only column frozen post-write.
 
 ## Discovering dependencies — use the `links` op, don't just search
 Search is recall-limited. For wiring a new production task to the design/schema
@@ -200,9 +355,12 @@ slices it realizes, use the deterministic `links` op:
    skip one, but also don't force a link if the relationship isn't real.
 3. **Expand one hop**: call `links(anchors_you_picked)` → returns the depth-1
    neighborhood of those anchors, **filtered to viable link targets**
-   (status='open' OR kind in {design,schema} — D27/D28 v0.4). Closed/wont_do
-   production neighbors are not surfaced; closed design/schema slices still
-   are (living spec). Iterate the same judge-or-skip pass.
+   (`status IN ('open', 'spec')` — D27/D28/D36 v0.5). Closed/wont_do
+   production neighbors and retired design/schema neighbors are not
+   surfaced — they're not viable anchors for new realization links. Spec
+   design/schema slices stay visible — that's the live spec layer.
+   `link_add` to a retired endpoint is refused (D36). Iterate the same
+   judge-or-skip pass.
 4. **Stop when satisfied**, then `link_add` each chosen edge with a real
    `because` rationale describing the coupling.
 
@@ -407,6 +565,110 @@ one path the per-creation nudge doesn't catch).
 a new doc — make the question itself a task, give the whole cluster one label, and wire
 the spawned tasks to link to that anchor. The theme is grouped (label) and anchored
 (link), and can't drift.
+
+## The propagation principle — discipline lives on every agent-facing surface
+
+A discipline rule worth enforcing teaches the agent at every moment the rule
+matters. That means restating it across SKILL.md, MCP tool docstrings, CLI
+help text, refusal envelopes, and the README. Each surface catches a different
+moment in the agent's work:
+
+- **SKILL.md** teaches at session start, when the agent loads context for the
+  whole project.
+- **MCP tool docstrings** teach at invocation moment, when the agent reads
+  the tool description before calling it.
+- **CLI help text** teaches at typed-command moment for the human user.
+- **Refusal messages** teach at misuse moment, where the cost of skipping
+  the rule was about to be paid.
+- **README** teaches at install moment, for the new project / new agent.
+
+Multi-surface restatement is **intentional, not redundant**. Each surface
+reaches a different moment; an agent that skips one still gets caught by
+another.
+
+**Prior example (D33):** the placeholder-rationale refusal fires in `link_add`,
+`add(deps=…)`, and `load()` because those are all the surfaces a `because`
+rationale is set on. **Current example (D36):** the edit-vs-retire discipline
+appears in retire's MCP docstring, edit's MCP docstring ("Use edit for ALL
+partial changes"), close/wont_do refusal messages ("use edit() to refine;
+retire() if 100% abandoned"), `link_add` refusal on retired endpoints,
+`reconcile` refusal on retired, reclassify cross-partition refusals.
+
+**When designing or modifying a discipline rule, ask: which surfaces does an
+agent touch when this rule matters? The rule lives in all of them.** A rule
+that lives only in SKILL.md but not in the tool docstring will be skipped by
+agents who jump straight to the tool; a rule that lives only in the refusal
+message but not in the docstring teaches by punishment, not prevention.
+
+## The granular-description discipline (D37 — FORCEFUL, not optional)
+
+**This section is FORCEFUL.** Read it as a contract, not a suggestion.
+
+Task descriptions must be **implementation-ready**. On a new-session revisit,
+an agent reading the description should not be confused, should not feel
+the need to do additional scoping work, and should not encounter ambiguity
+that could have been resolved. Under-defined descriptions force fresh-session
+agents to re-derive context that should already be on the row — the exact
+failure tackit exists to prevent.
+
+**The rule:**
+
+> A task's description must contain enough granular detail that a
+> fresh-session agent — with no conversation history, no prior context,
+> only the task body and its linked neighbors — can implement (or evaluate
+> completion of) the task without asking the user for clarification.
+
+**Per-kind expectations:**
+
+- **design / schema slices**: fully specify the decision, constraints,
+  implications, refusal patterns. A fresh-session agent should be able to
+  edit code to align with it and verify drift via D31's code-check reminder.
+- **production tasks**: describe the code change in execution-grade detail —
+  files, call sites, signature snippets, predicate tables, error-message
+  banks, SQL recipes, test coverage. A fresh-session agent should be able to
+  sit down and write the change directly.
+- **meta tasks**: describe what bookkeeping is being captured (release,
+  experiment, observation) with enough context to interpret the result.
+
+**When the discipline applies:**
+
+- **At `add()`**: aim for full granularity from the start. add()'s docstring
+  prompts you toward impl-ready granularity. Richer body now beats
+  remembering it later.
+- **During implementation**: if you discover an under-defined detail — an
+  edge case the spec missed, a refusal-message wording question, an extra
+  file affected — `edit()` is the mechanism to fold the discovery back into
+  the description **BEFORE close**. Discovery is normal and expected; loss
+  is forbidden. (This is the same fold-back discipline as the Fold-backs
+  section above, applied at the description-granularity layer: edit the
+  task body to absorb what implementation taught you.)
+- **Before close**: re-read the description against what was actually
+  implemented. If the description no longer captures the impl, `edit()` it
+  before close. Closing with an out-of-date description destroys
+  granularity for future readers; S7 audit is the safety net, not the
+  primary mechanism.
+
+**Anti-patterns this discipline forbids:**
+
+- **Vague verbs:** "Fix bug" / "update logic" / "clean up X" — unsearchable,
+  unimplementable.
+- **Conversation references:** "Add the feature discussed in conversation"
+  / "see chat history" / "as agreed" — references ephemeral context that
+  doesn't survive a session reset.
+- **Pointer-only bodies:** "See related task X for details" without
+  inlining the scope — forces traversal that loses on fresh-session.
+- **TBD / TODO placeholders in committed task bodies** — flag and resolve
+  before commit. If a detail genuinely isn't decided, the task isn't ready
+  to be tracked yet.
+- **Implementation-by-conversation:** agreeing on detail in conversation
+  but never folding it into the task body. Conversation is ephemeral; the
+  task is durable. If a detail surfaced in conversation that's not yet on
+  the task, `edit()` it before the context expires.
+
+**This discipline propagates** (per the Propagation Principle above): SKILL.md
+(this section), `add()` MCP docstring + CLI help ("impl-ready granularity at
+create time"), `edit()` MCP docstring + CLI help ("Use edit for ALL partial
+changes" / "fold them back BEFORE close"), README writing-tasks walkthrough.
 
 ## Always report what changed
 After you create, alter, or remove tasks, report it back — but make it **scannable**, not a

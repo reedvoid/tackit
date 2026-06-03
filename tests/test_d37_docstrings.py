@@ -122,18 +122,48 @@ def test_cli_edit_help_contains_granularity_guidance(capsys):
 # ============================================================================
 
 
-@pytest.mark.skip(
-    reason="Phase 6 / T169 -- SKILL.md prose update is a separate phase. "
-    "Flip this test to active when T169 lands the granular-description "
-    "section in SKILL.md."
-)
 def test_skill_md_contains_granular_description_section():
-    """SKILL.md carries a dedicated section on granular-description
-    discipline (Phase 6 / T169 deliverable)."""
+    """SKILL.md carries a dedicated forceful section on the granular-
+    description discipline (D37 / T169 Phase 6 deliverable). Pins the
+    section heading + the rule statement's distinctive phrase + the
+    anti-pattern enumeration so a future edit that drops or weakens any
+    load-bearing piece fails here.
+
+    The canonical SKILL.md is the packaged version under
+    src/tackit/data/SKILL.md (what ships to users); the dev copies sync
+    from it per test_skill_md_dev_copies_match_canonical."""
     import pathlib
-    skill = pathlib.Path(__file__).resolve().parent.parent / "SKILL.md"
+    skill = (
+        pathlib.Path(__file__).resolve().parent.parent
+        / "src" / "tackit" / "data" / "SKILL.md"
+    )
     text = skill.read_text()
-    assert "granular-description" in text.lower() or "impl-ready" in text
+    # Section exists at top level (not buried).
+    assert "## The granular-description discipline" in text, (
+        "SKILL.md must carry a top-level `## The granular-description "
+        "discipline` section -- the primary teaching surface for D37. The "
+        "fresh-session-revisit rule lives here; without the section, the "
+        "discipline is only reachable via tool docstrings (which an agent "
+        "may skim) and not at session-start context load."
+    )
+    # The rule's distinctive phrase is present verbatim.
+    assert "implementation-ready" in text, (
+        "SKILL.md must carry the rule's distinctive phrase 'implementation-"
+        "ready' in the granular-description section. This is the anchor "
+        "agents grep for when looking up the discipline."
+    )
+    # The fresh-session-revisit framing is present.
+    assert "fresh-session" in text, (
+        "SKILL.md must frame D37 around fresh-session revisit -- the "
+        "negative-space test for whether a description is granular enough."
+    )
+    # Anti-patterns are enumerated (load-bearing — agents look here for the
+    # closed list of what's NOT allowed).
+    assert "Anti-patterns this discipline forbids" in text, (
+        "SKILL.md must enumerate the D37 anti-patterns explicitly. The "
+        "enumeration is what makes the rule actionable -- agents reference "
+        "the list when reviewing their own task bodies."
+    )
 
 
 def test_skill_md_contains_foldback_discipline_section():
