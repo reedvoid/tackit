@@ -270,6 +270,40 @@ def test_skill_md_verb_taxonomy_mentions_diff_edit_ops():
     )
 
 
+def test_skill_md_contains_logical_boundaries_signal():
+    """The canonical SKILL.md "Right-size tasks" bullet carries the
+    logical-boundaries signal phrase. Sharpens the existing "split it"
+    guidance with a concrete signal an agent can detect at add() time.
+
+    Memory [[logical-boundaries-task-split]] (2026-06-02) named the rule;
+    T169 (Phase 6 SKILL.md sweep) shipped without it -- enumeration-by-
+    named-target failure mode. This pin asserts the addition is present so
+    a future edit that drops it fails here. Distinctive phrases pinned:
+    the second-heading signal + the co-equal-sections qualifier (nested
+    detail is allowed; what's forbidden is sibling sections describing
+    independent units).
+    """
+    import pathlib
+    skill = (
+        pathlib.Path(__file__).resolve().parent.parent
+        / "src" / "tackit" / "data" / "SKILL.md"
+    )
+    text = skill.read_text()
+    assert "second `###` heading" in text, (
+        "SKILL.md `Right-size tasks` bullet must carry the second-heading "
+        "signal phrase. The signal is the actionable test an agent can run "
+        "at add() time -- without it, the existing 'split it' wording is "
+        "too abstract to fire on real bodies. Anchor: T168 grew to 54k "
+        "chars before the rule caught it."
+    )
+    assert "co-equal sections describing" in text, (
+        "SKILL.md must carry the co-equal-sections qualifier explicitly. "
+        "Without it the rule looks like 'no `###` allowed' -- nested detail "
+        "within one logical unit is fine; the forbidden shape is sibling "
+        "sections describing independent execution units."
+    )
+
+
 def test_skill_md_dev_copies_match_canonical():
     """The canonical SKILL.md (src/tackit/data/SKILL.md, ships in the
     package) and the dev copies (.claude/skills/tackit/SKILL.md, .agents/

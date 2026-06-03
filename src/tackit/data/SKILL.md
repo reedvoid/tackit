@@ -555,7 +555,15 @@ no such substring.
 - **Right-size tasks.** A task is a describable unit of work — a black-box feature —
   not one line of code, not a whole subsystem. If you can't describe it without
   listing implementation steps, it's too small; if it has many independent parts,
-  split it.
+  split it. **The concrete signal:** if you reach for a second `###` heading to
+  organize independent execution units in the body, the task has more than one
+  logical unit — file separate tasks rather than separate sections. Nested detail
+  within ONE unit is fine; what's forbidden is co-equal sections describing
+  distinct units. (Anchor: T168 grew to 54k chars under one umbrella body before
+  splitting into 8 phase tasks — every fold-back paid full-body retransmit cost
+  the split would have avoided. T179's diff-edit ops mitigate but don't replace
+  splitting at logical boundaries — the cascade-granularity and granular-
+  description-discipline reasons remain.)
 - **Write real `because` rationales.** When `link_add` requires `because`, describe
   the **coupling** between the two tasks — not the implementation, not the order
   of work. The cascade compares `because × delta` to filter stale neighbors; vague
