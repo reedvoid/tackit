@@ -451,3 +451,71 @@ def test_cli_help_for_every_subcommand_has_substantive_description():
                     _walk(nested, prefix=f"{full_name} ")
 
     _walk(subparsers_action)
+
+
+def test_top_level_help_renders_without_crash(capsys):
+    """Regression: `tackit --help` renders the whole subcommand list, which
+    runs argparse's _expand_help (`help % params`) on every subcommand's short
+    `help=` string. A literal `%` -- e.g. ``100% gone`` -- was parsed as a `%g`
+    conversion against the params dict and crashed with
+    `TypeError: must be real number, not dict`.
+
+    The per-subcommand tests above missed it: a single `tackit <cmd> --help`
+    only renders one description (the `description=` path, which argparse does
+    NOT %-expand), so the crash only fired when the TOP-LEVEL parser rendered
+    all subcommands' `help=` strings at once.
+
+    Note the `%%`-escape trap: the SAME string is passed as both `help=` (which
+    %-expands) and `description=` (which does not). Escaping as `%%` fixes the
+    crash but leaks a literal `100%%` into `tackit edit --help`. The durable
+    fix is to keep `%` out of these strings entirely. This test pins both: the
+    top-level path must not crash, and no `%%` may leak on either path.
+    """
+    import argparse
+    from tackit.cli import build_parser
+
+    parser = build_parser()
+    # format_help() on the top parser expands every subcommand's short help=.
+    rendered = parser.format_help()
+    assert "edit" in rendered
+    assert "completely gone" in rendered  # reworded away from "100% gone"
+
+    # Drive the real entry point the way a user does.
+    with pytest.raises(SystemExit) as exc:
+        main(["--help"])
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "completely gone" in out
+
+    # No literal `%%` may leak on the top-level path NOR any subcommand's
+    # description path (guards the %%-escape regression on every subparser).
+    assert "%%" not in out
+    subparsers_action = None
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            subparsers_action = action
+            break
+    assert subparsers_action is not None
+    for name, subparser in subparsers_action.choices.items():
+        assert "%%" not in subparser.format_help(), (
+            f"`tackit {name} --help` leaks a literal `%%` -- a `%` in the "
+            f"help/description string was escaped as `%%`, which the "
+            f"description path renders verbatim. Reword to drop the `%`."
+        )
+
+
+def test_version_flag_prints_package_version(capsys):
+    """T195: `tackit --version` prints the package version and exits 0 WITHOUT
+    requiring a subcommand. argparse's action="version" fires during parse and
+    exits before the required-subparser check -- this test pins that, rather
+    than assuming it. The printed version must track tackit.__version__ (single
+    source of truth), not a hardcoded literal.
+    """
+    import tackit
+
+    with pytest.raises(SystemExit) as exc:
+        main(["--version"])
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert tackit.__version__ in out
+    assert out.strip() == f"tackit {tackit.__version__}"

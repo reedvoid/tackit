@@ -20,7 +20,7 @@ import sys
 from contextlib import contextmanager
 from pathlib import Path
 
-from . import sync
+from . import __version__, sync
 from .core import Core, stale_alert_text
 from .db import init_store, require_store
 from .errors import TackitError
@@ -552,6 +552,13 @@ def build_parser() -> argparse.ArgumentParser:
         "Each command maps to a design slice (D#); see docs/plan/design.md.",
         parents=[common],
     )
+    # action="version" fires during parse and exits 0 before the required-
+    # subparser check, so `tackit --version` works with no subcommand (T195).
+    p.add_argument(
+        "--version",
+        action="version",
+        version=f"tackit {__version__}",
+    )
     sub = p.add_subparsers(dest="command", required=True)
 
     def add(name, handler, help_text, parents=(common,)):
@@ -622,7 +629,7 @@ def build_parser() -> argparse.ArgumentParser:
         _cmd_edit,
         "change a task -> stale its dependents (D13/D10 + D36 + D37). Use "
         "edit for ALL partial changes including major rewrites. If a design/"
-        "schema slice's premise is 100% gone, use retire() instead. If impl "
+        "schema slice's premise is completely gone, use retire() instead. If impl "
         "reveals under-defined details, edit() is the mechanism to fold "
         "them back BEFORE close -- closing with an out-of-date description "
         "destroys granularity for future readers. **Edits aren't free** -- "
@@ -702,7 +709,7 @@ def build_parser() -> argparse.ArgumentParser:
         _cmd_close,
         "close (refused if stale or status='spec') + print neighbors "
         "(D12 / D14 / D36). For production+meta only. Use edit() to refine "
-        "a design/schema decision; retire() if 100% abandoned.",
+        "a design/schema decision; retire() if completely abandoned.",
     )
     sp.add_argument("id", type=int)
 
@@ -738,7 +745,7 @@ def build_parser() -> argparse.ArgumentParser:
         "retire",
         _cmd_retire,
         "retire a design/schema slice: spec -> retired (D36). Use ONLY when "
-        "the decision is 100% gone with NO replacement -- partial changes "
+        "the decision is completely gone with NO replacement -- partial changes "
         "use edit(). Refused on open neighbors (resolve via link_rm + "
         "wont_do or link_rm alone first).",
     )

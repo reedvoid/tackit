@@ -16,4 +16,4 @@ Module -> design map:
   mcp_server.py   MCP stdio adapter (thin; schema auto-generated from type hints)
 """
 
-__version__ = "0.6.0"
+__version__ = "0.6.1"
