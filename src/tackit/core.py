@@ -1039,6 +1039,68 @@ class Core:
                 )
         return self.get(task_id)
 
+    def reconcile_many(self, ids: list[int]) -> list[Task]:
+        """D39 #1 - batch reconcile via an EXPLICIT id list: clear ``stale``
+        on every id in ONE transaction (one D18 version bump, not N).
+
+        Validate-all-first, fail loud: every id must exist and have status IN
+        ('open','spec'). Any terminal-status or unknown id refuses the WHOLE
+        batch (no partial sweep) and the error names ALL offending ids -- the
+        batch analog of reconcile()'s single-row refusal, so a skipped id
+        can't hide behind a partial success.
+
+        THE GUARD-RAIL (D39): this takes an explicit list -- the caller still
+        enumerates the set it judged still-correct. There is deliberately NO
+        'reconcile all stale' / 'reconcile everything matching rationale X'
+        form; that would automate the *judgment* the cascade depends on (the
+        edit-quality + D34 rubber-stamp failure mode). reconcile_many batches
+        transport, never judgment.
+
+        Per-row D20 no-op guard: an id that isn't stale is accepted and
+        changes nothing; if NO id is stale the transaction is skipped
+        entirely (no empty version bump)."""
+        # Validate every id BEFORE mutating; collect ALL offenders (fail loud).
+        rows: dict[int, sqlite3.Row] = {}
+        bad: list[str] = []
+        for task_id in ids:
+            row = self.conn.execute(
+                "SELECT * FROM tasks WHERE id = ?", (task_id,)
+            ).fetchone()
+            if row is None:
+                bad.append(f"{task_id} (no such task)")
+                continue
+            rows[task_id] = row
+            if row["status"] in ("closed", "wont_do", "retired"):
+                bad.append(
+                    f"{prefixed_id(row['kind'], task_id)} (status={row['status']!r})"
+                )
+        if bad:
+            raise InvariantError(
+                "REFUSED: reconcile is only allowed on status IN "
+                "('open','spec') -- terminal-status stale is record-only "
+                "archaeology (D28 + D36). These ids cannot be reconciled: "
+                + "; ".join(bad)
+                + ". No row was changed -- the whole batch is refused so a "
+                "partial sweep can't hide a skipped id."
+            )
+        # Only the genuinely-stale ids need an UPDATE (D20 no-op guard).
+        to_clear: list[int] = []
+        for task_id in ids:
+            if bool(rows[task_id]["stale"]):
+                to_clear.append(task_id)
+        if to_clear:
+            with self._mutate():
+                ts = _now()
+                for task_id in to_clear:
+                    self.conn.execute(
+                        "UPDATE tasks SET stale = 0, updated_at = ? WHERE id = ?",
+                        (ts, task_id),
+                    )
+        result: list[Task] = []
+        for task_id in ids:
+            result.append(self.get(task_id))
+        return result
+
     # ====================================================================
     # D9 - slice fetch
     # ====================================================================

@@ -174,7 +174,7 @@ def test_mcp_remaining_tools_all_work(tmp_path, monkeypatch):
         out["label_rm"] = _envelope(await s.call_tool("label_rm", {"id": 1, "label": "tag"}))
         await s.call_tool("close", {"id": 1})
         out["reopen"] = _envelope(await s.call_tool("reopen", {"id": 1}))
-        out["reconcile"] = _envelope(await s.call_tool("reconcile", {"id": 1}))
+        out["reconcile"] = _envelope(await s.call_tool("reconcile", {"ids": [1]}))
         out["ls"] = _envelope(await s.call_tool("ls", {}))
         out["stale"] = _envelope(await s.call_tool("stale", {}))
         out["render"] = _envelope(await s.call_tool("render", {"label": "design"}))
@@ -374,3 +374,46 @@ def test_mcp_stale_alert_full_form_on_writes(tmp_path, monkeypatch):
     )
     assert env["stale_alert"]["count"] == 1
     assert env["stale_alert"]["stale_task_ids"] == [2]
+
+
+def test_mcp_link_add_returns_compact_confirmation(tmp_path, monkeypatch):
+    """D39 #2: link_add returns a compact {"linked": {a,b,because}}, not `a`'s
+    full slice. link_add is structural (no cascade), so bulk wiring shouldn't
+    re-echo a high-degree node's whole neighborhood per edge."""
+    async def scenario(s):
+        await s.call_tool("add", {"name": "alpha spec", "kind": "design"})     # D1
+        await s.call_tool("add", {"name": "beta impl", "kind": "production"})  # T2
+        return _envelope(await s.call_tool(
+            "link_add",
+            {"a": 2, "b": 1, "because": "T2 realizes D1's contract", "delta": "wire"},
+        ))
+
+    env = _drive(tmp_path, monkeypatch, scenario)
+    assert env["result"] == {
+        "linked": {"a": 2, "b": 1, "because": "T2 realizes D1's contract"}
+    }
+    # NOT a slice — no task body or neighbor lists echoed back.
+    assert "task" not in env["result"]
+    assert "dependencies" not in env["result"]
+
+
+def test_mcp_reconcile_ids_compact_payload_and_short_alert(tmp_path, monkeypatch):
+    """D39 #1+#6: reconcile(ids) returns {"reconciled","remaining_stale"} and a
+    SHORT stale alert during the sweep, not the full obligation paragraph."""
+    async def scenario(s):
+        await s.call_tool("add", {"name": "hub", "kind": "production"})     # 1
+        await s.call_tool("add", {"name": "leaf a", "kind": "production"})  # 2
+        await s.call_tool("add", {"name": "leaf b", "kind": "production"})  # 3
+        await s.call_tool("link_add", {"a": 2, "b": 1, "because": "a realizes hub", "delta": "w"})
+        await s.call_tool("link_add", {"a": 3, "b": 1, "because": "b realizes hub", "delta": "w"})
+        await s.call_tool("edit", {"id": 1, "description": "shift", "delta": "hub shift"})  # stales 2,3
+        return _envelope(await s.call_tool("reconcile", {"ids": [2]}))
+
+    env = _drive(tmp_path, monkeypatch, scenario)
+    assert env["result"] == {"reconciled": [2], "remaining_stale": 1}
+    # Short alert form (M181 #8b), not the full obligation paragraph.
+    assert env["stale_alert"] is not None
+    msg = env["stale_alert"]["message"]
+    assert "see `stale` for the list" in msg
+    assert "STALE TASKS OUTSTANDING" not in msg
+    assert env["stale_alert"]["count"] == 1

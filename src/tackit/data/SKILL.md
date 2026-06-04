@@ -407,6 +407,14 @@ you see a stale alert, act on it.
 - **Work the obligation-bearing stale set to empty.** The pass is done only
   when the worklist (`stale`) — already filtered by D28 — is empty. Drift
   propagates only where real changes happen.
+- **Reconcile a reviewed-clean set in one call — `reconcile(ids=[...])` (D39).**
+  When one edit stales several genuinely-fine neighbors, don't make N calls:
+  pass the explicit list of ids you reviewed. It's atomic (one version bump),
+  and the sweep emits a short alert instead of the full obligation paragraph
+  N×. **The list is explicit on purpose** — there is no "reconcile all stale"
+  shortcut, because that would automate the judgment the cascade depends on,
+  which is the rubber-stamp this whole discipline exists to prevent. Batch the
+  redundant transport (one review executed N×), never the review itself.
 - **Never treat work as done — never end your turn — while any
   obligation-bearing stale task remains.** A task left closed while something
   it depends on changed is the single worst outcome this tool exists to
@@ -450,7 +458,10 @@ slices it realizes, use the deterministic `links` op:
    `link_add` to a retired endpoint is refused (D36). Iterate the same
    judge-or-skip pass.
 4. **Stop when satisfied**, then `link_add` each chosen edge with a real
-   `because` rationale describing the coupling.
+   `because` rationale describing the coupling. (`link_add` returns a compact
+   confirmation, not the full slice — it's structural and doesn't cascade, so
+   bulk wiring stays cheap; `show` the endpoint if you want its neighborhood.
+   D39 #2.)
 
 For meta tasks: scan within the meta island only (meta-island constraint
 forbids cross-kind links). For design/schema: scan within the same layer.

@@ -299,15 +299,32 @@ def build_server() -> FastMCP:
             return _wrap(c, c.retire(id, reason=reason, delta=delta).model_dump(mode="json"))
 
     @mcp.tool()
-    def reconcile(id: int) -> dict:
-        """Clear a task's stale flag after reviewing it as still-correct
-        (D11 + D28 + D36). Does not cascade (no content changed).
+    def reconcile(ids: list[int]) -> dict:
+        """Batch-reconcile an EXPLICIT list of task ids: clear ``stale`` on
+        each after reviewing them as still-correct (D11 + D28 + D36 + D39).
+        Does not cascade (no content changed). One transaction, one version
+        bump. Pass ``[id]`` to reconcile a single task.
 
-        REFUSED on status IN ('closed','wont_do','retired') -- stale on
-        these is record-only archaeology (D28 + D36); clearing it would
-        erase the historical signal that an upstream changed."""
+        Validate-all-first: any terminal-status (closed/wont_do/retired) or
+        unknown id refuses the WHOLE batch and names every offender -- stale
+        on terminal rows is record-only archaeology that can't be cleared.
+
+        D39 GUARD-RAIL: the list is explicit on purpose -- you still
+        enumerate the set you judged still-correct. There is deliberately no
+        'reconcile all stale' form; that would automate the judgment the
+        cascade depends on (the rubber-stamp failure mode the edit-quality +
+        D34 disciplines prevent). reconcile batches transport, not judgment.
+
+        Returns ``{"reconciled": [ids], "remaining_stale": N}`` with a SHORT
+        alert -- a known-clean sweep doesn't reprint the full obligation
+        paragraph on every call (D39 #6)."""
         with _core() as c:
-            return _wrap(c, c.reconcile(id).model_dump(mode="json"))
+            c.reconcile_many(ids)
+            return _wrap(
+                c,
+                {"reconciled": ids, "remaining_stale": len(c.stale_worklist())},
+                short_alert=True,
+            )
 
     @mcp.tool()
     def reclassify(id: int, kind: str, delta: str) -> dict:
@@ -344,11 +361,20 @@ def build_server() -> FastMCP:
         only "they're in the same epic/theme," that's MEMBERSHIP, not coupling
         -- attach a shared label instead of a link. A because that merely
         restates a cluster's label name is a membership edge wearing a coupling
-        costume, and is pure cascade noise. Returns ``a``'s slice."""
+        costume, and is pure cascade noise.
+
+        D39 #2 -- returns a COMPACT confirmation ``{"linked": {"a", "b",
+        "because"}}``, not ``a``'s full slice. link_add is structural (it
+        does not fire the cascade), so the neighborhood echo carries no
+        obligation the caller must act on; reprinting a high-degree node's
+        whole neighborhood on every bulk edge was pure context tax. Use
+        ``show(a)`` when you actually want the slice."""
         with _core() as c:
+            c.link_add(a, b, because=because, delta=delta)
             return _wrap(
                 c,
-                c.link_add(a, b, because=because, delta=delta).model_dump(mode="json"),
+                {"linked": {"a": a, "b": b, "because": because}},
+                short_alert=True,
             )
 
     @mcp.tool()

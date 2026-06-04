@@ -345,8 +345,19 @@ def _cmd_reclassify(args) -> int:
 
 def _cmd_reconcile(args) -> int:
     with _core_session() as core:
-        t = core.reconcile(args.id)
-        _emit("reconciled (stale cleared) " + _fmt_task(t), _dump(t), args.json)
+        tasks = core.reconcile_many(args.ids)
+        remaining = len(core.stale_worklist())
+        reconciled_ids: list[int] = []
+        id_strs: list[str] = []
+        for t in tasks:
+            reconciled_ids.append(t.id)
+            id_strs.append(str(t.id))
+        _emit(
+            f"reconciled {len(tasks)} (stale cleared): {', '.join(id_strs)}; "
+            f"remaining stale: {remaining}",
+            {"reconciled": reconciled_ids, "remaining_stale": remaining},
+            args.json,
+        )
     return 0
 
 
@@ -766,11 +777,14 @@ def build_parser() -> argparse.ArgumentParser:
     sp = add(
         "reconcile",
         _cmd_reconcile,
-        "clear stale without changing (reviewed-OK, D11). Refused on "
-        "status IN ('closed','wont_do','retired') -- stale on these is "
-        "record-only archaeology (D28 + D36).",
+        "clear stale on one or more ids without changing them (reviewed-OK, "
+        "D11 + D39). Batch via an explicit id list (one transaction); any "
+        "terminal-status id (closed/wont_do/retired) refuses the whole batch "
+        "-- stale on those is record-only archaeology (D28 + D36). No "
+        "'reconcile all' form by design (D39 guard-rail: that would automate "
+        "the judgment the cascade depends on).",
     )
-    sp.add_argument("id", type=int)
+    sp.add_argument("ids", type=int, nargs="+")
 
     sp = add(
         "reclassify",

@@ -417,7 +417,10 @@ point:
   (closed/wont_do/retired) is record-only archaeology and does NOT pressure the
   worklist or the close-gate. Review each obligation-bearing stale task against its
   linked neighbors, then `edit` or `reconcile`. Never end a turn while obligation-
-  bearing stale remains.
+  bearing stale remains. Clear a reviewed-clean set in one call with
+  `reconcile(ids=[...])` (atomic, short alert) — but the list is explicit by design;
+  there is no "reconcile all" shortcut, because that would automate the judgment the
+  cascade depends on (D39).
 - Reuse labels before creating new ones (run `labels` first). A label must earn its
   name — a phase, epic, or use case — never an implementation detail or a one-off.
 - After any task change, report back in a scannable, verb-grouped layout

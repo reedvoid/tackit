@@ -978,6 +978,35 @@ The failure that produced this slice was NOT a missing prohibition — the agent
 SKILL.md (replace the epic snippet in the Labels section + add this discipline section + tighten the Right-size and Write-real-because bullets), README for-agents discipline block, MCP `add()` docstring (the missing too-large / hub / rollup direction — currently only catches too-small) + `link_add()` docstring (because = consequence not category), and a presence-pinning test mirroring test_d37_docstrings.py.
 
 Backs/refines: D34 (because semantics + FAST filter) — coupling link to it.', 'spec', 0, '2026-06-04T16:44:45.843164+00:00', '2026-06-04T16:44:45.843164+00:00', 'design', NULL);
+INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (199, 'D39 — Bulk-sweep ergonomics: compact link_add return, batch reconcile(ids), short alert on reconcile', 'Cuts the per-op token tax that makes bulk/sweep operations expensive — the T179 large-body pattern resurfacing on the RESPONSE and SWEEP side. From dogfood friction on a large schema backfill (#2/#1/#6 of that report). tackit was built interactive-single-op-first; its origin use case (import a large plan) and the messy-backfill reality are bulk.
+
+## #2 — link_add returns a compact confirmation, not the full slice
+Today MCP `link_add` returns `a`''s full slice (task body + dependencies + dependents, each neighbor listed twice). Wiring N edges through a high-degree node (e.g. a schema hub with 8 neighbors) reprints its whole neighborhood on every edge — pure context tax.
+
+**Decision:** MCP `link_add` returns `{"linked": {"a": <id>, "b": <id>, "because": <str>}}` + the standard envelope with `short_alert=True`. NOT the full slice. Rationale: link_add is STRUCTURAL — it does not cascade (skill: link ops don''t fire the cascade), so the neighborhood echo carries no obligation the caller must act on; confirmation that the edge landed is all that''s needed. Use `show(a)` for the slice when actually wanted. No `verbose` flag (YAGNI — show() is the escape hatch). `core.link_add` is UNCHANGED (it returns the Task; only the MCP wrapper''s payload shrinks).
+
+## #1 — batch reconcile via an EXPLICIT id list
+Today `reconcile(id)` is single. One edit that stales 7 genuinely-fine neighbors costs 7 round trips (and 7 D18 version bumps).
+
+**Decision:** add `core.reconcile_many(ids: list[int]) -> list[Task]` and expose MCP `reconcile(ids: list[int])` (CLI: `tackit reconcile <id>...`, nargs="+"). `core.reconcile(task_id)` stays UNCHANGED (≈80 test call sites + the atomic single primitive). reconcile_many: **validate-all-first, fail-loud** — collect every terminal/invalid id and raise listing all of them BEFORE any mutation (no partial sweep), then clear stale per-row (D20 no-op guard each), in ONE `_mutate()` (one version bump, not N).
+
+**THE GUARD-RAIL (load-bearing — do not relax):** the batch form takes an **explicit id list**. The agent still enumerates the set it judged clean. There is deliberately **NO** `reconcile_all_stale()` / "reconcile every neighbor matching rationale X" auto-clear form. That would automate the *judgment*, which is exactly the rubber-stamp the edit-quality + D34 disciplines exist to prevent — and a cascade trained on noise stops catching real drift. reconcile_many batches *transport*, never *judgment*: making 7 identical calls was never 7 acts of review, it was one review executed 7×; collapse the transport, keep the review. A future "let''s just clear all stale" convenience is the anti-feature this slice forbids.
+
+## #6 — short alert on the reconcile sweep
+Today MCP `reconcile` emits the full forceful stale_alert on every call; across a known-clean N-task sweep that''s the long message repeated N×.
+
+**Decision:** MCP `reconcile` uses `short_alert=True` (the M181 #8b mechanism already built for read ops) — the compact form still surfaces the remaining worklist count, which is the only live signal during a drain. Returns `{"reconciled": [<ids>], "remaining_stale": <worklist count>}` + short_alert, not N full slices.
+
+## Surfaces (propagation principle)
+- `core.py`: new `reconcile_many`.
+- `mcp_server.py`: `link_add` compact return; `reconcile(ids)` → reconcile_many + short_alert.
+- `cli.py`: `reconcile` takes nargs="+" ids; help text.
+- MCP docstrings (link_add return note; reconcile batch + guard-rail) + CLI --help.
+- SKILL.md: the reconciliation-discipline section gains "batch via explicit ids; no auto-clear-all (the guard-rail)"; a note that link_add returns compact.
+- README for-agents block: one-liner.
+- Tests: reconcile_many (atomic validate-all-first, one version bump, no-op rows, terminal-id refusal lists all); link_add compact-return shape; reconcile short_alert + compact payload; update the 3 MCP + 2 CLI reconcile call sites to the list form.
+
+Couples to: the edit-quality / reconciliation discipline (the guard-rail is why this isn''t a pure ergonomic change) and M181 #8b (short_alert, reused for #6).', 'spec', 0, '2026-06-04T17:17:46.466807+00:00', '2026-06-04T17:17:46.466807+00:00', 'design', NULL);
 INSERT INTO task_labels (task_id, label) VALUES (37, 'core');
 INSERT INTO task_labels (task_id, label) VALUES (37, 'schema');
 INSERT INTO task_labels (task_id, label) VALUES (38, 'schema');
@@ -1059,6 +1088,8 @@ INSERT INTO task_labels (task_id, label) VALUES (167, 'v0.5');
 INSERT INTO task_labels (task_id, label) VALUES (171, 'v0.5');
 INSERT INTO task_labels (task_id, label) VALUES (172, 'v0.5');
 INSERT INTO task_labels (task_id, label) VALUES (197, 'skill');
+INSERT INTO task_labels (task_id, label) VALUES (199, 'mcp');
+INSERT INTO task_labels (task_id, label) VALUES (199, 'skill');
 INSERT INTO links (id, task_a, task_b, because) VALUES (60, 43, 44, 'D2 (typed Pydantic validation at the read/write boundary) is the mechanism that gates writes into D1''s persistent store, so any change to D2''s validation rules (e.g. NUL/surrogate refusal) or to D1''s store contract forces the other to be re-evaluated.');
 INSERT INTO links (id, task_a, task_b, because) VALUES (61, 44, 45, 'D3''s create/read/update operations are the surface that pushes input through D2''s Pydantic validation boundary, so any change to D3''s CRUD signatures or to D2''s validation rules forces the other to be re-evaluated.');
 INSERT INTO links (id, task_a, task_b, because) VALUES (63, 45, 46, 'D4 labels attach to D3 tasks (label_add takes a task id and a label string), so any change to D3''s task identity/CRUD or to D4''s attach-and-list contract forces the other to be re-evaluated.');
@@ -1281,6 +1312,7 @@ INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at)
 INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (425, 171, 'open', 'spec', '2026-06-02T21:24:49.984195+00:00');
 INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (426, 172, 'open', 'spec', '2026-06-02T21:24:49.984195+00:00');
 INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (477, 197, NULL, 'spec', '2026-06-04T16:44:45.843384+00:00');
+INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (480, 199, NULL, 'spec', '2026-06-04T17:17:46.467614+00:00');
 INSERT INTO description_revisions (id, task_id, prev_name, prev_description, delta, edited_at) VALUES (1, 133, 'D7 (relaxed) — Status + stale flag (T123)', 'A task''s status is open or closed -- informational only; it never gates traversal. A separate stale flag marks a task as one whose linked neighbors changed under it and must be reviewed. T123 (2026-06-01) RETIRED the v0.2.0 invariant ''stale => open'' that the original D7 (T49, superseded) carried: cascade-staling a closed neighbor now leaves status=''closed'' + stale=True, signalling ''the upstream changed; review for supersede / link migration'' while keeping the closed task immutable per T118 (no-edit-closed). The action menu on closed-stale: reconcile (clear stale, status untouched), supersede (replace the premise with a new task), link_rm / link_add (migrate edges), label_add / label_rm. edit() is STILL refused on any closed task -- T118 is unchanged. The no-op rule (D20) and the close-gate (D14: close refused if stale or linked-stale, applies regardless of status) are also unchanged.', 'rewrote D7 for v0.4 bounded-obligation: closed/wont_do stale is record-only per D28; reconcile refused on closed/wont_do; edit-on-closed safe per D29; supersede action menu removed', '2026-06-01T23:23:55.536042+00:00');
 INSERT INTO description_revisions (id, task_id, prev_name, prev_description, delta, edited_at) VALUES (2, 52, 'D10 — Stale propagation (mark-before-change)', 'Before a task is edited, mark its linked tasks (both endpoints'' view; D6) stale, leaving status untouched (T123: closed neighbors stay closed + stale=True per the relaxed D7 invariant). Recording the obligation before the mutation makes an interrupted reconciliation crash-safe: the marks survive a dead session. Propagation is one hop — it does not cascade transitively on its own; it flows only where a real change actually happens (D13).
 Cascade bounded by kind (D26): the cascade fires both directions of any link, but the meta-island constraint (D26: a link_add between a meta task and a non-meta task is refused at D14) means the propagation cannot bleed between meta work and spec/production work — there are no links across the kind boundary to traverse.
