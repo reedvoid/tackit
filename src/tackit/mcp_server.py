@@ -116,6 +116,35 @@ def build_server() -> FastMCP:
             return _wrap(c, hits, short_alert=True)
 
     @mcp.tool()
+    def links(
+        ids: list[int] | None = None, already_seen: list[int] | None = None
+    ) -> dict:
+        """Deterministic link-discovery primitive (D27) -- prefer this over
+        `search` for wiring a new task to the specs/tasks it couples to.
+        Two modes:
+
+          * no ``ids`` (or empty) -> the ANCHOR LAYER: all design + schema
+            slices (status IN ('open','spec')), id-sorted. Production work
+            links into this spec layer.
+          * ``ids=[...]`` -> every task linked at depth=1 to any input id,
+            minus the inputs themselves and minus ``already_seen``. Iteration
+            is caller-driven: pass your accumulated "judged" set as
+            ``already_seen`` so each next hop excludes what you've handled.
+
+        Both modes filter to viable link targets (status IN ('open','spec'));
+        closed/wont_do production and retired design/schema are excluded
+        (link_add to a retired endpoint is refused, D36). The per-edge
+        ``because`` / ``last_edit_delta`` fields are None here -- a links()
+        candidate isn't tied to one edge from the input's perspective
+        (NeighborRef). Judge each candidate; `link_add` the real couplings
+        with a `because` (never a membership edge -- see D38)."""
+        with _core() as c:
+            out = []
+            for n in c.links(ids=ids, already_seen=already_seen):
+                out.append(n.model_dump(mode="json"))
+            return _wrap(c, out, short_alert=True)
+
+    @mcp.tool()
     def edit(id: int, delta: str, name: str | None = None, description: str | None = None) -> dict:
         """Edit a task (D13 + T117 + D29 + D36 + D37). First marks its direct
         linked tasks stale (D10); returns the task plus the now-stale set you

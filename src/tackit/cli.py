@@ -239,6 +239,31 @@ def _cmd_search(args) -> int:
     return 0
 
 
+def _cmd_links(args) -> int:
+    with _core_session() as core:
+        if args.ids:
+            ids = args.ids
+        else:
+            ids = None
+        if args.seen:
+            seen = args.seen
+        else:
+            seen = None
+        neighbors = core.links(ids=ids, already_seen=seen)
+        if neighbors:
+            lines = []
+            for n in neighbors:
+                lines.append(f"{n.prefixed_name} [{_flags(n.status, n.stale)}]")
+            text = "\n".join(lines)
+        else:
+            text = "(no candidates)"
+        payload = []
+        for n in neighbors:
+            payload.append(_dump(n))
+        _emit(text, payload, args.json)
+    return 0
+
+
 def _cmd_edit(args) -> int:
     with _core_session() as core:
         result = core.edit(args.id, delta=args.delta, name=args.name, description=args.desc)
@@ -628,6 +653,17 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="scope match to the name column only (no description hits).",
     )
+
+    sp = add(
+        "links",
+        _cmd_links,
+        "deterministic link-discovery (D27): no ids -> the design+schema "
+        "anchor layer; ids... -> their depth-1 neighborhood (viable targets "
+        "only, status in open/spec). Prefer over search for wiring deps.",
+    )
+    sp.add_argument("ids", type=int, nargs="*", help="seed ids; omit for the anchor layer")
+    sp.add_argument("--seen", type=int, nargs="*", default=[],
+                    help="ids already judged (excluded from the next hop)")
 
     sp = add("load", _cmd_load, "bulk-import a plan atomically: [key] tasks with "
              "multi-paragraph desc + depends_on by key (D24/D40). Prefer over N adds.")

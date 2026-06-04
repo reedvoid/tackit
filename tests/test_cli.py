@@ -519,3 +519,18 @@ def test_version_flag_prints_package_version(capsys):
     out = capsys.readouterr().out
     assert tackit.__version__ in out
     assert out.strip() == f"tackit {tackit.__version__}"
+
+
+def test_cli_links_anchor_and_neighborhood(cli, capsys):
+    """T204: `tackit links` exposes the D27 discovery op. No ids -> the
+    design+schema anchor layer; an id -> its depth-1 neighborhood."""
+    main(["add", "decision", "--kind", "design"])   # D1
+    main(["add", "impl", "--kind", "production"])    # T2
+    main(["link", "add", "2", "1", "--because", "T2 realizes D1", "--delta", "w"])
+    capsys.readouterr()
+    assert main(["links", "--json"]) == 0            # anchor layer
+    anchors = json.loads(capsys.readouterr().out)
+    assert [n["id"] for n in anchors] == [1]         # design slice only
+    assert main(["links", "1", "--json"]) == 0       # D1's neighborhood
+    nbrs = json.loads(capsys.readouterr().out)
+    assert [n["id"] for n in nbrs] == [2]            # T2

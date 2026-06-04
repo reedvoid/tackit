@@ -41,8 +41,8 @@ def test_mcp_registers_all_tools(tmp_path, monkeypatch):
         return [t.name for t in listing.tools]
 
     names = _drive(tmp_path, monkeypatch, scenario)
-    assert len(names) == 23  # +2 T179: edit_append + edit_replace_substring
-    expected = {"add", "show", "search", "edit", "edit_append",
+    assert len(names) == 24  # +2 T179 (edit_append/replace); +1 T204 (links)
+    expected = {"add", "show", "search", "links", "edit", "edit_append",
                 "edit_replace_substring", "close", "reconcile", "link_add",
                 "stale", "labels", "load", "board", "reclassify", "wont_do",
                 "retire"}
@@ -417,3 +417,24 @@ def test_mcp_reconcile_ids_compact_payload_and_short_alert(tmp_path, monkeypatch
     assert "see `stale` for the list" in msg
     assert "STALE TASKS OUTSTANDING" not in msg
     assert env["stale_alert"]["count"] == 1
+
+
+def test_mcp_links_op_is_reachable(tmp_path, monkeypatch):
+    """T204: the links discovery op (D27) is reachable via MCP. No input ->
+    the design+schema anchor layer (production excluded); ids=[x] -> x's
+    depth-1 neighborhood. Previously core.links() existed but no MCP tool
+    exposed it, so SKILL.md's prescribed discovery workflow was unreachable."""
+    async def scenario(s):
+        out = {}
+        await s.call_tool("add", {"name": "decision slice", "kind": "design"})  # D1
+        await s.call_tool("add", {"name": "store shape", "kind": "schema"})     # S2
+        await s.call_tool("add", {"name": "impl task", "kind": "production"})    # T3
+        await s.call_tool("link_add", {"a": 3, "b": 1,
+            "because": "T3 realizes D1's decision", "delta": "wire"})
+        out["anchors"] = _envelope(await s.call_tool("links", {}))
+        out["nbrs"] = _envelope(await s.call_tool("links", {"ids": [1]}))
+        return out
+
+    out = _drive(tmp_path, monkeypatch, scenario)
+    assert [n["id"] for n in out["anchors"]["result"]] == [1, 2]  # design+schema only
+    assert [n["id"] for n in out["nbrs"]["result"]] == [3]        # T3 at depth 1
