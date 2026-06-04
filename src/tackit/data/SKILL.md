@@ -2,10 +2,11 @@
 name: tackit
 description: Use whenever planning, tracking, or executing work in a project that
   uses tackit (a task + dependency tracker). Covers when to record work in tackit,
-  the reconcile-on-change discipline, the v0.4 verb taxonomy (edit / close /
-  wont_do — supersede retired), the bounded-obligation cascade (closed-stale is
-  record only), the kind classification rule (design/schema as living spec), and
-  the mandatory code↔task naming convention.
+  the reconcile-on-change discipline, the v0.5 verb taxonomy (edit / close /
+  wont_do / retire) over the kind/status partition (design+schema live at
+  status='spec'; production+meta at open/closed/wont_do), the bounded-obligation
+  cascade (terminal-status stale is record-only), the kind classification rule
+  (design/schema as living spec), and the mandatory code↔task naming convention.
 ---
 
 # Working with tackit
@@ -116,9 +117,13 @@ refused, because the `kind` property already encodes that distinction.
 
 ## The verb taxonomy — when to use which
 
-Tackit (v0.5) has **four** verbs that change a task's state. They are not
-interchangeable and the mechanism enforces the distinctions via partition-
-aware refusals. (v0.3's `supersede` verb was retired in v0.4 — it required
+Tackit (v0.5) has **four verb families** that change a task's content or
+terminal state — `edit` (with three diff-shaped variants, below), `close`,
+`wont_do`, and `retire`. They are not interchangeable and the mechanism
+enforces the distinctions via partition-aware refusals. (`reopen`,
+`reconcile`, and `reclassify` also change state, but each has its own section;
+this taxonomy is about the content/terminal verbs.) (v0.3's `supersede` verb
+was retired in v0.4 — it required
 tasks to be atomic enough that "premise replaced" applied to the whole bundle,
 which broke down in practice when only one of several facets was invalidated.
 The v0.4+ model: edits are allowed on any status, and an append-only audit
@@ -192,6 +197,16 @@ abandoned. **Refused on retired** (D36 — no double-decide). On close, the
 obligation payload returns one-hop neighbors so you can review whether
 anything needs follow-up.
 
+### reopen — resume closed work
+Move a closed task back to open (D7/D8, logged). Use when the **same** work
+resumes — you closed it, then found there's more to do under the same premise.
+**Refused on wont_do and retired** (T132 / D36 — those are terminal forever).
+Does not cascade (status change, not a content edit). The boundary that's easy
+to get wrong: reopen is for "we're not actually done," whereas a **new
+direction** is a fresh task — same rule as the wont_do change-of-mind path. If
+the premise changed, don't reopen the old row to mean something new; file a new
+task and leave the closed one as the historical record of what was done.
+
 ### wont_do — decided not to do
 Use when the scope is dropped, not delivered. **Distinct from close** — close
 means "we did this," wont_do means "we decided not to do this." Takes a
@@ -246,6 +261,7 @@ direction; do not reanimate the retired row.
 |-----------|------------|
 | Task's content needs to change (any status) | `edit` |
 | Production/meta deliverable has shipped | `close` |
+| Closed production/meta work resuming (same premise, not a new direction) | `reopen` |
 | Production/meta scope being dropped | `wont_do` |
 | Design/schema spec 100% gone, no replacement | `retire` |
 | Design/schema spec partially changed | `edit` (and let cascade prompt link review) |
@@ -382,7 +398,8 @@ outstanding worklist in front of you** — this is not a reminder you can opt
 out of; it is the tool telling you the plan is currently inconsistent. When
 you see a stale alert, act on it.
 
-- **Cascade-firing ops are edit and reclassify.** Each marks the directly
+- **Cascade-firing ops are the edit family (`edit` / `edit_append` /
+  `edit_replace_substring`) and `reclassify`.** Each marks the directly
   linked neighbors stale + records the agent's `delta` for the cascade-
   ergonomics filter. Other status verbs (close, wont_do, reopen, reconcile)
   do NOT cascade. Link ops (link_add, link_rm) don't cascade either — they're
@@ -679,6 +696,11 @@ no such substring.
   naming *why these two tasks must be reviewed together when one changes*. If the
   only honest answer is "they're in the same epic," that's *membership*, not
   coupling — attach a shared label instead of a link (D38).
+- **`ls` vs `board` — which query.** `ls` gives a quick filtered list of
+  ids + titles (by status / label / stale); `board` returns each matching task
+  as a full slice (its dependencies, dependents, and labels) in one call. Reach
+  for `board` when you need the graph structure (e.g. "is this label's cluster
+  complete, and how is it wired?"); use `ls` when you just need the list.
 
 ## Labels — when one earns its existence
 A label groups tasks along a meaningful project axis — the kind of grouping you'd name
@@ -739,8 +761,9 @@ productive and quietly poison the cascade.
 genuinely need to re-open Y and check it still holds?* Yes → coupling → **link**.
 "No, they're just both part of the same epic" → membership → **label**.
 
-**The `because` is the discriminator** (it is exactly what the D34 FAST filter
-reads). A coupling `because` names a *consequence* — "citations' FK references
+**The `because` is the discriminator** (it is exactly what the delta × because
+FAST filter from the reconciliation discipline above keys on — D34). A coupling
+`because` names a *consequence* — "citations' FK references
 `documents.id`; a column rename here breaks the join." A membership `because`
 merely restates a *category* — "part of the plan-import epic," "schema-ingest
 cluster." **When the `because` you are about to write is the cluster's label
