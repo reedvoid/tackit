@@ -85,6 +85,12 @@ def parse_plan(text: str) -> list[dict]:
     # T164: same idea for ``depends_on:`` continuation lines. Each continuation
     # is one dep entry of the form ``<key> :: <because rationale>``.
     deps_indent: int | None = None
+    # D40: blank lines seen while collecting a ``desc`` are DEFERRED -- a blank
+    # becomes a paragraph break iff a desc continuation line follows; if a
+    # field / [key] / EOF follows instead, the trailing blanks are discarded
+    # and the block simply ends. Lets multi-paragraph D37-grade bodies
+    # round-trip through ``load`` (the parser used to hard-fail on them).
+    pending_blank_lines: int = 0
     for lineno, raw in enumerate(text.splitlines(), start=1):
         indent = len(raw) - len(raw.lstrip())
         stripped = raw.strip()
@@ -92,6 +98,11 @@ def parse_plan(text: str) -> list[dict]:
         # FIRST so description text may itself contain a leading `#` or a `word:` that
         # would otherwise be read as a comment or a field.
         if current is not None and desc_indent is not None and stripped and indent > desc_indent:
+            # D40: a continuation line confirms any deferred blank lines were
+            # real paragraph breaks inside the desc -- flush them first.
+            if pending_blank_lines:
+                current["desc"] = current["desc"] + ("\n" * pending_blank_lines)
+                pending_blank_lines = 0
             if current["desc"]:
                 current["desc"] = current["desc"] + "\n" + stripped
             else:
@@ -122,15 +133,23 @@ def parse_plan(text: str) -> list[dict]:
                 )
             current["depends_on"].append({"key": dep_key, "because": because})
             continue
-        # Blank line ends a desc/deps block; blank lines and comments are otherwise ignored.
+        # Blank/comment handling. A blank line ends a deps block, but inside a
+        # desc block it is DEFERRED (D40): remembered as a possible paragraph
+        # break, resolved when the next non-blank line arrives (continuation =>
+        # paragraph break; structural line / EOF => block already ended).
         if not stripped or stripped.startswith("#"):
             if not stripped:
-                desc_indent = None
                 deps_indent = None
+                if desc_indent is not None:
+                    pending_blank_lines += 1
+                else:
+                    pending_blank_lines = 0
             continue
-        # Any structural line (key / field) ends a desc/deps block.
+        # Any structural line (key / field) ends a desc/deps block; trailing
+        # deferred blanks before it were NOT part of the desc -- discard them.
         desc_indent = None
         deps_indent = None
+        pending_blank_lines = 0
         key_match = _KEY_LINE.match(raw.rstrip())
         if key_match:
             key = key_match.group(1)

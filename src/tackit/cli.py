@@ -629,7 +629,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="scope match to the name column only (no description hits).",
     )
 
-    sp = add("load", _cmd_load, "bulk-import a plan: [key] tasks + depends_on by key (D24)")
+    sp = add("load", _cmd_load, "bulk-import a plan atomically: [key] tasks with "
+             "multi-paragraph desc + depends_on by key (D24/D40). Prefer over N adds.")
     sp.add_argument("file", nargs="?", help="plan file (omit to read stdin)")
 
     sp = add("show", _cmd_show, "slice fetch: task + deps + dependents + labels (D9)")

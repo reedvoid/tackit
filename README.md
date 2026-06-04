@@ -399,6 +399,9 @@ point:
 ## tackit
 - tackit is this project's single source of truth for tasks + dependencies. If it
   isn't in tackit, it isn't tracked. It is not a knowledge base.
+- Importing many tasks at once (a plan, a backfill)? Use `load`, not N `add()` calls —
+  one atomic import carrying full multi-paragraph descriptions, labels, and
+  `depends_on` edges with `because` rationales (D24/D40).
 - Code ↔ task traceability is MANDATORY. When you implement a tackit task, cite its
   id (e.g. `T42`) and reuse the task's distinctive vocabulary in file/function names
   and comments, so a future session can grep from code to intent and back. Treat a

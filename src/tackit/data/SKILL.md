@@ -23,6 +23,13 @@ that drift and contradict each other.
   written down.
 - tackit is **not** a knowledge base. Durable learnings and external references
   belong to your memory, not here. Keep tackit to actionable tasks + dependencies.
+- **Importing many tasks at once** (a plan, a backfill, a migration) is what
+  `load` is for — one atomic call (whole import rolls back on any bad row), not
+  N separate `add()` calls. The plan format carries the full task: `kind`,
+  a multi-paragraph `desc` (blank-line paragraph breaks are preserved, so
+  impl-ready D37-grade bodies round-trip), `labels`, and `depends_on:` edges
+  with per-entry `because` rationales. Reach for `load` whenever you're about
+  to create more than a couple of related tasks.
 
 ## Kinds — every task is classified by what it touches
 

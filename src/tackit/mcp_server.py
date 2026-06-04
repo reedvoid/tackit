@@ -449,12 +449,19 @@ def build_server() -> FastMCP:
 
     @mcp.tool()
     def load(plan: str) -> dict:
-        """Bulk-import a plan (D24 + T94) given as TEXT: `[key] Name` lines with
-        indented `kind:` (REQUIRED, one of design|schema|production|meta) /
+        """Bulk-import a plan (D24 + T94 + D40) given as TEXT: `[key] Name` lines
+        with indented `kind:` (REQUIRED, one of design|schema|production|meta) /
         `desc:` / `labels:` / `depends_on:` (depends_on references other keys).
         Creates all tasks in one atomic pass, resolving keys -> ids; a malformed
         line, missing/invalid kind, or unknown dep key fails loud and rolls back
-        the whole import (no partial plan). Returns the key->id map."""
+        the whole import (no partial plan). Returns the key->id map.
+
+        THIS is the path for importing many tasks at once -- prefer it over N
+        separate add() calls. `desc:` may span multiple paragraphs: deeper-
+        indented lines continue it and blank lines between them are preserved
+        as paragraph breaks (D40), so impl-ready D37-grade bodies round-trip.
+        `depends_on:` is a continuation block, one edge per line as
+        `<key> :: <because rationale>` (D33)."""
         with _core() as c:
             keymap = c.load(parse_plan(plan))
             return _wrap(c, {"loaded": keymap})
