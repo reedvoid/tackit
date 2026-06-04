@@ -642,7 +642,10 @@ no such substring.
 - **Right-size tasks.** A task is a describable unit of work — a black-box feature —
   not one line of code, not a whole subsystem. If you can't describe it without
   listing implementation steps, it's too small; if it has many independent parts,
-  split it. **The concrete signal:** if you reach for a second `###` heading to
+  split it. And a task with *no* deliverable or decision at all — one that exists
+  only to be linked-to, or whose body is a status rollup of other tasks — is not a
+  small task, it's a **fake task**; don't create it (see *Links are coupling, labels
+  are membership*). **The concrete signal:** if you reach for a second `###` heading to
   organize independent execution units in the body, the task has more than one
   logical unit — file separate tasks rather than separate sections. Nested detail
   within ONE unit is fine; what's forbidden is co-equal sections describing
@@ -655,7 +658,9 @@ no such substring.
   the **coupling** between the two tasks — not the implementation, not the order
   of work. The cascade compares `because × delta` to filter stale neighbors; vague
   becauses ("test fixture", "setup") don't filter anything. Aim for one sentence
-  naming *why these two tasks must be reviewed together when one changes*.
+  naming *why these two tasks must be reviewed together when one changes*. If the
+  only honest answer is "they're in the same epic," that's *membership*, not
+  coupling — attach a shared label instead of a link (D38).
 
 ## Labels — when one earns its existence
 A label groups tasks along a meaningful project axis — the kind of grouping you'd name
@@ -681,10 +686,86 @@ After a **bulk `load`**, it reports the new labels it created — review them an
 near-duplicates in **one pass** (a migration is when sprawl floods in, and `load` is the
 one path the per-creation nudge doesn't catch).
 
-**The epic pattern:** when an under-defined question explodes into many tasks, don't write
-a new doc — make the question itself a task, give the whole cluster one label, and wire
-the spawned tasks to link to that anchor. The theme is grouped (label) and anchored
-(link), and can't drift.
+**Grouping a cluster — label only, never an anchor task.** When an under-defined
+question explodes into many tasks, group the whole cluster under one shared **label**
+and stop there. Do **not** turn "the question" into a task for the others to link to,
+and do **not** wire the spawned tasks together to express that they belong to the same
+theme — membership is the label's job; links are only for coupling (see *Links are
+coupling, labels are membership* immediately below). A task linked-to by its whole
+cluster is a **hub**, and the membership edges into it are pure cascade noise.
+
+## Links are coupling, labels are membership (D38 — FORCEFUL)
+
+**This section is FORCEFUL.** It names a family of *fake tasks* that look
+productive and quietly poison the cascade.
+
+**Do this — the positive patterns, first:**
+
+- **Group a cluster with a shared label.** Membership — "these tasks belong to
+  the same epic / theme / milestone" — is a *label*. That is the entire
+  mechanism: a dumb tag, no links required.
+- **Answer "is the cluster complete?" with a query, not a task.** Run
+  `board(label=X)` / `ls(label=X)` to see the live membership, and compare it
+  against the expected set — which lives in the design/schema slice (or memory)
+  that *defines* that set. Never hand-maintain a status table of other tasks
+  inside a task body; that table is wrong the moment any real task closes.
+
+**The distinction, because it is genuinely easy to miss:**
+
+> A **link** is a claim about *consequence*: "if X's content changes, Y must be
+> re-examined." That is literally what the cascade fires. A **label** is a claim
+> about *category*: "X and Y belong to the same grouping." Categories carry no
+> consequence — editing one sibling does not invalidate another.
+
+**The test, at every `link_add`:** *if I edited X's body right now, would I
+genuinely need to re-open Y and check it still holds?* Yes → coupling → **link**.
+"No, they're just both part of the same epic" → membership → **label**.
+
+**The `because` is the discriminator** (it is exactly what the D34 FAST filter
+reads). A coupling `because` names a *consequence* — "citations' FK references
+`documents.id`; a column rename here breaks the join." A membership `because`
+merely restates a *category* — "part of the plan-import epic," "schema-ingest
+cluster." **When the `because` you are about to write is the cluster's label
+name reworded, the edge is a membership link wearing a coupling costume — delete
+it and attach the label instead.**
+
+**The anti-patterns (named so you can catch yourself mid-act):**
+
+- **Hub task** — a task whose purpose is to be linked-to (a membership magnet).
+  Over the cluster's life every edit to the hub stales all N members, and every
+  edit to any member stales the hub: on the order of N² false-positive stale
+  flags, all zero-value.
+- **Membership link** — an edge encoding category, not consequence. Each one is
+  a permanent false-positive stale generator; they train the FAST filter into
+  rubber-stamping (the precise failure "Edits aren't free" describes), so the
+  cascade stops catching *real* drift.
+- **Rollup task** — a task whose body is a hand-typed status ledger of *other*
+  tasks. It duplicates state tackit already tracks (status + labels), and the
+  copy drifts the instant a real task closes — the exact drift tackit exists to
+  prevent, reintroduced inside tackit. It is also edited as a side-effect of its
+  *dependents* finishing, firing the full neighbor sweep at moments that have
+  nothing to do with most of those neighbors (a backwards cascade).
+- Umbrella: a **fake task** is any task that is not a unit of work — no
+  deliverable, no decision — existing only to be a link target or to hold a
+  rollup. (This is a *distinct* failure from a too-small task; see *Right-size
+  tasks*.)
+
+**The boundary — do NOT over-correct.** A design/schema slice that captures a
+*decision* and is linked by the impl tasks that *realize* it is **not** a hub.
+Those are coupling links: edit the decision and every realizing task genuinely
+must be re-checked. The entire `links` / dependency-discovery model rests on
+decision-bearing slices being linked-to. What is forbidden is the *content-free*
+node — nothing in it but membership and rollup. The separating variable is
+semantic (does the node carry a decision or a contract?), not structural (how
+many links it has).
+
+**Why there is no detector for this.** Auto-detecting these shapes was
+considered and rejected: a fake hub and a legitimately-central decision slice
+are structurally identical (high degree, similar becauses), so any heuristic
+fires on the slices you most want to keep and adds noise to the very FAST-filter
+signal this rule exists to protect. Per tackit's deterministic-surface /
+agent-judges philosophy, the agent holding the tool is the judge — this section
+is the judgment, to be applied at write time.
 
 ## The propagation principle — discipline lives on every agent-facing surface
 

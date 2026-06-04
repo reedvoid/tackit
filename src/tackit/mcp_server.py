@@ -83,6 +83,13 @@ def build_server() -> FastMCP:
         If a task feels too small to describe in concrete terms, it likely
         belongs as a sub-step inside a larger named unit of work.
 
+        D38 -- don't create a fake task (the other end of right-sizing). A
+        task whose only purpose is to be linked-to, or whose body is a status
+        rollup of OTHER tasks, is not a unit of work: group a cluster with a
+        label, and answer "is it complete?" with board/ls(label=...), never a
+        hand-typed ledger that drifts the moment a real task closes. Links are
+        for coupling (edit-X => recheck-Y); labels are for membership.
+
         Returns the new task's slice plus any ``stale_alert``."""
         with _core() as c:
             t = c.add(name, kind=kind, description=description, labels=labels, deps=deps)
@@ -330,8 +337,14 @@ def build_server() -> FastMCP:
         self-link (D14), cross-kind meta links (D26 meta-island), empty
         ``because``, or empty ``delta``. Refused if either endpoint has
         status='retired' (D36): retired specs accept no new edges --
-        there is no realization relationship to a dead decision. Returns
-        ``a``'s slice."""
+        there is no realization relationship to a dead decision.
+
+        D38 -- ``because`` must name the COUPLING: the consequence that editing
+        one endpoint forces re-checking the other. If the honest rationale is
+        only "they're in the same epic/theme," that's MEMBERSHIP, not coupling
+        -- attach a shared label instead of a link. A because that merely
+        restates a cluster's label name is a membership edge wearing a coupling
+        costume, and is pure cascade noise. Returns ``a``'s slice."""
         with _core() as c:
             return _wrap(
                 c,
