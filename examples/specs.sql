@@ -1063,7 +1063,10 @@ The skill and MCP are different surfaces (propagation principle): SKILL teaches 
 Presence-pinning tests (test_d37_docstrings, test_d38_docstrings) assert phrases that will move — update them with the rewrite. Re-sync the 3 dev SKILL copies (dev-copies-match test).
 
 ## Target
-~35–40% reduction (~1060 → ~620–680 lines) with ZERO loss of any behavioral directive. Every cut is narrative/duplication/archaeology, never a rule.', 'spec', 0, '2026-06-04T20:46:55.466445+00:00', '2026-06-04T20:46:55.466445+00:00', 'design', NULL);
+~35–40% reduction (~1060 → ~620–680 lines) with ZERO loss of any behavioral directive. Every cut is narrative/duplication/archaeology, never a rule.
+
+## Measured at T208/T209 (fold-back)
+The rewrite compressed SKILL.md 1083 → 282 lines (63.6k → 27.9k chars, ~56%), NOT the ~35–40% estimated above — the why/do/don''t format is far denser than projected, so that target was wrong. The presence-pin tests (test_d37/d38_docstrings) proved to be the rewrite''s safety net: a wholesale reformat moved or dropped 6 load-bearing phrases (ship-on-pain "OVERRIDES", "trained on noise", "substantive impact", "consequential and necessary", "findings outgrow the body", the D37 heading) — every one caught by a failing test and restored verbatim. Lesson for any future skill/docstring reformat: expect a deeper cut than intuition suggests, and lean on the presence pins as the guardrail against silent directive loss.', 'spec', 0, '2026-06-04T20:46:55.466445+00:00', '2026-06-04T21:25:47.137175+00:00', 'design', NULL);
 INSERT INTO task_labels (task_id, label) VALUES (37, 'core');
 INSERT INTO task_labels (task_id, label) VALUES (37, 'schema');
 INSERT INTO task_labels (task_id, label) VALUES (38, 'schema');
@@ -1626,4 +1629,43 @@ For closed/wont_do **design/schema** (perma-open in spirit per D30 but legacy-cl
 D30 prevents NEW closed design/schema rows going forward; the reconcile mirror handles the legacy population. The contradiction between alert and reconcile is gone — they share one predicate.', 'v0.5 D35+D36 update: noted that D35+D36 obviate D156''s kind-conditional reconcile exception entirely — mig 009 migrates the legacy closed/wont_do design population to spec/retired, and the partition CHECK refuses creating new closed/wont_do design rows. The exception D156 carved out for legacy design rows in the closed/wont_do set no longer applies to any v0.5-shape row.', '2026-06-03T02:48:30.168156+00:00');
 INSERT INTO description_revisions (id, task_id, prev_name, prev_description, delta, edited_at) VALUES (56, 54, 'D12 — Close operation with obligation payload', 'Closing a task sets status=closed and returns, in the result, the task''s direct dependencies and dependents — the one-hop set the agent is obliged to review on close. The obligation rides in the operation''s response, not in a separate instruction the agent might have forgotten.', 'M112 fix: D12 prose updated for v0.3.0+ symmetric semantics — "direct dependencies and dependents" → "directly linked tasks (D6)"; no contract change, prose alignment with the underlying mechanism.', '2026-06-03T08:33:31.138622+00:00');
 INSERT INTO description_revisions (id, task_id, prev_name, prev_description, delta, edited_at) VALUES (57, 45, 'D3 — Task create / read / update', 'Create a task (auto-assigned monotonic id, name, description), read it back, and edit its name/description. The atomic unit of work; everything else attaches to it.', 'M121 fix: D3 prose updated to reflect kind as required-at-create (T94 ergonomics gap landed v0.3.0 but D3''s prose never caught up) — added kind to the create signature + the D26/D36 partition coupling; no contract change, prose alignment.', '2026-06-03T08:33:36.698108+00:00');
+INSERT INTO description_revisions (id, task_id, prev_name, prev_description, delta, edited_at) VALUES (59, 207, 'D41 — SKILL.md is instructions, not documentation: why/do/don''t-do format, cut standalone narrative, cite-don''t-narrate, MCP harmony', 'SKILL.md has drifted into documentation-with-a-narrative-arc; it should be a strict list of behavioral instructions. This slice is the standard the rewrite (and all future SKILL edits) must obey. Subsumes the Q4 pattern/anti-pattern request (the format below IS the pattern/anti-pattern, generalized).
+
+## The format — every BEHAVIORAL instruction
+```
+why:        <the rationale: what it solves / what breaks without it. This is
+            the encapsulated context — reading it tells the agent WHY the rule
+            exists. ALWAYS present.>
+do:         <the directive. ALWAYS present.>
+don''t-do:   <the concrete anti-pattern. Present ONLY when there''s a real one;
+            omit when it would be vacuous (Q4 discretion — `show` has no
+            meaningful "wrong example").>
+```
+why+do are mandatory; don''t-do is conditional. An instruction whose `why:` isn''t clear is, by definition, poorly written — fix it, don''t leave the why implicit.
+
+## What is NOT an instruction (stays as reference, NOT forced into the format)
+Pure mechanics/definitions: the kind/status partition table, what a read op returns, the auto-id prefix synthesis rule, the report-format template. These are reference; leave them as tables/definitions.
+
+## Cut standalone narrative
+do: delete war stories, worked-example retellings, version archaeology (the v0.3→v0.4→v0.5 parentheticals), and motivational preambles.
+don''t-do: don''t keep a beginning/middle/end arc; SKILL.md is not a story.
+
+## Cite-don''t-narrate (the key move)
+The full incident/example already lives in the tackit task body it''s about (T179''s anchoring incident, D25''s retire story, T115''s inheritance-trap case). The instruction cites it in a clause ("see T179") instead of re-telling it. tackit IS the archive — the skill must not duplicate what the task records.
+
+## No duplication, demote superlatives
+- No paragraph appears verbatim twice (today: "Edits aren''t free" pasted 3× in the MCP edit docstrings; the T179 story in 2–3 places).
+- At most ONE rule may be framed as "the most important" (today four sections each claim it). Pick one (ship-on-pain) or none.
+
+## Intro
+3–4 lines max: what tackit is + why it exists. No more standalone context than that.
+
+## MCP harmony (indirect, not 1:1)
+The skill and MCP are different surfaces (propagation principle): SKILL teaches cross-cutting disciplines at session-start; a docstring describes ONE operation at call-moment. Harmony rule: each discipline''s FULL statement lives once, in SKILL; the docstring carries the op''s contract (params/refusals/return) + the one-line sharp edge of any discipline that bites at THAT call + a cite to the SKILL section — never the full discipline paragraph. Docstrings get shorter + scoped, NOT reformatted into why/do/don''t (that genre is SKILL''s). This preserves each-surface-teaches-at-its-moment without verbatim duplication.
+
+## Test + sync impact
+Presence-pinning tests (test_d37_docstrings, test_d38_docstrings) assert phrases that will move — update them with the rewrite. Re-sync the 3 dev SKILL copies (dev-copies-match test).
+
+## Target
+~35–40% reduction (~1060 → ~620–680 lines) with ZERO loss of any behavioral directive. Every cut is narrative/duplication/archaeology, never a rule.', 'Fold-back: corrected the ~35-40% estimate to the measured ~56%; recorded that the presence-pin tests are the rewrite safety net (caught 6 moved/dropped load-bearing phrases).', '2026-06-04T21:25:47.137138+00:00');
 COMMIT;
