@@ -158,11 +158,14 @@ def test_skill_md_contains_granular_description_section():
         "negative-space test for whether a description is granular enough."
     )
     # Anti-patterns are enumerated (load-bearing — agents look here for the
-    # closed list of what's NOT allowed).
-    assert "Anti-patterns this discipline forbids" in text, (
-        "SKILL.md must enumerate the D37 anti-patterns explicitly. The "
-        "enumeration is what makes the rule actionable -- agents reference "
-        "the list when reviewing their own task bodies."
+    # closed list of what's NOT allowed). Under the D41 format these live in
+    # the section's `don't-do:` line; pin a distinctive member so the
+    # enumeration can't be silently dropped.
+    assert "pointer-only" in text, (
+        "SKILL.md must enumerate the D37 anti-patterns explicitly (vague "
+        "verbs / conversation references / pointer-only bodies / TBD-TODO). "
+        "The enumeration is what makes the rule actionable -- agents "
+        "reference it when reviewing their own task bodies."
     )
 
 

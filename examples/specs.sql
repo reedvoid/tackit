@@ -1025,6 +1025,45 @@ The workflow surfaces (SKILL.md, README, load docstring/CLI help) name `load` as
 - `plan.py`: defer blank lines inside a desc (Decision A).
 - SKILL.md + README + `load` MCP docstring + CLI help: name load as the bulk-import path; note multi-paragraph desc support.
 - Tests: blank-line paragraph round-trip; the previously-failing sample now parses; trailing-blank-before-field still ends the block; consecutive-line continuation unchanged; deps block still ends on blank.', 'spec', 0, '2026-06-04T17:36:52.807216+00:00', '2026-06-04T17:36:52.807216+00:00', 'design', NULL);
+INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (207, 'D41 — SKILL.md is instructions, not documentation: why/do/don''t-do format, cut standalone narrative, cite-don''t-narrate, MCP harmony', 'SKILL.md has drifted into documentation-with-a-narrative-arc; it should be a strict list of behavioral instructions. This slice is the standard the rewrite (and all future SKILL edits) must obey. Subsumes the Q4 pattern/anti-pattern request (the format below IS the pattern/anti-pattern, generalized).
+
+## The format — every BEHAVIORAL instruction
+```
+why:        <the rationale: what it solves / what breaks without it. This is
+            the encapsulated context — reading it tells the agent WHY the rule
+            exists. ALWAYS present.>
+do:         <the directive. ALWAYS present.>
+don''t-do:   <the concrete anti-pattern. Present ONLY when there''s a real one;
+            omit when it would be vacuous (Q4 discretion — `show` has no
+            meaningful "wrong example").>
+```
+why+do are mandatory; don''t-do is conditional. An instruction whose `why:` isn''t clear is, by definition, poorly written — fix it, don''t leave the why implicit.
+
+## What is NOT an instruction (stays as reference, NOT forced into the format)
+Pure mechanics/definitions: the kind/status partition table, what a read op returns, the auto-id prefix synthesis rule, the report-format template. These are reference; leave them as tables/definitions.
+
+## Cut standalone narrative
+do: delete war stories, worked-example retellings, version archaeology (the v0.3→v0.4→v0.5 parentheticals), and motivational preambles.
+don''t-do: don''t keep a beginning/middle/end arc; SKILL.md is not a story.
+
+## Cite-don''t-narrate (the key move)
+The full incident/example already lives in the tackit task body it''s about (T179''s anchoring incident, D25''s retire story, T115''s inheritance-trap case). The instruction cites it in a clause ("see T179") instead of re-telling it. tackit IS the archive — the skill must not duplicate what the task records.
+
+## No duplication, demote superlatives
+- No paragraph appears verbatim twice (today: "Edits aren''t free" pasted 3× in the MCP edit docstrings; the T179 story in 2–3 places).
+- At most ONE rule may be framed as "the most important" (today four sections each claim it). Pick one (ship-on-pain) or none.
+
+## Intro
+3–4 lines max: what tackit is + why it exists. No more standalone context than that.
+
+## MCP harmony (indirect, not 1:1)
+The skill and MCP are different surfaces (propagation principle): SKILL teaches cross-cutting disciplines at session-start; a docstring describes ONE operation at call-moment. Harmony rule: each discipline''s FULL statement lives once, in SKILL; the docstring carries the op''s contract (params/refusals/return) + the one-line sharp edge of any discipline that bites at THAT call + a cite to the SKILL section — never the full discipline paragraph. Docstrings get shorter + scoped, NOT reformatted into why/do/don''t (that genre is SKILL''s). This preserves each-surface-teaches-at-its-moment without verbatim duplication.
+
+## Test + sync impact
+Presence-pinning tests (test_d37_docstrings, test_d38_docstrings) assert phrases that will move — update them with the rewrite. Re-sync the 3 dev SKILL copies (dev-copies-match test).
+
+## Target
+~35–40% reduction (~1060 → ~620–680 lines) with ZERO loss of any behavioral directive. Every cut is narrative/duplication/archaeology, never a rule.', 'spec', 0, '2026-06-04T20:46:55.466445+00:00', '2026-06-04T20:46:55.466445+00:00', 'design', NULL);
 INSERT INTO task_labels (task_id, label) VALUES (37, 'core');
 INSERT INTO task_labels (task_id, label) VALUES (37, 'schema');
 INSERT INTO task_labels (task_id, label) VALUES (38, 'schema');
@@ -1110,6 +1149,8 @@ INSERT INTO task_labels (task_id, label) VALUES (199, 'mcp');
 INSERT INTO task_labels (task_id, label) VALUES (199, 'skill');
 INSERT INTO task_labels (task_id, label) VALUES (202, 'cli');
 INSERT INTO task_labels (task_id, label) VALUES (202, 'skill');
+INSERT INTO task_labels (task_id, label) VALUES (207, 'docs');
+INSERT INTO task_labels (task_id, label) VALUES (207, 'skill');
 INSERT INTO links (id, task_a, task_b, because) VALUES (60, 43, 44, 'D2 (typed Pydantic validation at the read/write boundary) is the mechanism that gates writes into D1''s persistent store, so any change to D2''s validation rules (e.g. NUL/surrogate refusal) or to D1''s store contract forces the other to be re-evaluated.');
 INSERT INTO links (id, task_a, task_b, because) VALUES (61, 44, 45, 'D3''s create/read/update operations are the surface that pushes input through D2''s Pydantic validation boundary, so any change to D3''s CRUD signatures or to D2''s validation rules forces the other to be re-evaluated.');
 INSERT INTO links (id, task_a, task_b, because) VALUES (63, 45, 46, 'D4 labels attach to D3 tasks (label_add takes a task id and a label string), so any change to D3''s task identity/CRUD or to D4''s attach-and-list contract forces the other to be re-evaluated.');
@@ -1334,6 +1375,7 @@ INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at)
 INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (477, 197, NULL, 'spec', '2026-06-04T16:44:45.843384+00:00');
 INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (480, 199, NULL, 'spec', '2026-06-04T17:17:46.467614+00:00');
 INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (485, 202, NULL, 'spec', '2026-06-04T17:36:52.807447+00:00');
+INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (494, 207, NULL, 'spec', '2026-06-04T20:46:55.467284+00:00');
 INSERT INTO description_revisions (id, task_id, prev_name, prev_description, delta, edited_at) VALUES (1, 133, 'D7 (relaxed) — Status + stale flag (T123)', 'A task''s status is open or closed -- informational only; it never gates traversal. A separate stale flag marks a task as one whose linked neighbors changed under it and must be reviewed. T123 (2026-06-01) RETIRED the v0.2.0 invariant ''stale => open'' that the original D7 (T49, superseded) carried: cascade-staling a closed neighbor now leaves status=''closed'' + stale=True, signalling ''the upstream changed; review for supersede / link migration'' while keeping the closed task immutable per T118 (no-edit-closed). The action menu on closed-stale: reconcile (clear stale, status untouched), supersede (replace the premise with a new task), link_rm / link_add (migrate edges), label_add / label_rm. edit() is STILL refused on any closed task -- T118 is unchanged. The no-op rule (D20) and the close-gate (D14: close refused if stale or linked-stale, applies regardless of status) are also unchanged.', 'rewrote D7 for v0.4 bounded-obligation: closed/wont_do stale is record-only per D28; reconcile refused on closed/wont_do; edit-on-closed safe per D29; supersede action menu removed', '2026-06-01T23:23:55.536042+00:00');
 INSERT INTO description_revisions (id, task_id, prev_name, prev_description, delta, edited_at) VALUES (2, 52, 'D10 — Stale propagation (mark-before-change)', 'Before a task is edited, mark its linked tasks (both endpoints'' view; D6) stale, leaving status untouched (T123: closed neighbors stay closed + stale=True per the relaxed D7 invariant). Recording the obligation before the mutation makes an interrupted reconciliation crash-safe: the marks survive a dead session. Propagation is one hop — it does not cascade transitively on its own; it flows only where a real change actually happens (D13).
 Cascade bounded by kind (D26): the cascade fires both directions of any link, but the meta-island constraint (D26: a link_add between a meta task and a non-meta task is refused at D14) means the propagation cannot bleed between meta work and spec/production work — there are no links across the kind boundary to traverse.
