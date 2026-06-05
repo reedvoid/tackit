@@ -24,6 +24,7 @@ from . import __version__, sync
 from .core import Core, stale_alert_text
 from .db import init_store, require_store
 from .errors import TackitError
+from .models import project_slice, project_task
 from .plan import parse_plan
 
 
@@ -33,8 +34,11 @@ def _flags(status: str, stale: bool) -> str:
     return f"{status}, STALE" if stale else status
 
 
-def _fmt_task(t) -> str:
-    return f"T{t.id} [{_flags(t.status, t.stale)}] {t.name}"
+def _fmt_task(t, include_description: bool = False) -> str:
+    line = f"T{t.id} [{_flags(t.status, t.stale)}] {t.name}"
+    if include_description and t.description.strip():
+        line += f"\n  {t.description.strip()}"
+    return line
 
 
 def _fmt_neighbors(label: str, neighbors) -> list[str]:
@@ -454,9 +458,18 @@ def _cmd_label(args) -> int:
 def _cmd_ls(args) -> int:
     with _core_session() as core:
         stale = True if args.stale else None
-        tasks = core.ls(status=args.status, label=args.label, stale=stale)
-        text = "\n".join(_fmt_task(t) for t in tasks) if tasks else "(no matching tasks)"
-        _emit(text, [_dump(t) for t in tasks], args.json)
+        tasks = core.ls(status=args.status, label=args.label, stale=stale, kind=args.kind)
+        if tasks:
+            lines = []
+            for t in tasks:
+                lines.append(_fmt_task(t, args.include_description))
+            text = "\n".join(lines)
+        else:
+            text = "(no matching tasks)"
+        dumps = []
+        for t in tasks:
+            dumps.append(project_task(t, include_description=args.include_description))
+        _emit(text, dumps, args.json)
     return 0
 
 
@@ -483,9 +496,16 @@ def _cmd_render(args) -> int:
 def _cmd_board(args) -> int:
     with _core_session() as core:
         stale = True if args.stale else None
-        tasks = core.ls(status=args.status, label=args.label, stale=stale)
+        tasks = core.ls(status=args.status, label=args.label, stale=stale, kind=args.kind)
         if args.json:
-            _emit("", [_dump(core.show(t.id)) for t in tasks], True)
+            cards = []
+            for t in tasks:
+                cards.append(project_slice(
+                    core.show(t.id),
+                    include_description=args.include_description,
+                    include_neighbor_because=args.include_neighbor_because,
+                ))
+            _emit("", cards, True)
             return 0
         allt = core.ls()
         n_open = sum(1 for t in allt if t.status == "open")
@@ -912,19 +932,31 @@ def build_parser() -> argparse.ArgumentParser:
         lsp.add_argument("label")
         lsp.set_defaults(func=_cmd_label)
 
-    sp = add("ls", _cmd_ls, "query/board: filter by status/label/stale (D15)")
+    sp = add("ls", _cmd_ls, "query/board: filter by status/label/stale/kind; "
+             "lean by default, no description (D15/D211)")
     sp.add_argument("--status", choices=["open", "closed", "wont_do", "spec", "retired"])
     sp.add_argument("--label")
     sp.add_argument("--stale", action="store_true", help="only stale tasks")
+    sp.add_argument("--kind", choices=["design", "schema", "production", "meta"],
+                    help="filter by kind (D211)")
+    sp.add_argument("--include-description", action="store_true",
+                    help="include full task bodies (D211; default lean)")
 
     add("stale", _cmd_stale, "reconciliation worklist: all stale tasks (D11)")
 
     add("labels", _cmd_labels, "list all labels with usage: count + sample tasks (D21)")
 
-    sp = add("board", _cmd_board, "rich board view (open/label/stale) with dependency edges (D22)")
+    sp = add("board", _cmd_board, "rich board view (status/label/stale/kind) with "
+             "dependency edges; lean by default (D22/D211)")
     sp.add_argument("--status", choices=["open", "closed", "wont_do", "spec", "retired"])
     sp.add_argument("--label")
     sp.add_argument("--stale", action="store_true", help="only stale tasks")
+    sp.add_argument("--kind", choices=["design", "schema", "production", "meta"],
+                    help="filter by kind (D211)")
+    sp.add_argument("--include-description", action="store_true",
+                    help="include full task bodies in --json (D211; default lean)")
+    sp.add_argument("--include-neighbor-because", action="store_true",
+                    help="include neighbor edge rationales in --json (D211; default lean)")
 
     sp = add("render", _cmd_render, "narrative render of a label -> markdown (D16)")
     sp.add_argument("--label", required=True)

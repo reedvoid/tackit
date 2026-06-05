@@ -324,3 +324,33 @@ class LabelUsage(BaseModel):
     label: str
     count: int
     samples: list[str]  # a few example task names, to disambiguate the label's meaning
+
+
+# --- D211: lean read-projection for ls/board ------------------------------
+# Shared by the MCP and CLI adapters so the two cannot drift (D211 decision A:
+# identical projection on every surface). NEVER truncates -- a field is
+# included or omitted, never half-shown; show() is the full-body path.
+
+
+def project_task(task: "Task", *, include_description: bool) -> dict:
+    """D211: lean projection of a Task for ls/board. Drops `description` unless
+    asked. Keeps every scalar + the computed `prefixed_name`."""
+    exclude = None if include_description else {"description"}
+    return task.model_dump(mode="json", exclude=exclude)
+
+
+def project_slice(
+    slice_: "Slice", *, include_description: bool, include_neighbor_because: bool
+) -> dict:
+    """D211: lean projection of a board Slice. By default drops the task's
+    `description` AND each neighbor's `because` + `last_edit_delta` (keeping the
+    graph SHAPE: id/prefixed_name/status/stale/kind). Each is opt-in
+    independently. Never truncates."""
+    exclude: dict = {}
+    if not include_description:
+        exclude["task"] = {"description"}
+    if not include_neighbor_because:
+        nbr = {"__all__": {"because", "last_edit_delta"}}
+        exclude["dependencies"] = nbr
+        exclude["dependents"] = nbr
+    return slice_.model_dump(mode="json", exclude=exclude or None)

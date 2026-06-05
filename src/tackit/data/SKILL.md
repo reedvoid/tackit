@@ -216,7 +216,7 @@ Every task displays a synthesized `<kind-letter><id>` prefix (design→**D**, sc
 - do: one sentence naming why the two tasks must be reviewed together when one changes — e.g. "citations' FK references `documents.id`; a column rename breaks the join."
 - don't-do: describe the implementation or work order (`"test fixture"`, `"setup"`); write a because that just restates a shared label — that's membership, attach a label, not a link (see *Links are coupling*).
 
-**`ls` vs `board` (reference):** `ls` for a quick filtered id/title list; `board` for each matching task as a full slice (deps + dependents + labels) in one call.
+**`ls` vs `board` (reference):** `ls` for a quick filtered id/title list; `board` for each matching task as a slice (deps + dependents + labels) in one call. Both are **lean by default** (D211): no `description`, and `board` shows the neighbor graph SHAPE without `because`/`last_edit_delta`. Both take a `kind` filter. Opt into bodies with `include_description` (and `board`'s `include_neighbor_because` for edge rationales); for ONE full body use `show`. Projection is include-or-omit — never truncated.
 
 ## Labels — when one earns its existence
 - why: a label groups tasks along a meaningful axis you'd name out loud (a phase/milestone, an epic/theme, a use case); it's a dumb tag with no behavior.

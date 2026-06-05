@@ -415,6 +415,49 @@ def test_mcp_links_add_bulk_compact(tmp_path, monkeypatch):
     assert "because" not in str(env["result"])  # compact: no rationale echoed
 
 
+def test_mcp_ls_lean_default_kind_and_opt_in(tmp_path, monkeypatch):
+    """T212/D211: MCP ls is lean by default (no description), takes a kind
+    filter, and include_description opts into full bodies."""
+    async def scenario(s):
+        await s.call_tool("add", {"name": "d", "kind": "design", "description": "design body"})
+        await s.call_tool("add", {"name": "p", "kind": "production", "description": "prod body"})
+        lean = _envelope(await s.call_tool("ls", {}))
+        full = _envelope(await s.call_tool("ls", {"include_description": True}))
+        designs = _envelope(await s.call_tool("ls", {"kind": "design"}))
+        return lean["result"], full["result"], designs["result"]
+
+    lean, full, designs = _drive(tmp_path, monkeypatch, scenario)
+    assert all("description" not in t for t in lean)            # lean default
+    assert all("prefixed_name" in t for t in lean)             # scalars kept
+    assert {t["description"] for t in full} == {"design body", "prod body"}
+    assert [t["id"] for t in designs] == [1]                   # kind filter
+
+
+def test_mcp_board_lean_default_and_opt_in(tmp_path, monkeypatch):
+    """T212/D211: MCP board is lean by default — no task description; neighbors
+    keep the graph shape but not because/last_edit_delta; flags opt in."""
+    async def scenario(s):
+        await s.call_tool("add", {"name": "design", "kind": "design"})  # D1
+        await s.call_tool("add", {"name": "impl", "kind": "production",
+                                  "description": "impl body"})          # T2
+        await s.call_tool("link_add", {"a": 2, "b": 1, "because": "T2 realizes D1"})
+        lean = _envelope(await s.call_tool("board", {}))
+        full = _envelope(await s.call_tool("board",
+                         {"include_description": True, "include_neighbor_because": True}))
+        return lean["result"], full["result"]
+
+    lean, full = _drive(tmp_path, monkeypatch, scenario)
+    t2_lean = lean[1]  # ls orders by id: [D1, T2]
+    assert t2_lean["task"]["id"] == 2
+    assert "description" not in t2_lean["task"]
+    nbr = t2_lean["dependencies"][0]
+    assert "because" not in nbr and "last_edit_delta" not in nbr
+    assert nbr["prefixed_name"].startswith("D1")  # graph shape kept
+    t2_full = full[1]
+    assert t2_full["task"]["description"] == "impl body"
+    assert t2_full["dependencies"][0]["because"] == "T2 realizes D1"
+
+
 def test_mcp_reconcile_ids_compact_payload_and_short_alert(tmp_path, monkeypatch):
     """D39 #1+#6: reconcile(ids) returns {"reconciled","remaining_stale"} and a
     SHORT stale alert during the sweep, not the full obligation paragraph."""

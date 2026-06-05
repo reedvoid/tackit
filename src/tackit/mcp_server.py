@@ -17,6 +17,7 @@ from contextlib import contextmanager
 from mcp.server.fastmcp import FastMCP
 
 from .core import Core, stale_alert_payload
+from .models import project_slice, project_task
 from .plan import parse_plan
 
 
@@ -441,16 +442,22 @@ def build_server() -> FastMCP:
 
     @mcp.tool()
     def ls(
-        status: str | None = None, label: str | None = None, stale: bool = False
+        status: str | None = None,
+        label: str | None = None,
+        stale: bool = False,
+        kind: str | None = None,
+        include_description: bool = False,
     ) -> dict:
-        """Query/board (D15): filter tasks by status, label, and/or stale.
-        ``status`` choices (D36 v0.5): open | closed | wont_do | spec |
-        retired. spec/retired are the design/schema partition equivalents."""
+        """Query/board (D15 + D211): filter tasks by status, label, stale, and/or
+        kind. Returns a LEAN projection by default -- task scalars only, NO
+        `description` (D211); pass include_description=True for full bodies. For
+        ONE full body use `show`. `status` choices (D36 v0.5): open | closed |
+        wont_do | spec | retired; `kind`: design | schema | production | meta."""
         with _core() as c:
             stale_filter = True if stale else None
             tasks = []
-            for t in c.ls(status=status, label=label, stale=stale_filter):
-                tasks.append(t.model_dump(mode="json"))
+            for t in c.ls(status=status, label=label, stale=stale_filter, kind=kind):
+                tasks.append(project_task(t, include_description=include_description))
             return _wrap(c, tasks, short_alert=True)
 
     @mcp.tool()
@@ -513,17 +520,29 @@ def build_server() -> FastMCP:
 
     @mcp.tool()
     def board(
-        status: str | None = None, label: str | None = None, stale: bool = False
+        status: str | None = None,
+        label: str | None = None,
+        stale: bool = False,
+        kind: str | None = None,
+        include_description: bool = False,
+        include_neighbor_because: bool = False,
     ) -> dict:
-        """Dependency-aware board (D22 + D36): the filtered tasks, each as a
-        full slice (task + dependencies + dependents + labels), so you see
-        the whole graph's structure in ONE call (richer than `ls`). Filters:
-        status (open|closed|wont_do|spec|retired), label, stale."""
+        """Dependency-aware board (D22 + D36 + D211): the filtered tasks, each as
+        a slice (task + dependencies + dependents + labels), so you see the whole
+        graph's structure in ONE call (richer than `ls`). LEAN by default: NO
+        task `description` and NO neighbor `because`/`last_edit_delta` -- just the
+        graph SHAPE (ids/prefixed_names/status/stale/kind). Opt in per axis:
+        include_description (full bodies), include_neighbor_because (edge
+        rationales). Filters: status, label, stale, kind."""
         with _core() as c:
             stale_filter = True if stale else None
             cards = []
-            for t in c.ls(status=status, label=label, stale=stale_filter):
-                cards.append(c.show(t.id).model_dump(mode="json"))
+            for t in c.ls(status=status, label=label, stale=stale_filter, kind=kind):
+                cards.append(project_slice(
+                    c.show(t.id),
+                    include_description=include_description,
+                    include_neighbor_because=include_neighbor_because,
+                ))
             return _wrap(c, cards, short_alert=True)
 
     return mcp

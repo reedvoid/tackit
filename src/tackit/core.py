@@ -1785,9 +1785,10 @@ class Core:
         status: str | None = None,
         label: str | None = None,
         stale: bool | None = None,
+        kind: str | None = None,
     ) -> list[Task]:
-        """D15 + T157 + D36 (v0.5) - list/filter tasks by status, label, and/
-        or stale. The work queue and any board are *queries over the fields*,
+        """D15 + T157 + D36 (v0.5) + D211 - list/filter tasks by status, label,
+        stale, and/or kind. The work queue and any board are *queries over the fields*,
         not maintained lists. Status filter accepts the full v0.5 set
         (open, closed, wont_do for production/meta; spec, retired for
         design/schema) per D7+D36's five-status partitioned taxonomy."""
@@ -1797,6 +1798,10 @@ class Core:
             raise ValidationError(
                 "status filter must be one of open, closed, wont_do (production/"
                 "meta) or spec, retired (design/schema) per D7 + D36 v0.5."
+            )
+        if kind is not None and kind not in KIND_VALUES:
+            raise ValidationError(
+                f"kind filter must be one of {', '.join(KIND_VALUES)} (D211/D26)."
             )
         clauses, params = [], []
         join = ""
@@ -1810,6 +1815,9 @@ class Core:
         if stale is not None:
             clauses.append("t.stale = ?")
             params.append(1 if stale else 0)
+        if kind is not None:
+            clauses.append("t.kind = ?")
+            params.append(kind)
         where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
         rows = self.conn.execute(
             f"SELECT DISTINCT t.* FROM tasks t {join} {where} ORDER BY t.id", tuple(params)
