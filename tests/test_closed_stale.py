@@ -18,7 +18,7 @@ def _stale_closed_setup(core):
     """Two linked production tasks, T2 closed, T1 edited to stale T2."""
     core.add("upstream", kind="production")  # T1
     core.add("downstream", kind="production")  # T2
-    core.link_add(2, 1, because="downstream consumes upstream's API", delta="setup")
+    core.link_add(2, 1, because="downstream consumes upstream's API")
     core.close(2)
     core.edit(1, description="changed", delta="upstream shape shifted")
     t2 = core.get(2)
@@ -68,7 +68,7 @@ def test_closed_stale_link_add_allowed(core):
     _stale_closed_setup(core)
     core.add("sibling", kind="production")  # T3
     # Link T3 to T2 (the closed-stale task) — legitimate during migration.
-    s = core.link_add(3, 2, because="T3 inherits T2's relationship to upstream", delta="link migration")
+    s = core.link_add(3, 2, because="T3 inherits T2's relationship to upstream")
     ids = sorted(n.id for n in s.dependencies)
     assert 2 in ids
 
@@ -77,7 +77,7 @@ def test_closed_stale_link_rm_allowed(core):
     """Symmetric: link_rm on an edge touching a closed-stale task is allowed
     (structural; not a T118 content edit)."""
     _stale_closed_setup(core)
-    s = core.link_rm(2, 1, delta="pruning old coupling during migration")
+    s = core.link_rm(2, 1)
     # The pair canonicalizes to (1, 2); the row should be gone.
     n = core.conn.execute("SELECT COUNT(*) FROM links WHERE task_a = 1 AND task_b = 2").fetchone()[0]
     assert n == 0
@@ -103,8 +103,8 @@ def test_close_gate_does_not_trip_on_closed_stale_under_v04(core):
     core.add("a", kind="production")  # T1
     core.add("b", kind="production")  # T2
     core.add("c", kind="production")  # T3
-    core.link_add(2, 1, because="b consumes a", delta="setup")
-    core.link_add(3, 2, because="c consumes b", delta="setup")
+    core.link_add(2, 1, because="b consumes a")
+    core.link_add(3, 2, because="c consumes b")
     core.close(2)  # T2 closed
     core.edit(1, description="x", delta="a shifted")  # T2 -> closed-stale via cascade
     assert core.get(2).status == "closed" and core.get(2).stale is True
@@ -119,7 +119,7 @@ def test_close_gate_does_not_trip_on_retired_stale_neighbor(core):
     status IN ('open','spec'). Closing T2 succeeds even when T1 is retired+stale."""
     core.add("d1", kind="design")  # T1 -- spec
     core.add("p1", kind="production")  # T2
-    core.link_add(2, 1, because="prod realizes design", delta="setup")
+    core.link_add(2, 1, because="prod realizes design")
     # Seed T1 as retired+stale (retire() verb arrives Phase 2b).
     core.conn.execute(
         "UPDATE tasks SET status = 'retired', stale = 1 WHERE id = 1;"

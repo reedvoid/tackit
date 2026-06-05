@@ -67,8 +67,8 @@ def test_reclassify_fires_cascade(core):
     core.add("hub", kind="production")  # T1
     core.add("neighbor_a", kind="production")  # T2
     core.add("neighbor_b", kind="production")  # T3
-    core.link_add(2, 1, because="T2 consumes T1", delta="setup")
-    core.link_add(3, 1, because="T3 consumes T1", delta="setup")
+    core.link_add(2, 1, because="T2 consumes T1")
+    core.link_add(3, 1, because="T3 consumes T1")
     result = core.reclassify(1, "design", delta="hub is actually a spec, not impl")
     stale_ids = sorted(n.id for n in result.newly_stale)
     assert stale_ids == [2, 3]
@@ -93,7 +93,7 @@ def test_reclassify_meta_island_violation_refused(core):
     # Instead: link T1 to T4 (both production -- legal) and confirm the
     # reclassify-to-meta is refused because T4 (production) is currently
     # linked to T1.
-    core.link_add(1, 4, because="prod-prod link", delta="setup")
+    core.link_add(1, 4, because="prod-prod link")
 
     with pytest.raises(InvariantError, match="meta-island"):
         core.reclassify(1, "meta", delta="trying to move to meta island")
@@ -107,7 +107,7 @@ def test_reclassify_to_same_island_kind_ok_even_with_links(core):
     island. Only crossing the meta boundary triggers the guard."""
     core.add("task", kind="production")
     core.add("neighbor", kind="schema")
-    core.link_add(2, 1, because="schema-prod link", delta="setup")
+    core.link_add(2, 1, because="schema-prod link")
 
     # production -> design: still non-meta side, no boundary crossing.
     core.reclassify(1, "design", delta="reclassified to design within non-meta island")
@@ -126,7 +126,7 @@ def test_reclassify_keeps_closed_neighbor_closed_per_t123(core):
     by reclassify stays closed + stale (no force-reopen)."""
     core.add("hub", kind="production")
     core.add("neighbor", kind="production")
-    core.link_add(2, 1, because="setup", delta="setup")
+    core.link_add(2, 1, because="setup")
     core.close(2)
     core.reclassify(1, "design", delta="moving to design")
     t2 = core.get(2)

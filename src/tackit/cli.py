@@ -389,10 +389,10 @@ def _cmd_reconcile(args) -> int:
 def _cmd_link(args) -> int:
     with _core_session() as core:
         if args.link_action == "add":
-            s = core.link_add(args.a, args.b, because=args.because, delta=args.delta)
+            s = core.link_add(args.a, args.b, because=args.because)
             verb = "added"
         else:
-            s = core.link_rm(args.a, args.b, delta=args.delta)
+            s = core.link_rm(args.a, args.b)
             verb = "removed"
         _emit(
             f"{verb} link T{args.a} <-> T{args.b}\n" + _fmt_slice(s),
@@ -859,13 +859,6 @@ def build_parser() -> argparse.ArgumentParser:
                 required=True,
                 help="WHY this pair is coupled (durable rationale, T116).",
             )
-        lsp.add_argument(
-            "--delta",
-            required=True,
-            help="One sentence describing what this op changes semantically "
-            "(T117). Future-you will compare it against each linked "
-            "task's --because to decide relevance.",
-        )
         lsp.set_defaults(func=_cmd_link)
 
     sp = add("label", _cmd_label, "tag/untag a task (D4)")

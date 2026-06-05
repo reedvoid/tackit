@@ -146,14 +146,14 @@ class TackitMachine(RuleBasedStateMachine):
     @rule(i=_pick, j=_pick)
     def dep_add(self, i, j):
         try:
-            self.core.link_add(self._id(i), self._id(j), because="property test", delta="property test")
+            self.core.link_add(self._id(i), self._id(j), because="property test")
         except InvariantError:
             pass  # refused: self-link is the only invariant under symmetric model
 
     @precondition(lambda self: len(self.ids) >= 2)
     @rule(i=_pick, j=_pick)
     def dep_rm(self, i, j):
-        self.core.link_rm(self._id(i), self._id(j), delta="property test")
+        self.core.link_rm(self._id(i), self._id(j))
 
     @precondition(lambda self: self.ids)
     @rule(i=_pick, label=_labels)
@@ -212,7 +212,7 @@ class TackitMachine(RuleBasedStateMachine):
         d = self.core.add("prop d-target", kind="design")
         p = self.core.add("prop p-neighbor", kind="production")
         rationale = "prop test rationale linking d to p"
-        self.core.link_add(d.id, p.id, because=rationale, delta="prop test")
+        self.core.link_add(d.id, p.id, because=rationale)
         self.ids.append(d.id)
         self.ids.append(p.id)
         try:

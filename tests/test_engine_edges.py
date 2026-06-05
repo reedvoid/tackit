@@ -39,7 +39,7 @@ def test_meta_island_refuses_meta_to_production_link(core):
     core.add("meta task", kind="production")  # T2
     _set_kind(core, 2, "meta")
     with pytest.raises(InvariantError, match="meta-island"):
-        core.link_add(1, 2, because="test fixture", delta="test")
+        core.link_add(1, 2, because="test fixture")
 
 
 def test_meta_island_refuses_meta_to_design_link(core):
@@ -48,7 +48,7 @@ def test_meta_island_refuses_meta_to_design_link(core):
     _set_kind(core, 1, "design")
     _set_kind(core, 2, "meta")
     with pytest.raises(InvariantError, match="meta-island"):
-        core.link_add(1, 2, because="test fixture", delta="test")
+        core.link_add(1, 2, because="test fixture")
 
 
 def test_meta_to_meta_link_allowed(core):
@@ -56,7 +56,7 @@ def test_meta_to_meta_link_allowed(core):
     core.add("meta b", kind="production")  # T2
     _set_kind(core, 1, "meta")
     _set_kind(core, 2, "meta")
-    core.link_add(1, 2, because="test fixture", delta="test")  # both meta -> allowed
+    core.link_add(1, 2, because="test fixture")  # both meta -> allowed
     n = core.conn.execute("SELECT COUNT(*) FROM links").fetchone()[0]
     assert n == 1
 
@@ -80,7 +80,9 @@ def test_edit_closed_task_allowed_under_v04(core):
     assert revs[0].delta == "prose refinement after close"
 
 
-# --- T117: delta required on edit / link_add / link_rm --------------------
+# --- T117: delta required on edit (cascade-firing) ------------------------
+# Link ops carry NO delta (D213): they don't cascade, so a delta would have no
+# reader. See test_link_ops_take_no_delta below.
 
 
 def test_edit_empty_delta_refused(core):
@@ -91,19 +93,17 @@ def test_edit_empty_delta_refused(core):
         core.edit(1, description="changed", delta="   ")
 
 
-def test_link_add_empty_delta_refused(core):
+def test_link_ops_take_no_delta(core):
+    """D213: link_add / link_rm dropped the vestigial delta. They work with
+    because only (link_rm with a/b only), and a stray delta kwarg is rejected."""
     core.add("a", kind="production")
     core.add("b", kind="production")
-    with pytest.raises(ValidationError, match="delta"):
-        core.link_add(1, 2, because="real reason", delta="")
-
-
-def test_link_rm_empty_delta_refused(core):
-    core.add("a", kind="production")
-    core.add("b", kind="production")
-    core.link_add(1, 2, because="real", delta="seed")
-    with pytest.raises(ValidationError, match="delta"):
-        core.link_rm(1, 2, delta="")
+    core.link_add(1, 2, because="a couples to b")
+    core.link_rm(1, 2)
+    with pytest.raises(TypeError):
+        core.link_add(1, 2, because="x", delta="y")
+    with pytest.raises(TypeError):
+        core.link_rm(1, 2, delta="y")
 
 
 def test_core_last_delta_set_after_edit(core):
@@ -116,21 +116,21 @@ def test_link_add_empty_because_refused(core):
     core.add("a", kind="production")
     core.add("b", kind="production")
     with pytest.raises(ValidationError, match="because"):
-        core.link_add(1, 2, because="", delta="test")
+        core.link_add(1, 2, because="")
     with pytest.raises(ValidationError, match="because"):
-        core.link_add(1, 2, because="   ", delta="test")
+        core.link_add(1, 2, because="   ")
 
 
 def test_link_add_preserves_because(core):
     core.add("a", kind="production")
     core.add("b", kind="production")
-    core.link_add(1, 2, because="T2 uses T1.id as FK", delta="test")
+    core.link_add(1, 2, because="T2 uses T1.id as FK")
     row = core.conn.execute(
         "SELECT because FROM links WHERE task_a=1 AND task_b=2"
     ).fetchone()
     assert row["because"] == "T2 uses T1.id as FK"
     # The no-op guard on duplicate link_add does NOT overwrite the rationale.
-    core.link_add(1, 2, because="different rationale", delta="test")
+    core.link_add(1, 2, because="different rationale")
     row = core.conn.execute(
         "SELECT because FROM links WHERE task_a=1 AND task_b=2"
     ).fetchone()
@@ -146,9 +146,9 @@ def test_cross_kind_non_meta_link_allowed(core):
     _set_kind(core, 1, "design")
     _set_kind(core, 2, "schema")
     # T3 stays production
-    core.link_add(2, 1, because="test fixture", delta="test")  # schema <-> design
-    core.link_add(3, 1, because="test fixture", delta="test")  # production <-> design
-    core.link_add(3, 2, because="test fixture", delta="test")  # production <-> schema
+    core.link_add(2, 1, because="test fixture")  # schema <-> design
+    core.link_add(3, 1, because="test fixture")  # production <-> design
+    core.link_add(3, 2, because="test fixture")  # production <-> schema
     n = core.conn.execute("SELECT COUNT(*) FROM links").fetchone()[0]
     assert n == 3
 
@@ -156,7 +156,7 @@ def test_cross_kind_non_meta_link_allowed(core):
 def test_traversal_is_status_blind(core):
     core.add("a", kind="production")  # T1
     core.add("b", kind="production")
-    core.link_add(2, 1, because="test fixture", delta="test")  # T2 depends_on T1
+    core.link_add(2, 1, because="test fixture")  # T2 depends_on T1
     core.close(1)  # close the prerequisite
     # a closed neighbor is still returned in both directions (D6)
     assert [n.id for n in core.dependents_of(1)] == [2]
@@ -205,7 +205,7 @@ def test_label_empty_refused(core):
 def test_dep_rm_missing_task_refused(core):
     core.add("a", kind="production")
     with pytest.raises(NotFoundError):
-        core.link_rm(1, 999, delta="test")
+        core.link_rm(1, 999)
 
 
 def test_add_with_deps_and_labels_at_once(core):
@@ -279,7 +279,7 @@ def test_reconcile_allowed_on_live_status(core, status):
 def test_ls_stale_filter(core):
     core.add("base", kind="production")  # T1
     core.add("dep", kind="production")
-    core.link_add(2, 1, because="test fixture", delta="test")
+    core.link_add(2, 1, because="test fixture")
     core.edit(1, description="x", delta="test")  # stales T2
     assert [t.id for t in core.ls(stale=True)] == [2]
 
@@ -288,7 +288,7 @@ def test_render_shows_deps_and_extra_labels(core):
     # "design" is reserved for the kind property since T84 -- use a non-reserved label.
     core.add("base", kind="production", labels=["spec"])  # T1
     core.add("feature", kind="production", labels=["spec", "core"])  # T2
-    core.link_add(2, 1, because="test fixture", delta="test")  # T2 depends_on T1
+    core.link_add(2, 1, because="test fixture")  # T2 depends_on T1
     md = core.render("spec")
     assert "depends on" in md.lower()  # T2's dependency edge is rendered
     assert "core" in md  # the non-rendered extra label is listed
@@ -332,13 +332,13 @@ def test_diamond_traversal_dedup(core):
     # idempotent (the canonical pair (1, 4) is created either way).
     core.add("base", kind="production")  # T1
     core.add("left", kind="production")
-    core.link_add(2, 1, because="test fixture", delta="test")  # link T1 <-> T2
+    core.link_add(2, 1, because="test fixture")  # link T1 <-> T2
     core.add("right", kind="production")
-    core.link_add(3, 1, because="test fixture", delta="test")  # link T1 <-> T3
+    core.link_add(3, 1, because="test fixture")  # link T1 <-> T3
     core.add("apex", kind="production")
-    core.link_add(4, 2, because="test fixture", delta="test")  # link T2 <-> T4
-    core.link_add(4, 3, because="test fixture", delta="test")  # link T3 <-> T4
+    core.link_add(4, 2, because="test fixture")  # link T2 <-> T4
+    core.link_add(4, 3, because="test fixture")  # link T3 <-> T4
     assert core.close(4).task.status == "closed"  # walks the diamond, nothing stale
-    core.link_add(1, 4, because="test fixture", delta="test")  # adds link T1 <-> T4 (no cycle under symmetric)
+    core.link_add(1, 4, because="test fixture")  # adds link T1 <-> T4 (no cycle under symmetric)
     n = core.conn.execute("SELECT COUNT(*) FROM links").fetchone()[0]
     assert n == 5  # 4 original + 1 new

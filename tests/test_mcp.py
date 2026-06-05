@@ -69,7 +69,7 @@ def test_mcp_board_returns_slices_with_edges(tmp_path, monkeypatch):
     async def scenario(s):
         await s.call_tool("add", {"name": "base", "kind": "production"})
         await s.call_tool("add", {"name": "dep", "kind": "production"})
-        await s.call_tool("link_add", {"a": 2, "b": 1, "because": "test fixture", "delta": "test"})
+        await s.call_tool("link_add", {"a": 2, "b": 1, "because": "test fixture"})
         return await s.call_tool("board", {"status": "open"})
 
     env = _envelope(_drive(tmp_path, monkeypatch, scenario))
@@ -113,7 +113,7 @@ def test_mcp_stale_alert_rides_in_envelope(tmp_path, monkeypatch):
     async def scenario(s):
         await s.call_tool("add", {"name": "base", "kind": "production"})
         await s.call_tool("add", {"name": "dep", "kind": "production"})
-        await s.call_tool("link_add", {"a": 2, "b": 1, "because": "test fixture", "delta": "test"})
+        await s.call_tool("link_add", {"a": 2, "b": 1, "because": "test fixture"})
         return await s.call_tool("edit", {"id": 1, "description": "x", "delta": "test edit"})  # stales T2
 
     env = _envelope(_drive(tmp_path, monkeypatch, scenario))
@@ -126,7 +126,7 @@ def test_mcp_close_stale_refusal_is_error(tmp_path, monkeypatch):
     async def scenario(s):
         await s.call_tool("add", {"name": "base", "kind": "production"})
         await s.call_tool("add", {"name": "dep", "kind": "production"})
-        await s.call_tool("link_add", {"a": 2, "b": 1, "because": "test fixture", "delta": "test"})
+        await s.call_tool("link_add", {"a": 2, "b": 1, "because": "test fixture"})
         await s.call_tool("edit", {"id": 1, "description": "x", "delta": "test edit"})  # stales T2
         return await s.call_tool("close", {"id": 2})
 
@@ -139,9 +139,9 @@ def test_mcp_dependency_aware_gate(tmp_path, monkeypatch):
     async def scenario(s):
         await s.call_tool("add", {"name": "base", "kind": "production"})  # T1
         await s.call_tool("add", {"name": "mid", "kind": "production"})  # T2
-        await s.call_tool("link_add", {"a": 2, "b": 1, "because": "test fixture", "delta": "test"})
+        await s.call_tool("link_add", {"a": 2, "b": 1, "because": "test fixture"})
         await s.call_tool("add", {"name": "top", "kind": "production"})  # T3
-        await s.call_tool("link_add", {"a": 3, "b": 2, "because": "test fixture", "delta": "test"})
+        await s.call_tool("link_add", {"a": 3, "b": 2, "because": "test fixture"})
         await s.call_tool("edit", {"id": 1, "description": "x", "delta": "test edit"})  # stales T2
         return await s.call_tool("close", {"id": 3})  # T3 depends on stale T2
 
@@ -168,8 +168,8 @@ def test_mcp_remaining_tools_all_work(tmp_path, monkeypatch):
         out = {}
         await s.call_tool("add", {"name": "alpha widget", "kind": "production"})  # T1
         await s.call_tool("add", {"name": "beta widget", "kind": "production"})  # T2
-        await s.call_tool("link_add", {"a": 2, "b": 1, "because": "test fixture", "delta": "test"})
-        out["link_rm"] = _envelope(await s.call_tool("link_rm", {"a": 2, "b": 1, "delta": "test"}))
+        await s.call_tool("link_add", {"a": 2, "b": 1, "because": "test fixture"})
+        out["link_rm"] = _envelope(await s.call_tool("link_rm", {"a": 2, "b": 1}))
         await s.call_tool("label_add", {"id": 1, "label": "tag"})
         out["label_rm"] = _envelope(await s.call_tool("label_rm", {"id": 1, "label": "tag"}))
         await s.call_tool("close", {"id": 1})
@@ -314,7 +314,6 @@ def _setup_stale_scenario(s):
         s.call_tool("link_add", {
             "a": 1, "b": 2,
             "because": "test fixture coupling",
-            "delta": "test fixture wire",
         }),
         s.call_tool("edit", {
             "id": 1,
@@ -385,7 +384,7 @@ def test_mcp_link_add_returns_compact_confirmation(tmp_path, monkeypatch):
         await s.call_tool("add", {"name": "beta impl", "kind": "production"})  # T2
         return _envelope(await s.call_tool(
             "link_add",
-            {"a": 2, "b": 1, "because": "T2 realizes D1's contract", "delta": "wire"},
+            {"a": 2, "b": 1, "because": "T2 realizes D1's contract"},
         ))
 
     env = _drive(tmp_path, monkeypatch, scenario)
@@ -404,8 +403,8 @@ def test_mcp_reconcile_ids_compact_payload_and_short_alert(tmp_path, monkeypatch
         await s.call_tool("add", {"name": "hub", "kind": "production"})     # 1
         await s.call_tool("add", {"name": "leaf a", "kind": "production"})  # 2
         await s.call_tool("add", {"name": "leaf b", "kind": "production"})  # 3
-        await s.call_tool("link_add", {"a": 2, "b": 1, "because": "a realizes hub", "delta": "w"})
-        await s.call_tool("link_add", {"a": 3, "b": 1, "because": "b realizes hub", "delta": "w"})
+        await s.call_tool("link_add", {"a": 2, "b": 1, "because": "a realizes hub"})
+        await s.call_tool("link_add", {"a": 3, "b": 1, "because": "b realizes hub"})
         await s.call_tool("edit", {"id": 1, "description": "shift", "delta": "hub shift"})  # stales 2,3
         return _envelope(await s.call_tool("reconcile", {"ids": [2]}))
 
@@ -430,7 +429,7 @@ def test_mcp_links_op_is_reachable(tmp_path, monkeypatch):
         await s.call_tool("add", {"name": "store shape", "kind": "schema"})     # S2
         await s.call_tool("add", {"name": "impl task", "kind": "production"})    # T3
         await s.call_tool("link_add", {"a": 3, "b": 1,
-            "because": "T3 realizes D1's decision", "delta": "wire"})
+            "because": "T3 realizes D1's decision"})
         out["anchors"] = _envelope(await s.call_tool("links", {}))
         out["nbrs"] = _envelope(await s.call_tool("links", {"ids": [1]}))
         return out

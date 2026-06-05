@@ -22,7 +22,7 @@ def test_stale_worklist_excludes_closed_production(core):
     worklist. The flag stays as record but doesn't pressure the agent."""
     core.add("upstream", kind="production")  # T1
     core.add("downstream", kind="production")  # T2
-    core.link_add(2, 1, because="setup", delta="setup")
+    core.link_add(2, 1, because="setup")
     core.close(2)  # T2 closed
     core.edit(1, description="x", delta="upstream shifted")  # cascade stales T2
     # T2 is closed + stale=1 (record), but worklist excludes it.
@@ -36,7 +36,7 @@ def test_stale_worklist_includes_open_stale(core):
     """Open stale tasks remain on the worklist (the obligation case)."""
     core.add("upstream", kind="production")  # T1
     core.add("downstream", kind="production")  # T2
-    core.link_add(2, 1, because="setup", delta="setup")
+    core.link_add(2, 1, because="setup")
     core.edit(1, description="x", delta="upstream shifted")
     worklist_ids = {t.id for t in core.stale_worklist()}
     assert 2 in worklist_ids
@@ -47,7 +47,7 @@ def test_stale_worklist_includes_spec_stale(core):
     row carries obligation -- it's on the worklist."""
     core.add("d1", kind="design")  # status='spec' default
     core.add("p1", kind="production")
-    core.link_add(2, 1, because="prod realizes design", delta="setup")
+    core.link_add(2, 1, because="prod realizes design")
     core.edit(2, description="x", delta="prod shifted")  # cascade stales d1
     assert core.get(1).stale is True and core.get(1).status == "spec"
     worklist_ids = {t.id for t in core.stale_worklist()}
@@ -74,7 +74,7 @@ def test_stale_worklist_includes_spec_design_when_stale(core):
     (status IN ('open','spec'))."""
     core.add("d_slice", kind="design")  # T1, spec by default
     core.add("p_slice", kind="production")  # T2
-    core.link_add(2, 1, because="impl realizes design", delta="setup")
+    core.link_add(2, 1, because="impl realizes design")
     # Editing T2 stales its neighbor T1 (cascade).
     core.edit(2, description="x", delta="prod shifted")
     t1 = core.get(1)
@@ -94,8 +94,8 @@ def test_close_gate_ignores_closed_stale_production_neighbors(core):
     core.add("a", kind="production")  # T1
     core.add("b", kind="production")  # T2
     core.add("c", kind="production")  # T3
-    core.link_add(2, 1, because="setup", delta="setup")
-    core.link_add(3, 2, because="setup", delta="setup")
+    core.link_add(2, 1, because="setup")
+    core.link_add(3, 2, because="setup")
     core.close(2)
     core.edit(1, description="x", delta="upstream shifted")  # T2 -> closed-stale
     # Close T3 succeeds; closed-stale T2 doesn't pressure the gate.
@@ -109,8 +109,8 @@ def test_close_gate_still_refuses_when_open_stale_in_neighborhood(core):
     core.add("a", kind="production")  # T1
     core.add("b", kind="production")  # T2
     core.add("c", kind="production")  # T3
-    core.link_add(2, 1, because="setup", delta="setup")
-    core.link_add(3, 2, because="setup", delta="setup")
+    core.link_add(2, 1, because="setup")
+    core.link_add(3, 2, because="setup")
     core.edit(1, description="x", delta="upstream shifted")  # T2 -> open-stale
     with pytest.raises(InvariantError, match="stale"):
         core.close(3)
@@ -128,8 +128,8 @@ def test_links_expansion_excludes_closed_production(core):
     core.add("anchor", kind="design")  # T1
     core.add("live_neighbor", kind="production")  # T2 (linked, open)
     core.add("closed_neighbor", kind="production")  # T3 (linked, closed)
-    core.link_add(2, 1, because="setup", delta="setup")
-    core.link_add(3, 1, because="setup", delta="setup")
+    core.link_add(2, 1, because="setup")
+    core.link_add(3, 1, because="setup")
     core.close(3)
     out = core.links(ids=[1])
     ids = {n.id for n in out}
@@ -143,7 +143,7 @@ def test_links_expansion_excludes_retired_design(core):
     The new predicate status IN ('open','spec') excludes 'retired'."""
     core.add("anchor", kind="production")  # T1
     core.add("retired_design", kind="design")  # T2 -- spec status by default
-    core.link_add(2, 1, because="design realized by prod", delta="setup")
+    core.link_add(2, 1, because="design realized by prod")
     # Seed retired status (retire() verb arrives Phase 2b).
     core.conn.execute("UPDATE tasks SET status = 'retired' WHERE id = 2;")
     out = core.links(ids=[1])
@@ -157,7 +157,7 @@ def test_links_expansion_includes_spec_design(core):
     ('open','spec') keeps them visible."""
     core.add("anchor", kind="production")  # T1
     core.add("live_design", kind="design")  # T2 -- spec status by default
-    core.link_add(2, 1, because="design realized by prod", delta="setup")
+    core.link_add(2, 1, because="design realized by prod")
     out = core.links(ids=[1])
     ids = {n.id for n in out}
     assert 2 in ids  # spec design -> included
@@ -171,8 +171,8 @@ def test_links_expansion_keeps_spec_design_excludes_retired(core):
     core.add("anchor", kind="production")  # T1
     core.add("spec_design", kind="design")  # T2 (spec)
     core.add("retired_design", kind="design")  # T3 (will be retired)
-    core.link_add(2, 1, because="prod realizes spec design", delta="setup")
-    core.link_add(3, 1, because="prod once realized retired design", delta="setup")
+    core.link_add(2, 1, because="prod realizes spec design")
+    core.link_add(3, 1, because="prod once realized retired design")
     # Force T3 retired via raw UPDATE (mirroring mig 009's destination).
     core.conn.execute("UPDATE tasks SET status = 'retired' WHERE id = 3;")
     out = core.links(ids=[1])
@@ -532,7 +532,6 @@ def test_close_gate_offender_list_uses_kind_letter_prefix(core):
     core.link_add(
         a=1, b=2,
         because="anchor's invariant decides whether prod is correct",
-        delta="setup",
     )
     # Stale the design by editing it; the production downstream gets staled
     # via the cascade (open production: stays on worklist per D28).
@@ -556,7 +555,7 @@ def test_reclassify_refusal_uses_kind_letter_prefix(core):
     with the new prefix."""
     core.add("prod1", kind="production")
     core.add("prod2", kind="production")
-    core.link_add(a=1, b=2, because="same-kind coupling", delta="setup")
+    core.link_add(a=1, b=2, because="same-kind coupling")
     # Reclassifying T1 to meta would create a cross-kind link with T2.
     with pytest.raises(InvariantError) as excinfo:
         core.reclassify(1, new_kind="meta", delta="experiment")
@@ -706,9 +705,9 @@ def test_internal_add_link_still_refuses_empty_because(core):
     core.add("a", kind="production")
     core.add("b", kind="production")
     with pytest.raises(ValidationError, match="because"):
-        core.link_add(a=1, b=2, because="", delta="test")
+        core.link_add(a=1, b=2, because="")
     with pytest.raises(ValidationError, match="because"):
-        core.link_add(a=1, b=2, because="  ", delta="test")
+        core.link_add(a=1, b=2, because="  ")
 
 
 # ----------------------------------------------------------------------------
@@ -723,7 +722,7 @@ def test_show_dep_entries_carry_link_because(core):
     core.add("a", kind="production")
     core.add("b", kind="production")
     rationale = "b extends a's contract; changes to a require b's review"
-    core.link_add(a=1, b=2, because=rationale, delta="setup")
+    core.link_add(a=1, b=2, because=rationale)
     slice_ = core.show(1)
     assert len(slice_.dependencies) == 1
     assert slice_.dependencies[0].because == rationale
@@ -734,7 +733,7 @@ def test_show_dep_entries_carry_last_edit_delta(core):
     delta from S7 (D29) so the FAST filter can compare delta x because."""
     core.add("a", kind="production")
     core.add("b", kind="production")
-    core.link_add(a=1, b=2, because="b couples to a's behavior", delta="setup")
+    core.link_add(a=1, b=2, because="b couples to a's behavior")
     # Edit B; its last delta should surface on A's dep entry for B.
     core.edit(2, description="new shape", delta="changed b's serialization")
     slice_ = core.show(1)
@@ -746,7 +745,7 @@ def test_show_last_edit_delta_none_if_neighbor_never_edited(core):
     history."""
     core.add("a", kind="production")
     core.add("b", kind="production")
-    core.link_add(a=1, b=2, because="coupling", delta="setup")
+    core.link_add(a=1, b=2, because="coupling")
     slice_ = core.show(1)
     assert slice_.dependencies[0].last_edit_delta is None
 
@@ -758,7 +757,7 @@ def test_show_because_reminder_fires_iff_a_dep_is_stale(core):
 
     core.add("a", kind="production")
     core.add("b", kind="production")
-    core.link_add(a=1, b=2, because="coupling", delta="setup")
+    core.link_add(a=1, b=2, because="coupling")
     # Neither is stale -> no reminder.
     assert core.show(1).because_reminder is None
     # Edit b: a is now stale via the cascade.

@@ -44,8 +44,8 @@ def test_links_depth_one_returns_linked_minus_inputs(core):
     core.add("a", kind="production")  # T1
     core.add("b", kind="production")  # T2
     core.add("c", kind="production")  # T3
-    core.link_add(1, 2, because="test fixture", delta="test")
-    core.link_add(1, 3, because="test fixture", delta="test")
+    core.link_add(1, 2, because="test fixture")
+    core.link_add(1, 3, because="test fixture")
     result = core.links(ids=[1])
     assert [n.id for n in result] == [2, 3]  # not T1 itself
 
@@ -54,9 +54,9 @@ def test_links_depth_one_multiple_inputs_unions(core):
     # Star: T1<->T2, T2<->T3, T3<->T4
     for n in "abcd":
         core.add(n, kind="production")
-    core.link_add(1, 2, because="test fixture", delta="test")
-    core.link_add(2, 3, because="test fixture", delta="test")
-    core.link_add(3, 4, because="test fixture", delta="test")
+    core.link_add(1, 2, because="test fixture")
+    core.link_add(2, 3, because="test fixture")
+    core.link_add(3, 4, because="test fixture")
     # depth-1 from {T1, T3}: linked to T1 = {T2}; linked to T3 = {T2, T4}.
     # Union = {T2, T4} (T2 appears via both, dedupe via DISTINCT/UNION).
     result = core.links(ids=[1, 3])
@@ -67,8 +67,8 @@ def test_links_excludes_already_seen(core):
     core.add("a", kind="production")  # T1
     core.add("b", kind="production")  # T2
     core.add("c", kind="production")  # T3
-    core.link_add(1, 2, because="test fixture", delta="test")
-    core.link_add(1, 3, because="test fixture", delta="test")
+    core.link_add(1, 2, because="test fixture")
+    core.link_add(1, 3, because="test fixture")
     # Caller has already judged T2; expansion from T1 must skip it.
     result = core.links(ids=[1], already_seen=[2])
     assert [n.id for n in result] == [3]
@@ -98,7 +98,7 @@ def test_links_expansion_excludes_retired_status(core):
     for new work."""
     core.add("anchor", kind="production")  # T1
     core.add("retired_d", kind="design")  # T2 -- spec by default
-    core.link_add(2, 1, because="design realized by prod", delta="setup")
+    core.link_add(2, 1, because="design realized by prod")
     # Seed T2 retired (retire() verb arrives Phase 2b).
     core.conn.execute("UPDATE tasks SET status = 'retired' WHERE id = 2;")
     result = core.links(ids=[1])
@@ -111,9 +111,9 @@ def test_links_iterative_walk_pattern(core):
     # Chain: T1 <-> T2 <-> T3 <-> T4
     for n in "abcd":
         core.add(n, kind="production")
-    core.link_add(1, 2, because="test fixture", delta="test")
-    core.link_add(2, 3, because="test fixture", delta="test")
-    core.link_add(3, 4, because="test fixture", delta="test")
+    core.link_add(1, 2, because="test fixture")
+    core.link_add(2, 3, because="test fixture")
+    core.link_add(3, 4, because="test fixture")
     seen = [1]
     layer1 = core.links(ids=[1], already_seen=seen)
     assert [n.id for n in layer1] == [2]

@@ -364,13 +364,14 @@ def build_server() -> FastMCP:
             return _wrap(c, c.reclassify(id, kind, delta=delta).model_dump(mode="json"))
 
     @mcp.tool()
-    def link_add(a: int, b: int, because: str, delta: str) -> dict:
+    def link_add(a: int, b: int, because: str) -> dict:
         """Add a symmetric link between tasks ``a`` and ``b`` with required
-        ``because`` (durable per-edge rationale, T116) and ``delta``
-        (ephemeral one-sentence description of this change, T117). Argument
+        ``because`` (durable per-edge coupling rationale, T116). Link ops do
+        NOT cascade and carry NO ``delta`` (D213) -- delta exists to ride a
+        cascade, so a non-cascading op produces a delta nobody reads. Argument
         order doesn't matter -- the row is stored canonically. Refused on
-        self-link (D14), cross-kind meta links (D26 meta-island), empty
-        ``because``, or empty ``delta``. Refused if either endpoint has
+        self-link (D14), cross-kind meta links (D26 meta-island), or empty
+        ``because``. Refused if either endpoint has
         status='retired' (D36): retired specs accept no new edges --
         there is no realization relationship to a dead decision.
 
@@ -388,7 +389,7 @@ def build_server() -> FastMCP:
         whole neighborhood on every bulk edge was pure context tax. Use
         ``show(a)`` when you actually want the slice."""
         with _core() as c:
-            c.link_add(a, b, because=because, delta=delta)
+            c.link_add(a, b, because=because)
             return _wrap(
                 c,
                 {"linked": {"a": a, "b": b, "because": because}},
@@ -396,12 +397,12 @@ def build_server() -> FastMCP:
             )
 
     @mcp.tool()
-    def link_rm(a: int, b: int, delta: str) -> dict:
-        """Remove the symmetric link between ``a`` and ``b`` (D5/T93) with
-        required ``delta`` (T117). Argument order doesn't matter (canonical
-        lookup)."""
+    def link_rm(a: int, b: int) -> dict:
+        """Remove the symmetric link between ``a`` and ``b`` (D5/T93). Link ops
+        do NOT cascade and carry NO ``delta`` (D213). Argument order doesn't
+        matter (canonical lookup)."""
         with _core() as c:
-            return _wrap(c, c.link_rm(a, b, delta=delta).model_dump(mode="json"))
+            return _wrap(c, c.link_rm(a, b).model_dump(mode="json"))
 
     @mcp.tool()
     def label_add(id: int, label: str) -> dict:

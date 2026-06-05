@@ -101,10 +101,8 @@ def test_export_specs_only_round_trip(core, tmp_path):
              description="prod body C", labels=["arch"])
     core.add("meta task D", kind="meta", description="meta body D")
     # Wire a spec-to-spec link and a spec-to-production link.
-    core.link_add(1, 2, because="design + schema couple here",
-                  delta="seed link")
-    core.link_add(1, 3, because="spec realized by production task",
-                  delta="seed cross-partition link")
+    core.link_add(1, 2, because="design + schema couple here")
+    core.link_add(1, 3, because="spec realized by production task")
     # Edit a spec to populate description_revisions.
     core.edit(1, delta="post-seed edit to populate audit",
               description="design body A v2")

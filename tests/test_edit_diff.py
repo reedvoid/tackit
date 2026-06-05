@@ -53,7 +53,7 @@ def test_edit_append_returns_change_result_with_full_task(core):
 def test_edit_append_fires_cascade_depth_one(core):
     core.add("a", kind="production", description="orig")  # T1
     core.add("b", kind="production", description="dep")  # T2
-    core.link_add(1, 2, because="T2 reviews T1's prose", delta="seed link")
+    core.link_add(1, 2, because="T2 reviews T1's prose")
     result = core.edit_append(1, content=" + more", delta="extended scope")
     stale_ids = []
     for n in result.newly_stale:
@@ -191,7 +191,7 @@ def test_edit_replace_substring_returns_change_result(core):
 def test_edit_replace_substring_fires_cascade(core):
     core.add("a", kind="production", description="hello world")  # T1
     core.add("b", kind="production")  # T2
-    core.link_add(1, 2, because="T2 reads T1's wording", delta="seed link")
+    core.link_add(1, 2, because="T2 reads T1's wording")
     result = core.edit_replace_substring(
         1, old_string="world", new_string="universe", delta="renamed token"
     )
@@ -305,7 +305,7 @@ def test_edit_replace_substring_old_equals_new_is_noop(core):
     no audit row, no version bump."""
     core.add("a", kind="production", description="hello world")  # T1
     core.add("b", kind="production")  # T2
-    core.link_add(1, 2, because="seed", delta="seed link")
+    core.link_add(1, 2, because="seed")
     core.reconcile(2)
     assert core.get(2).stale is False
 

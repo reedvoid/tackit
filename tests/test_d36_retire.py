@@ -66,7 +66,7 @@ def test_retire_does_not_stale_neighbors(core):
     symmetric with close + wont_do)."""
     core.add("d1", kind="design")
     core.add("p1", kind="production")
-    core.link_add(1, 2, because="prod realizes design", delta="setup")
+    core.link_add(1, 2, because="prod realizes design")
     core.close(2)  # close prod so it isn't an open neighbor
     core.retire(1, reason="premise replaced", delta="retiring")
     assert core.get(2).stale is False
@@ -85,7 +85,7 @@ def test_retire_returns_linked_neighbors_in_payload(core):
     retirement (mirrors close/wont_do)."""
     core.add("d1", kind="design")
     core.add("d2", kind="design")
-    core.link_add(1, 2, because="related decisions", delta="setup")
+    core.link_add(1, 2, because="related decisions")
     result = core.retire(1, reason="d2 superseded d1", delta="retiring")
     nbr_ids = {n.id for n in result.dependencies}
     assert 2 in nbr_ids
@@ -102,7 +102,7 @@ def test_retire_allowed_on_only_spec_neighbors(core):
     open-neighbor check, which targets status='open' specifically."""
     core.add("d1", kind="design")
     core.add("d2", kind="design")  # spec by default
-    core.link_add(1, 2, because="related", delta="setup")
+    core.link_add(1, 2, because="related")
     core.retire(1, reason="legit", delta="retiring")
     assert core.get(1).status == "retired"
 
@@ -112,8 +112,8 @@ def test_retire_allowed_on_only_terminal_neighbors(core):
     core.add("d1", kind="design")
     core.add("p1", kind="production")
     core.add("p2", kind="production")
-    core.link_add(1, 2, because="prod realizes design", delta="setup")
-    core.link_add(1, 3, because="prod realizes design", delta="setup")
+    core.link_add(1, 2, because="prod realizes design")
+    core.link_add(1, 3, because="prod realizes design")
     core.close(2)
     core.wont_do(3, reason="dropped", delta="dropped")
     core.retire(1, reason="legit", delta="retiring")
@@ -176,8 +176,8 @@ def test_retire_refused_on_linked_stale_neighbor(core):
     core.add("d1", kind="design")
     core.add("p1", kind="production")
     core.add("p2", kind="production")
-    core.link_add(1, 2, because="prod realizes design", delta="setup")
-    core.link_add(2, 3, because="p1 consumes p2", delta="setup")
+    core.link_add(1, 2, because="prod realizes design")
+    core.link_add(2, 3, because="p1 consumes p2")
     core.edit(3, description="x", delta="p2 shifted")  # stales p1 (T2)
     assert core.get(2).stale is True and core.get(2).status == "open"
     with pytest.raises(InvariantError, match=r"unreconciled|stale"):
@@ -195,8 +195,8 @@ def test_retire_refused_on_open_neighbor_lists_each_with_because(core):
     core.add("d1", kind="design")
     core.add("p1", kind="production")
     core.add("p2", kind="production")
-    core.link_add(1, 2, because="p1 realizes d1 contract", delta="setup")
-    core.link_add(1, 3, because="p2 realizes d1 sub-contract", delta="setup")
+    core.link_add(1, 2, because="p1 realizes d1 contract")
+    core.link_add(1, 3, because="p2 realizes d1 sub-contract")
     with pytest.raises(InvariantError) as excinfo:
         core.retire(1, reason="legit", delta="trying")
     msg = str(excinfo.value)
@@ -210,7 +210,7 @@ def test_retire_open_neighbor_refusal_contains_decision_tree(core):
     wont_do vs link_rm alone) so the agent has the workflow inline."""
     core.add("d1", kind="design")
     core.add("p1", kind="production")
-    core.link_add(1, 2, because="setup", delta="setup")
+    core.link_add(1, 2, because="setup")
     with pytest.raises(InvariantError) as excinfo:
         core.retire(1, reason="legit", delta="trying")
     msg = str(excinfo.value)
@@ -322,7 +322,7 @@ def test_link_add_refused_when_a_is_retired(core):
     core.add("p1", kind="production")
     core.retire(1, reason="legit", delta="retiring")
     with pytest.raises(InvariantError, match=r"retired"):
-        core.link_add(1, 2, because="trying to link", delta="trying")
+        core.link_add(1, 2, because="trying to link")
 
 
 def test_link_add_refused_when_b_is_retired(core):
@@ -330,7 +330,7 @@ def test_link_add_refused_when_b_is_retired(core):
     core.add("d1", kind="design")
     core.retire(2, reason="legit", delta="retiring")
     with pytest.raises(InvariantError, match=r"retired"):
-        core.link_add(1, 2, because="trying to link", delta="trying")
+        core.link_add(1, 2, because="trying to link")
 
 
 def test_link_add_refused_when_both_retired(core):
@@ -339,7 +339,7 @@ def test_link_add_refused_when_both_retired(core):
     core.retire(1, reason="legit a", delta="retiring")
     core.retire(2, reason="legit b", delta="retiring")
     with pytest.raises(InvariantError, match=r"retired"):
-        core.link_add(1, 2, because="trying to link", delta="trying")
+        core.link_add(1, 2, because="trying to link")
 
 
 def test_link_add_retired_refusal_message_format(core):
@@ -349,7 +349,7 @@ def test_link_add_retired_refusal_message_format(core):
     core.add("p1", kind="production")
     core.retire(1, reason="legit", delta="retiring")
     with pytest.raises(InvariantError) as excinfo:
-        core.link_add(1, 2, because="trying to link", delta="trying")
+        core.link_add(1, 2, because="trying to link")
     msg = str(excinfo.value)
     assert "D1" in msg
     assert "retired" in msg
@@ -376,7 +376,7 @@ def test_edit_on_retired_fires_cascade_record_only(core):
     flagged stale (record-only per D28)."""
     core.add("d1", kind="design")
     core.add("p1", kind="production")
-    core.link_add(1, 2, because="prod realizes design", delta="setup")
+    core.link_add(1, 2, because="prod realizes design")
     core.close(2)  # close so retire isn't blocked by open neighbor
     core.retire(1, reason="legit", delta="retiring")
     core.edit(1, description="updated", delta="post-retire prose fix")

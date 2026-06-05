@@ -147,4 +147,4 @@ def test_add_meta_then_link_to_production_refused(core):
     core.add("a meta thing", kind="meta")
     core.add("a prod thing", kind="production")
     with pytest.raises(InvariantError, match="meta-island"):
-        core.link_add(1, 2, because="cross-kind", delta="test")
+        core.link_add(1, 2, because="cross-kind")

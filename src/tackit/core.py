@@ -222,10 +222,11 @@ class Core:
     def _record_delta(self, delta: str, op_name: str) -> None:
         """T117/T124 shared prelude - validate the required delta and record
         it on self for envelope surfacing. Used by every op that takes a
-        required ``delta``: edit, reclassify (cascade-firing), link_add,
-        link_rm (edge-mutating), wont_do (status verb that carries a delta
-        too). Naming the helper makes "this op carries a delta" explicit at
-        the call site."""
+        required ``delta``: edit, reclassify (cascade-firing), wont_do (status
+        verb that carries a delta too). Link ops are NOT in this list (D213):
+        they don't cascade, so a delta they carried would have no reader.
+        Naming the helper makes "this op carries a delta" explicit at the
+        call site."""
         _require_delta(delta, op_name)
         self.last_delta = delta.strip()
 
@@ -701,13 +702,14 @@ class Core:
         stale_found.sort()  # tuples sort by id, then kind
         return stale_found
 
-    def link_add(self, a: int, b: int, because: str, delta: str) -> Slice:
-        """D5 (T93) + T116 + T117 - add a symmetric link between ``a`` and ``b``
-        with a required ``because`` rationale (durable) and a required
-        ``delta`` (ephemeral, one sentence describing the change). The
-        canonicalized row is stored once; no-op on duplicate; no-op does NOT
-        overwrite the existing rationale."""
-        self._record_delta(delta, "link_add")
+    def link_add(self, a: int, b: int, because: str) -> Slice:
+        """D5 (T93) + T116 - add a symmetric link between ``a`` and ``b`` with
+        a required ``because`` rationale (durable coupling). Link ops do NOT
+        cascade and carry NO ``delta`` (D213): ``delta`` exists to ride a
+        cascade so a reconciler can compare it against a link's ``because``;
+        a non-cascading op produces a delta nobody reads. The canonicalized
+        row is stored once; no-op on duplicate; no-op does NOT overwrite the
+        existing rationale."""
         ta, tb = self._canonical(a, b)
         existing = self.conn.execute(
             "SELECT 1 FROM links WHERE task_a = ? AND task_b = ?", (ta, tb)
@@ -717,11 +719,10 @@ class Core:
                 self._add_link(a, b, because)
         return self.show(a)
 
-    def link_rm(self, a: int, b: int, delta: str) -> Slice:
-        """D5 (T93) + T117 - remove the symmetric link between ``a`` and ``b``;
-        required ``delta`` describes the semantic change. Canonical lookup;
+    def link_rm(self, a: int, b: int) -> Slice:
+        """D5 (T93) - remove the symmetric link between ``a`` and ``b``. Link
+        ops do NOT cascade and carry NO ``delta`` (D213). Canonical lookup;
         no-op if absent."""
-        self._record_delta(delta, "link_rm")
         self._require_row(a)
         self._require_row(b)
         ta, tb = self._canonical(a, b)

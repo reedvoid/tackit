@@ -31,7 +31,7 @@ def _hub_with_stale_leaves(core, n: int) -> list[int]:
     for i in range(n):
         t = core.add(f"leaf{i}", kind="production")
         core.link_add(
-            t.id, 1, because=f"leaf{i} realizes the hub contract", delta="wire"
+            t.id, 1, because=f"leaf{i} realizes the hub contract"
         )
         leaf_ids.append(t.id)
     core.edit(1, description="hub contract shifted", delta="hub shift")
@@ -54,7 +54,7 @@ def test_reconcile_many_terminal_id_refuses_whole_batch(core):
     core.add("hub", kind="production")   # 1
     core.add("leaf", kind="production")  # 2
     core.add("done", kind="production")  # 3
-    core.link_add(2, 1, because="leaf realizes hub", delta="wire")
+    core.link_add(2, 1, because="leaf realizes hub")
     core.edit(1, description="shift", delta="hub shift")  # stales 2 only
     core.close(3)  # 3 is open, not stale, no stale neighbors -> closes clean
     v = _v(core)

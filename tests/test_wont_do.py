@@ -30,8 +30,8 @@ def test_wont_do_returns_one_hop_neighbors(core):
     core.add("dropped", kind="production")
     core.add("nbr_a", kind="production")
     core.add("nbr_b", kind="production")
-    core.link_add(2, 1, because="setup", delta="setup")
-    core.link_add(3, 1, because="setup", delta="setup")
+    core.link_add(2, 1, because="setup")
+    core.link_add(3, 1, because="setup")
     result = core.wont_do(1, reason="not doing this", delta="dropped")
     nbr_ids = sorted(n.id for n in result.dependencies)
     assert nbr_ids == [2, 3]
@@ -146,7 +146,7 @@ def test_wont_do_then_fresh_task_for_changed_mind(core):
 def test_wont_do_refused_when_task_is_stale(core):
     core.add("a", kind="production")
     core.add("b", kind="production")
-    core.link_add(2, 1, because="setup", delta="setup")
+    core.link_add(2, 1, because="setup")
     core.edit(1, description="x", delta="staling T2")  # stales T2
     with pytest.raises(InvariantError, match="stale"):
         core.wont_do(2, reason="dropped", delta="dropped")
@@ -158,8 +158,8 @@ def test_wont_do_refused_when_linked_stale(core):
     core.add("a", kind="production")  # T1
     core.add("b", kind="production")  # T2
     core.add("c", kind="production")  # T3
-    core.link_add(2, 1, because="setup", delta="setup")
-    core.link_add(3, 2, because="setup", delta="setup")
+    core.link_add(2, 1, because="setup")
+    core.link_add(3, 2, because="setup")
     core.edit(1, description="x", delta="stales T2")
     with pytest.raises(InvariantError, match="stale"):
         core.wont_do(3, reason="dropped", delta="dropped")
@@ -173,16 +173,16 @@ def test_wont_do_link_add_allowed(core):
     core.add("dropped", kind="production")
     core.add("other", kind="production")
     core.wont_do(1, reason="dropped", delta="dropped")
-    s = core.link_add(2, 1, because="historical edge to dropped task", delta="adding edge")
+    s = core.link_add(2, 1, because="historical edge to dropped task")
     assert 1 in [n.id for n in s.dependencies]
 
 
 def test_wont_do_link_rm_allowed(core):
     core.add("dropped", kind="production")
     core.add("other", kind="production")
-    core.link_add(2, 1, because="will be pruned", delta="setup")
+    core.link_add(2, 1, because="will be pruned")
     core.wont_do(1, reason="dropped", delta="dropped")
-    core.link_rm(2, 1, delta="pruning edges from dropped task")
+    core.link_rm(2, 1)
     n = core.conn.execute("SELECT COUNT(*) FROM links WHERE task_a = 1 AND task_b = 2").fetchone()[0]
     assert n == 0
 
@@ -204,7 +204,7 @@ def test_wont_do_task_cascade_staled_stays_wont_do(core):
     terminal status)."""
     core.add("upstream", kind="production")
     core.add("dropped_downstream", kind="production")
-    core.link_add(2, 1, because="setup", delta="setup")
+    core.link_add(2, 1, because="setup")
     core.wont_do(2, reason="dropped", delta="dropped")
     core.edit(1, description="upstream shifted", delta="upstream shift stales T2")
     t2 = core.get(2)
@@ -217,7 +217,7 @@ def test_reconcile_refused_on_wont_do_stale_under_v04(core):
     Their stale flag is record-only and stays as historical signal."""
     core.add("upstream", kind="production")
     core.add("dropped", kind="production")
-    core.link_add(2, 1, because="setup", delta="setup")
+    core.link_add(2, 1, because="setup")
     core.wont_do(2, reason="dropped", delta="dropped")
     core.edit(1, description="x", delta="staling")
     with pytest.raises(InvariantError, match=r"record-only|archaeology"):
