@@ -468,7 +468,7 @@ def test_skill_md_contains_findings_overflow_rule():
     """SKILL.md documents the findings-overflow-to-sibling rule in the
     Fold-backs section: when cumulative Phase N finding sections exceed
     the original task body OR you reach the 3rd substantial finding,
-    file a sibling `findings` task and link to the umbrella. M181 #8c
+    file a sibling `findings` task and link to the source task. M181 #8c
     fix. T168 at 57k chars is the cautionary tale.
     """
     import pathlib

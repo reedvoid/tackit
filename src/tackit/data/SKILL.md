@@ -192,7 +192,7 @@ tool telling you the plan is currently inconsistent.
 
 ### When findings outgrow the body — fold them out to a sibling
 - why: cumulative Phase N findings can dwarf the original scope and make every edit expensive (T168 hit 57k chars unsplit).
-- do: when about to add the 3rd substantial finding (or findings exceed the original body), file a sibling `<umbrella> — findings` task, link it (`because: "absorbs Phase N+ findings from <umbrella>"`), and put further findings there.
+- do: when about to add the 3rd substantial finding (or findings exceed the original body), file a sibling `<source-task> — findings` task, link it (`because: "absorbs Phase N+ findings from <source-task>"`), and put further findings there.
 - don't-do: retroactively split a body that already grew (the cost usually exceeds continuing).
 
 **Per-discovery format (reference):** `### Phase N finding — <label>` then **Symptom / Root cause / Fix / Why missed / Pinning test / Status (fixed in <hash>)**.
@@ -236,6 +236,11 @@ Every task displays a synthesized `<kind-letter><id>` prefix (design→**D**, sc
   - **Membership link** — encodes category, not consequence; a permanent false-positive generator. Tell: the `because` just restates the cluster's label name.
   - **Rollup task** — a body that's a hand-typed status ledger of other tasks; duplicates state tackit tracks and drifts the instant one closes.
 - (No auto-detector: a fake hub and a central decision slice are structurally identical — high degree, similar becauses — so the agent is the judge.)
+
+## Relationships are edges, not prose (companion to D38)
+- why: a link is structure the cascade traverses and `links`/`board`/reconcile act on; the `because` only supports it. A relationship narrated in a body is invisible to all of that — the graph can't cascade or reconcile what it can't see. A body holds the task's own work, not how it relates to others.
+- do: when you'd type "depends on / supersedes / see also <other>" into a body, wire it instead — `link_add` (or `depends_on:` in a load) with that sentence as the `because`.
+- don't-do: bury a relationship in prose, hand-list other tasks in a body (rollup), or name a parent for children to point at (hub). (D38 forbids the content-free *node*; this forbids the buried *edge*.)
 
 ## Propagation — a discipline lives on every surface it's needed
 - why: each surface catches a different moment — SKILL.md at session-start, MCP docstrings at invocation, CLI help at the typed command, refusal messages at misuse, README at install. A rule in only one surface is skipped by agents who touch a different one.

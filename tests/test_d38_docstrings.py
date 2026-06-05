@@ -103,6 +103,29 @@ def test_skill_md_epic_anchor_snippet_is_removed():
         )
 
 
+def test_skill_md_contains_relationships_are_edges_rule():
+    """SKILL.md carries the 'Relationships are edges, not prose' companion to
+    D38: a relationship belongs on a link + because, never narrated inside a
+    body (where the cascade can't see it). D38 forbids the content-free *node*;
+    this forbids the buried *edge* -- a different axis on the same hub/rollup
+    failure the v0.5 dogfood resurfaced through a synonym ('umbrella')."""
+    text = _canonical_skill()
+    assert "## Relationships are edges, not prose" in text, (
+        "SKILL.md must carry a top-level `## Relationships are edges, not "
+        "prose` section -- the edge-location companion to the D38 node rule."
+    )
+    assert _contains(text, "can't cascade or reconcile what it can't see"), (
+        "SKILL.md edges-not-prose section must carry the core consequence "
+        "phrase -- a relationship buried in a body is invisible to the cascade."
+    )
+    assert _contains(text, "forbids the content-free *node*") and _contains(
+        text, "forbids the buried *edge*"
+    ), (
+        "SKILL.md edges-not-prose section must carry the node-vs-edge contrast "
+        "with D38 so the two companion rules stay distinguishable."
+    )
+
+
 # ============================================================================
 # MCP docstrings — D38 guidance at invocation moment
 # ============================================================================
