@@ -12,6 +12,7 @@ the ops, never left implicit.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -36,6 +37,13 @@ from .models import (
     prefixed_id,
 )
 from .schema import KIND_VALUES
+
+# T215/T216 (D213): shared resolver for "existing-task" references. A reference
+# is a prefixed-name (kind-letter D|S|T|M + id) or a bare `#id`; the kind-letter,
+# when present, is validated against the task's actual kind as a typo-catch.
+_PREFIXED_REF = re.compile(r"^([DSTM])(\d+)$")
+_HASH_REF = re.compile(r"^#(\d+)$")
+_LETTER_TO_KIND = {"D": "design", "S": "schema", "T": "production", "M": "meta"}
 
 
 def _now() -> str:
@@ -420,10 +428,15 @@ class Core:
             for dep_entry in s["depends_on"]:
                 dep_key = dep_entry["key"]
                 because = dep_entry.get("because", "")
-                if dep_key not in keys:
+                # T215: a dep token is either an EXISTING-task ref (prefixed-name
+                # like 'S30' or '#id' -- resolved + kind-validated here) or a
+                # batch-local key defined in this plan.
+                existing_id = self._resolve_dep_ref(dep_key)
+                if existing_id is None and dep_key not in keys:
                     raise ValidationError(
-                        f"task '{s['key']}' depends_on unknown key '{dep_key}' "
-                        f"(not defined in this plan)."
+                        f"task '{s['key']}' depends_on unknown ref '{dep_key}' "
+                        f"-- not a batch-local key in this plan, and not an "
+                        f"existing-task ref (prefixed-name like 'S30', or '#id')."
                     )
                 if not because or not because.strip():
                     raise ValidationError(
@@ -474,11 +487,11 @@ class Core:
                     # D33 / T164: per-edge rationale comes from the plan; the
                     # pre-T164 placeholder shortcut was retired. Pre-validation
                     # above already refused any empty/missing because.
-                    self._add_link(
-                        frm,
-                        keymap[dep_entry["key"]],
-                        because=dep_entry["because"],
-                    )
+                    # T215: resolve an existing-task ref, else a batch-local key.
+                    target = self._resolve_dep_ref(dep_entry["key"])
+                    if target is None:
+                        target = keymap[dep_entry["key"]]
+                    self._add_link(frm, target, because=dep_entry["because"])
         if new_labels:  # T67: surface the new labels so the agent can collapse in one pass
             self.last_label_nudge = (
                 f"🏷 Bulk load created {len(new_labels)} new label(s): "
@@ -701,6 +714,67 @@ class Core:
                 stack.append(nxt)
         stale_found.sort()  # tuples sort by id, then kind
         return stale_found
+
+    def _resolve_existing_ref(self, ref) -> int:
+        """T215/T216 (D213) - resolve a reference to an EXISTING task's id.
+        Accepts an int id, a bare ``#id`` string, or a prefixed-name
+        ``<D|S|T|M><id>``. When a kind-letter is given it is validated against
+        the task's actual kind (a typo-catch: ``S30`` must be a schema task).
+        Raises NotFoundError if no such task exists, ValidationError if the ref
+        is malformed or the kind-letter disagrees."""
+        letter = None
+        if isinstance(ref, bool):  # bool is an int subclass -- reject explicitly
+            raise ValidationError(
+                f"task reference must be an id or string, not a bool ({ref!r})."
+            )
+        if isinstance(ref, int):
+            tid = ref
+        elif isinstance(ref, str):
+            s = ref.strip()
+            m = _PREFIXED_REF.match(s)
+            h = _HASH_REF.match(s)
+            if m:
+                letter = m.group(1)
+                tid = int(m.group(2))
+            elif h:
+                tid = int(h.group(1))
+            elif s.isdigit():
+                tid = int(s)
+            else:
+                raise ValidationError(
+                    f"{ref!r} is not a valid task reference -- expected an id, "
+                    f"'#id', or a prefixed-name like 'S30' (D|S|T|M + id)."
+                )
+        else:
+            raise ValidationError(
+                f"task reference must be an int id or a string; got "
+                f"{type(ref).__name__}."
+            )
+        row = self.conn.execute(
+            "SELECT kind FROM tasks WHERE id = ?", (tid,)
+        ).fetchone()
+        if row is None:
+            raise NotFoundError(f"no task with id {tid} (ref {ref!r}).")
+        if letter is not None:
+            expected = _LETTER_TO_KIND[letter]
+            if row["kind"] != expected:
+                raise ValidationError(
+                    f"ref {ref!r} names a {expected} task but id {tid} is "
+                    f"{row['kind']} ({prefixed_id(row['kind'], tid)}). "
+                    f"Fix the kind-letter."
+                )
+        return tid
+
+    def _resolve_dep_ref(self, ref: str) -> int | None:
+        """load-only (T215) - classify a depends_on token. Returns an EXISTING
+        task id if ``ref`` is an existing-task reference (prefixed-name
+        ``<D|S|T|M><id>`` or ``#id``), else None for a batch-local key. Raises
+        if the token looks like an existing-ref but the task is missing or the
+        kind-letter disagrees."""
+        s = ref.strip()
+        if _PREFIXED_REF.match(s) or _HASH_REF.match(s):
+            return self._resolve_existing_ref(s)
+        return None
 
     def link_add(self, a: int, b: int, because: str) -> Slice:
         """D5 (T93) + T116 - add a symmetric link between ``a`` and ``b`` with

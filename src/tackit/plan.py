@@ -19,8 +19,11 @@ Format (no external dependency; the design.md D#/S# slices nearly conform):
 A ``[key] Name`` line starts a task; indented ``kind:`` / ``desc:`` / ``labels:`` /
 ``depends_on:`` lines are its fields. ``kind`` is required (D26: design | schema |
 production | meta); a row missing it is refused, the whole import rolls back (T94).
-``depends_on`` references other keys in the same plan. Anything malformed fails loud
-(D2) before the store is touched.
+``depends_on`` references either another batch-local key in this plan OR an
+EXISTING task by prefixed-name (``D|S|T|M`` + id, e.g. ``S30``) or ``#id`` (T215);
+a prefixed-name's kind-letter is validated against the target task. Batch-local
+keys may NOT use the reserved prefixed-id form. Anything malformed fails loud (D2)
+before the store is touched.
 
 D33 / T164 (v0.4): every dep edge MUST carry an explicit per-edge ``because``
 rationale describing the coupling. The pre-T164 CSV form (``depends_on: a, b, c``)
@@ -62,6 +65,9 @@ from .schema import KIND_VALUES
 _KEY_LINE = re.compile(r"^\[([A-Za-z0-9_.-]+)\]\s*(.*)$")
 _FIELD_LINE = re.compile(r"^\s+([A-Za-z_]+):\s*(.*)$")
 _FIELDS = {"kind", "desc", "labels", "depends_on"}
+# T215: a batch-local key may NOT look like a prefixed-id (D|S|T|M + digits) --
+# that form is reserved for referencing EXISTING tasks in depends_on.
+_RESERVED_KEY = re.compile(r"^[DSTM]\d+$")
 
 
 def _split_csv(value: str) -> list[str]:
@@ -162,6 +168,12 @@ def parse_plan(text: str) -> list[dict]:
                 raise ValidationError(f"plan line {lineno}: task [{key}] has no name.")
             if key in seen_keys:
                 raise ValidationError(f"plan line {lineno}: duplicate key '{key}'.")
+            if _RESERVED_KEY.match(key):
+                raise ValidationError(
+                    f"plan line {lineno}: key '{key}' is reserved -- it matches "
+                    f"the prefixed-id form (D|S|T|M + digits) that depends_on uses "
+                    f"to reference EXISTING tasks (T215). Rename the batch-local key."
+                )
             seen_keys.add(key)
             current = {
                 "key": key,

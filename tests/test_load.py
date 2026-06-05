@@ -4,7 +4,7 @@ key-resolved depends_on)."""
 import pytest
 
 from tackit import sync
-from tackit.errors import InvariantError, ValidationError
+from tackit.errors import InvariantError, NotFoundError, ValidationError
 from tackit.plan import parse_plan
 
 PLAN = """\
@@ -205,3 +205,84 @@ def test_load_reports_new_labels(core):  # T67 anti-sprawl summary
     assert core.last_label_nudge is not None
     assert "brandnew" in core.last_label_nudge and "another" in core.last_label_nudge
     assert "existing" not in core.last_label_nudge  # already existed -> not reported as new
+
+
+# --- T215: depends_on resolves EXISTING tasks (prefixed-name / #id) --------
+
+
+def test_load_depends_on_existing_task_by_prefixed_name(core):
+    anchor = core.add("anchors table", kind="schema")  # S1
+    keymap = core.load(parse_plan(
+        "[impl] concept extraction\n"
+        "  kind: design\n"
+        "  depends_on:\n"
+        "    S1 :: concept fields persist to the anchors table S1 defines\n"
+    ))
+    deps = [n.id for n in core.dependencies_of(keymap["impl"])]
+    assert anchor.id in deps  # edge to the pre-existing schema task
+
+
+def test_load_depends_on_existing_by_hash_id(core):
+    anchor = core.add("anchors table", kind="schema")  # id 1
+    keymap = core.load(parse_plan(
+        "[impl] thing\n  kind: production\n  depends_on:\n"
+        "    #1 :: realizes the anchors contract\n"
+    ))
+    assert anchor.id in [n.id for n in core.dependencies_of(keymap["impl"])]
+
+
+def test_load_mixed_batch_and_existing_refs(core):
+    anchor = core.add("existing schema", kind="schema")  # S1
+    keymap = core.load(parse_plan(
+        "[a] first\n  kind: production\n"
+        "[b] second\n  kind: production\n  depends_on:\n"
+        "    a :: b builds on batch-local a\n"
+        "    S1 :: b also reaches the existing schema anchor\n"
+    ))
+    b_deps = sorted(n.id for n in core.dependencies_of(keymap["b"]))
+    assert b_deps == sorted([keymap["a"], anchor.id])
+
+
+def test_load_existing_ref_kind_letter_mismatch_refused(core):
+    core.add("a design slice", kind="design")  # D1, NOT T1
+    with pytest.raises(ValidationError, match="kind-letter"):
+        core.load(parse_plan(
+            "[impl] thing\n  kind: production\n  depends_on:\n"
+            "    T1 :: wrong letter -- id 1 is a design task\n"
+        ))
+    assert len(core.ls()) == 1  # impl not created (refused before mutate)
+
+
+def test_load_unknown_existing_ref_rolls_back(core):
+    with pytest.raises(NotFoundError):  # no task id 999
+        core.load(parse_plan(
+            "[impl] thing\n  kind: production\n  depends_on:\n"
+            "    S999 :: references a task that does not exist\n"
+        ))
+    assert core.ls() == []  # whole import rolled back, no partial
+
+
+def test_load_reserved_key_shaped_like_prefixed_id_refused(core):
+    with pytest.raises(ValidationError, match="reserved"):
+        parse_plan("[S30] looks like an existing ref\n  kind: schema\n")
+
+
+def test_load_existing_ref_to_retired_endpoint_refused(core):
+    dead = core.add("dead decision", kind="design")  # D1, spec
+    core.retire(dead.id, reason="100% gone with no replacement", delta="retire for test")
+    with pytest.raises(InvariantError):  # _add_link refuses a retired endpoint (D36)
+        core.load(parse_plan(
+            "[impl] thing\n  kind: production\n  depends_on:\n"
+            "    D1 :: links to a retired decision -- refused\n"
+        ))
+    assert len(core.ls()) == 1  # only the retired D1 remains; impl rolled back
+
+
+def test_load_existing_ref_to_closed_task_allowed(core):
+    done = core.add("done prereq", kind="production")  # T1
+    core.close(done.id)
+    keymap = core.load(parse_plan(
+        "[impl] follow-on\n  kind: production\n  depends_on:\n"
+        "    T1 :: builds on the closed prereq's shipped contract\n"
+    ))
+    assert done.id in [n.id for n in core.dependencies_of(keymap["impl"])]

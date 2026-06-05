@@ -34,7 +34,7 @@ not retold here.
 - do: put actionable tasks + dependencies here; put durable learnings and external references in your memory.
 
 **Import many tasks with `load`, not N `add()` calls.**
-- why: `load` is one atomic import (rolls back entirely on any bad row) and carries the full task — kind, multi-paragraph `desc` (blank-line paragraph breaks preserved, so impl-ready bodies round-trip), labels, and `depends_on` edges with `because` rationales.
+- why: `load` is one atomic import (rolls back entirely on any bad row) and carries the full task — kind, multi-paragraph `desc` (blank-line paragraph breaks preserved, so impl-ready bodies round-trip), labels, and `depends_on` edges with `because` rationales. `depends_on` references a batch-local key OR an EXISTING task by prefixed-name (`S30`) or `#id` (T215, kind-letter validated), so a new slice and its links to existing anchors land in ONE call — no separate `link_add` round-trips.
 - do: reach for `load` whenever you're creating more than a couple of related tasks.
 - don't-do: hand-loop `add()` for a known set of tasks.
 
@@ -209,7 +209,7 @@ Every task displays a synthesized `<kind-letter><id>` prefix (design→**D**, sc
 
 ## Wire links explicitly — including within a batch
 - why: the cascade-ergonomics filter runs on the `because`; an unwired or placeholder edge degrades the cascade to "open every downstream."
-- do: wire each edge with a specific `because` — to existing tasks (found via `links`/`search`) AND among tasks you add together (the internal DAG is the case most forgotten).
+- do: wire each edge with a specific `because` — to existing tasks (found via `links`/`search`) AND among tasks you add together (the internal DAG is the case most forgotten). In a `load`, wire external anchors inline via `depends_on: <S30|#id> :: <because>` (T215) instead of a follow-up `link_add` pass.
 
 ## Write real `because` rationales
 - why: the cascade compares `because × delta`; a vague because filters nothing.
