@@ -34,9 +34,13 @@ Multi-line ``desc``: a ``desc:`` field may span several lines. Lines indented
 *deeper* than the ``desc:`` keyword are **continuation lines** of the description;
 each is appended as its own line (its leading indentation stripped), so a
 multi-paragraph description round-trips faithfully — the migration case the
-single-line-only parser silently truncated. The block ends at the first blank line,
-the next ``field:``/``[key]`` line (i.e. any line not indented deeper than ``desc:``),
-or end of input. Continuation only applies inside a ``desc`` field; an
+single-line-only parser silently truncated. A blank line inside a ``desc`` block
+is NOT a hard terminator (D40): it is held as a *pending* paragraph break and
+promoted to a real break iff a deeper-indented continuation line follows; if a
+``field:``/``[key]`` line or end of input follows instead, the trailing blanks are
+discarded and the block simply ends. The block otherwise ends at the next
+``field:``/``[key]`` line (i.e. any line not indented deeper than ``desc:``) or end
+of input. Continuation only applies inside a ``desc`` field; an
 equal-or-lesser-indented line that is neither a known field nor a ``[key]`` still
 fails loud, exactly as before.
 
