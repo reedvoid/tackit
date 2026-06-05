@@ -412,9 +412,10 @@ point:
   (status IN ('open','spec')); your judgment picks among them.
 - Links are for coupling, labels for membership. A link means "edit one ⇒ re-check the
   other" — that is what the cascade fires; grouping tasks under a shared theme is a
-  *label*, not links to an anchor. Never create a hub task (one whose purpose is to be
-  linked-to) or a rollup task (a body that re-types other tasks' status); coverage is a
-  `board`/`ls`-by-label query, not a hand-typed ledger (D38).
+  *label*, not links to a hub. A relationship belongs on a link + `because`, never narrated
+  in a description — the cascade can't see prose. Never create a hub task (one whose purpose
+  is to be linked-to) or a rollup task (a body that re-types other tasks' status); coverage
+  is a `board`/`ls`-by-label query, not a hand-typed ledger (D38).
 - Reconcile on change: a change marks linked neighbors stale. The worklist filter is
   `status IN ('open','spec')` — stale on terminal-status rows
   (closed/wont_do/retired) is record-only archaeology and does NOT pressure the

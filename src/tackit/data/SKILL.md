@@ -223,7 +223,7 @@ Every task displays a synthesized `<kind-letter><id>` prefix (design→**D**, sc
 - do: run `labels` and reuse before creating; create one only when it's distinct, sizeable, consequential, and memorable; prefer a few broad labels. After a bulk `load`, review the new labels it reports and collapse near-duplicates in one pass.
 - don't-do: create a label that's an implementation detail (`regex`, `utf8`), something tackit already tracks (time = `created_at`, done = `status`, reopened = `history`), a one/two-task one-off, or a kind name (refused).
 
-## Group a cluster with a label, never an anchor task
+## Group a cluster with a label, never a hub task
 - why: membership is the label's job; a task created to be linked-to by its whole cluster is a **hub**, and the membership edges into it are pure cascade noise.
 - do: give the cluster one shared label; answer "is it complete?" with `board(label=X)` / `ls(label=X)` against the expected set (which lives in the slice that defines it).
 - don't-do: make "the question" a task for the others to link to; hand-maintain a status table of other tasks inside a body (it's wrong the moment one closes).

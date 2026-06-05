@@ -146,6 +146,13 @@ def test_mcp_add_docstring_contains_fake_task_guidance():
         "MCP add() docstring must state 'Links are for coupling; labels are "
         "for membership' (D38)."
     )
+    # Companion to D38 (edges-not-prose): a relationship belongs on a link,
+    # never narrated in the body the agent is about to write.
+    assert _contains(block, "not narrated in this body"), (
+        "MCP add() docstring must carry the edges-not-prose direction -- a "
+        "relationship belongs on a link, 'not narrated in this body' (the "
+        "cascade can't see prose)."
+    )
 
 
 def test_mcp_link_add_docstring_contains_coupling_not_membership():
@@ -161,4 +168,10 @@ def test_mcp_link_add_docstring_contains_coupling_not_membership():
         "MCP link_add() docstring must name the membership-vs-coupling "
         "discriminator ('MEMBERSHIP, not coupling') and point at using a "
         "label instead (D38)."
+    )
+    # Companion to D38 (edges-not-prose): wire the relationship here as an
+    # edge rather than burying it in a task body the cascade can't traverse.
+    assert _contains(block, "belongs HERE as an edge"), (
+        "MCP link_add() docstring must carry the edges-not-prose direction -- "
+        "a relationship 'belongs HERE as an edge', not buried in a description."
     )

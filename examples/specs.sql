@@ -684,7 +684,7 @@ DRY: the reminder text is defined exactly once (`core.LINK_BECAUSE_REMINDER`); r
 **Why this isn''t D33''s job:**
 D33 enforces rationale QUALITY at link creation. D34 surfaces the rationales AND deltas so the FAST/orientation pipeline can actually run. They''re complementary: D33 makes the data worth surfacing; D34 makes it accessible.
 
-Backs: D9 (slice fetch — adds two fields to its dep entries + one top-level field), D11 (reconciliation worklist — same trigger condition''s home concept), D29 (description_revisions, the source of persisted deltas), T116 (per-edge because), T117 (delta concept).', 'spec', 0, '2026-06-02T03:19:44.306327+00:00', '2026-06-03T05:12:38.610640+00:00', 'design', NULL);
+Backs: D9 (slice fetch — adds two fields to its dep entries + one top-level field), D11 (reconciliation worklist — same trigger condition''s home concept), D29 (description_revisions, the source of persisted deltas), T116 (per-edge because), T117 (delta concept).', 'spec', 0, '2026-06-02T03:19:44.306327+00:00', '2026-06-05T20:34:22.863021+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (167, 'D35 — Spec status value: design/schema slices use status=''spec'' (retires the kind-conditional perma-open framing)', '**The problem D35 fixes** (surfaced 2026-06-02): the current model conflates two orthogonal things in the `status` column — lifecycle (open/closed/wont_do) and kind-driven liveness (design and schema are perma-spec, not work items). Counts of "open" mislead because they include perma-spec slices that aren''t work items, and every report has to caveat: "of N open, only M are actual work items." That caveat is a structural tax on every count, every dogfood pass, every report. The mechanics work correctly — worklist filter, close-gate, reconcile refusal all do the right thing — but the framing is confusing and propagates user-visible noise.
 
 **The decision:** add a new status value `spec`. Design and schema slices live at `status=''spec''` permanently. `open` regains its plain meaning ("work item to do"). The kind-conditional clauses in the worklist filter, close-gate, wont_do refusal, and reconcile refusal collapse into clean status-derived predicates.
@@ -977,7 +977,15 @@ The failure that produced this slice was NOT a missing prohibition — the agent
 ## Surfaces (propagation per the propagation principle)
 SKILL.md (replace the epic snippet in the Labels section + add this discipline section + tighten the Right-size and Write-real-because bullets), README for-agents discipline block, MCP `add()` docstring (the missing too-large / hub / rollup direction — currently only catches too-small) + `link_add()` docstring (because = consequence not category), and a presence-pinning test mirroring test_d37_docstrings.py.
 
-Backs/refines: D34 (because semantics + FAST filter) — coupling link to it.', 'spec', 0, '2026-06-04T16:44:45.843164+00:00', '2026-06-04T16:44:45.843164+00:00', 'design', NULL);
+Backs/refines: D34 (because semantics + FAST filter) — coupling link to it.
+
+## Phase 2 fold-back (2026-06-05, T219) — the synonym leak + the edge axis
+- **Symptom.** A dogfood session''s agent rebuilt the forbidden hub/roster pattern, naming it an "umbrella slice," despite this slice forbidding hubs. It even proposed "§X-as-umbrella (mirror §Y)" as a repeatable move.
+- **Root cause.** T198''s removal pass deleted the *named* "epic pattern" snippet but a *synonymous* blessed-parent noun — "umbrella" — survived in SKILL''s `When findings outgrow the body` rule (a DIFFERENT section than the Labels section this slice''s surface-list named). A surviving positive use of the banned concept under a synonym re-licensed it: this slice''s own thesis (a wrong "do" beats a right "don''t") leaking through a word the removal never swept.
+- **Fix (T219).** (a) Reworded findings-overflow `<umbrella>` -> `<source-task>` (behavior unchanged). (b) Added a companion SKILL rule `## Relationships are edges, not prose` — a SECOND AXIS to this slice: D38 forbids the content-free *node* (hub/rollup); the companion forbids a relationship *narrated in body prose* instead of wired as an *edge* (the cascade traverses links, never prose). (c) Vocabulary-collision fix: "anchor" was overloaded — it is the term-of-art for the GOOD design/schema layer that `links()` surfaces, yet the grouping heading + README reused it for the BAD node. Renamed those usages to "hub" (the name this slice''s body already uses), reserving "anchor" for the good layer. (d) Propagated the companion to README + `add()` / `link_add()` docstrings.
+- **Why missed.** T198''s removal targeted the snippet by name/content with no synonym sweep; the "anchor" overload was never flagged as a collision.
+- **Pinning.** `test_d38_docstrings::test_skill_md_contains_relationships_are_edges_rule` + extended `add()`/`link_add()` docstring pins. SKILL.md "umbrella" count is now 0.
+- **Status.** SKILL new rule + reword + first pins in 3076890; the remaining surfaces (anchor→hub, README, docstrings, extra pins) in the T219 commit. 525 tests pass.', 'spec', 0, '2026-06-04T16:44:45.843164+00:00', '2026-06-05T20:34:01.060691+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (199, 'D39 — Bulk-sweep ergonomics: compact link_add return, batch reconcile(ids), short alert on reconcile', 'Cuts the per-op token tax that makes bulk/sweep operations expensive — the T179 large-body pattern resurfacing on the RESPONSE and SWEEP side. From dogfood friction on a large schema backfill (#2/#1/#6 of that report). tackit was built interactive-single-op-first; its origin use case (import a large plan) and the messy-backfill reality are bulk.
 
 ## #2 — link_add returns a compact confirmation, not the full slice
@@ -1698,4 +1706,36 @@ Presence-pinning tests (test_d37_docstrings, test_d38_docstrings) assert phrases
 
 ## Target
 ~35–40% reduction (~1060 → ~620–680 lines) with ZERO loss of any behavioral directive. Every cut is narrative/duplication/archaeology, never a rule.', 'Fold-back: corrected the ~35-40% estimate to the measured ~56%; recorded that the presence-pin tests are the rewrite safety net (caught 6 moved/dropped load-bearing phrases).', '2026-06-04T21:25:47.137138+00:00');
+INSERT INTO description_revisions (id, task_id, prev_name, prev_description, delta, edited_at) VALUES (61, 197, 'D38 — Links are coupling, labels are membership: the rollup / hub / membership-link anti-patterns', 'Names and forbids the "fake task" family that the dogfood surfaced, and removes the SKILL.md endorsement (the "epic pattern" snippet) that caused it.
+
+## The core distinction (the thing that''s easy to miss)
+A **link** is a claim about *consequence*: "if X''s content changes, Y must be re-examined." That is literally what the cascade fires. A **label** is a claim about *category*: "X and Y belong to the same grouping." Categories have no consequence — editing one sibling does not invalidate another. Links carry cascade semantics; labels are dumb tags.
+
+**The test, applied at every `link_add`:** "If I edited X''s body right now, would I genuinely need to re-open Y and check it still holds?" Yes → coupling → link. "No, they''re just both part of the same epic/theme" → membership → label.
+
+**The `because` is the discriminator** (extends D34): a coupling `because` names a *consequence* ("citations FK references documents.id; a column rename here breaks the join"). A membership `because` restates a *category* ("part of the plan-import epic", "schema-ingest cluster"). When the `because` you are about to write is just the cluster''s label name reworded, the edge is a membership link masquerading as coupling — drop it and attach the label instead.
+
+## The anti-patterns (named, for recognition + review)
+- **Hub task** — a task whose purpose is to be linked-to (a membership magnet). Cost: accumulates membership links; over the cluster''s life every edit to the hub stales N bystanders and every edit to any member stales the hub — ~N² false-positive stale flags, all zero-value.
+- **Membership link** — an edge encoding category, not consequence. Cost: each is a permanent false-positive stale generator that trains the FAST filter into rubber-stamping (the "Edits aren''t free" failure mode), so the cascade stops catching *real* drift.
+- **Rollup task** — a task whose body is a hand-maintained status ledger of *other* tasks. Cost: (1) duplicates state tackit already tracks (status/labels), and the hand-typed copy drifts the instant a real task closes — the exact drift tackit exists to prevent, reintroduced inside tackit; (2) gets edited as a side-effect of *dependents* finishing, firing the full neighbor sweep at moments unrelated to most neighbors (backwards cascade).
+- Umbrella term: **fake task** — a task that is not a unit of work (no deliverable, no decision) and exists only to be a link target or to hold a rollup.
+
+## The positive patterns (what to do instead — lead with these)
+- **Group a cluster with a shared label, never with links to an anchor.** This replaces the deleted "epic pattern" snippet, which told agents to BOTH label the cluster AND link the members to an anchor — encoding membership twice and creating the cascade hub.
+- **Coverage is a query, not a task.** To answer "is this cluster complete?", run `board(label=X)` / `ls(label=X)` for the live membership and compare against the expected set. The expected set (the denominator) lives in the design/schema slice — or memory — that *defines* it, never in a hand-typed status table inside a task body.
+
+## Legitimate vs fake — the boundary (do NOT over-apply)
+A design/schema slice that captures a *decision* and is linked by the impl tasks that *realize* it is NOT a hub — those are coupling links (edit the decision ⇒ re-review the realizing impl). The entire `links` / dep-discovery model depends on decision-bearing slices being linked-to. What is forbidden is a *content-free* task that exists only for membership or rollup. The separating variable is semantic (does the node carry a decision/contract?), not structural (degree, because-similarity).
+
+## Detection: considered and REJECTED as brittle (2026-06-04, user decision)
+Heuristic auto-detection at add/edit/link_add (rollup-body regex; high-degree + near-duplicate-because hub detector) was evaluated and rejected. High-precision separation of a fake hub from a legitimately-central decision slice is semantic, not structural — degree + because-similarity fire on exactly the legitimate slices we want to keep (e.g. D36, linked by every realizing impl task with similar becauses). A warn-level heuristic would add noise to the very FAST-filter SNR this rule protects; refuse-level would block legitimate work. tackit''s established philosophy (P1 dep-discovery reframe — deterministic surface, agent judges) already covers it: the agent holding the tool IS the semantic judge; no separate detector belongs in the MCP.
+
+## The lesson behind the lesson (prompt-engineering, why removal beats addition)
+The failure that produced this slice was NOT a missing prohibition — the agent already had "don''t scatter to-dos" / "not a knowledge base" and built the hub anyway, because a *contradictory positive instruction* (the epic-anchor snippet) endorsed it. A wrong "do" beats a right "don''t" every time. Hence: the highest-leverage fix is *removing the contradictory endorsement*, then *leading with the positive pattern* (label to group, query for coverage). The anti-pattern names serve *recognition* (catch yourself mid-act) and *review*, not generation.
+
+## Surfaces (propagation per the propagation principle)
+SKILL.md (replace the epic snippet in the Labels section + add this discipline section + tighten the Right-size and Write-real-because bullets), README for-agents discipline block, MCP `add()` docstring (the missing too-large / hub / rollup direction — currently only catches too-small) + `link_add()` docstring (because = consequence not category), and a presence-pinning test mirroring test_d37_docstrings.py.
+
+Backs/refines: D34 (because semantics + FAST filter) — coupling link to it.', 'Phase 2 fold-back (T219): record that the v0.5 removal pass (T198) missed the "umbrella" synonym; add the edge-vs-prose companion axis and the anchor→hub vocabulary-collision fix.', '2026-06-05T20:34:01.060649+00:00');
 COMMIT;

@@ -89,7 +89,9 @@ def build_server() -> FastMCP:
         rollup of OTHER tasks, is not a unit of work: group a cluster with a
         label, and answer "is it complete?" with board/ls(label=...), never a
         hand-typed ledger that drifts the moment a real task closes. Links are
-        for coupling (edit-X => recheck-Y); labels are for membership.
+        for coupling (edit-X => recheck-Y); labels are for membership. And a
+        relationship belongs on a link, not narrated in this body -- the
+        cascade can't see prose; wire it with link_add (or depends_on).
 
         Returns the new task's slice plus any ``stale_alert``."""
         with _core() as c:
@@ -381,7 +383,9 @@ def build_server() -> FastMCP:
         only "they're in the same epic/theme," that's MEMBERSHIP, not coupling
         -- attach a shared label instead of a link. A because that merely
         restates a cluster's label name is a membership edge wearing a coupling
-        costume, and is pure cascade noise.
+        costume, and is pure cascade noise. Conversely: a relationship you'd
+        otherwise describe in a task body belongs HERE as an edge -- the
+        cascade traverses links, never prose buried in a description.
 
         D39 #2 -- returns a COMPACT confirmation ``{"linked": {"a", "b",
         "because"}}``, not ``a``'s full slice. link_add is structural (it
