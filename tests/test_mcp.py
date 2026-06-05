@@ -41,11 +41,11 @@ def test_mcp_registers_all_tools(tmp_path, monkeypatch):
         return [t.name for t in listing.tools]
 
     names = _drive(tmp_path, monkeypatch, scenario)
-    assert len(names) == 24  # +2 T179 (edit_append/replace); +1 T204 (links)
+    assert len(names) == 25  # +2 T179 (edit_append/replace); +1 T204 (links); +1 T216 (links_add)
     expected = {"add", "show", "search", "links", "edit", "edit_append",
                 "edit_replace_substring", "close", "reconcile", "link_add",
-                "stale", "labels", "load", "board", "reclassify", "wont_do",
-                "retire"}
+                "links_add", "stale", "labels", "load", "board", "reclassify",
+                "wont_do", "retire"}
     assert expected <= set(names)
 
 
@@ -394,6 +394,25 @@ def test_mcp_link_add_returns_compact_confirmation(tmp_path, monkeypatch):
     # NOT a slice — no task body or neighbor lists echoed back.
     assert "task" not in env["result"]
     assert "dependencies" not in env["result"]
+
+
+def test_mcp_links_add_bulk_compact(tmp_path, monkeypatch):
+    """T216: links_add wires many existing<->existing edges in one call and
+    returns a compact {created, already_linked, created_pairs} (no because)."""
+    async def scenario(s):
+        await s.call_tool("add", {"name": "design slice", "kind": "design"})  # D1
+        await s.call_tool("add", {"name": "impl a", "kind": "production"})    # T2
+        await s.call_tool("add", {"name": "impl b", "kind": "production"})    # T3
+        return _envelope(await s.call_tool("links_add", {"edges": [
+            {"a": "T2", "b": "D1", "because": "T2 realizes D1"},
+            {"a": "T3", "b": "D1", "because": "T3 realizes D1"},
+        ]}))
+
+    env = _drive(tmp_path, monkeypatch, scenario)
+    assert env["result"]["created"] == 2
+    assert env["result"]["already_linked"] == 0
+    assert sorted(env["result"]["created_pairs"]) == [["T2", "D1"], ["T3", "D1"]]
+    assert "because" not in str(env["result"])  # compact: no rationale echoed
 
 
 def test_mcp_reconcile_ids_compact_payload_and_short_alert(tmp_path, monkeypatch):

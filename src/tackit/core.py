@@ -606,15 +606,14 @@ class Core:
         """Canonical (lower, higher) order for the symmetric link pair (S3)."""
         return (a, b) if a < b else (b, a)
 
-    def _add_link(self, a: int, b: int, because: str) -> None:
-        """D5 + D14 + T116 - add a symmetric link between ``a`` and ``b`` with
-        a required ``because`` rationale describing WHY the two tasks are
-        coupled. Invariants: both endpoints exist (FK), distinct (CHECK
-        task_a < task_b prevents self-link), the **meta-island constraint**
-        (D26 / T87), and a non-empty ``because``. Cascade-ergonomics
-        discipline (per [[T116]]): describe the coupling, not the
-        implementation -- rationales stay stable when implementations
-        change."""
+    def _check_link_edge(self, a: int, b: int, because: str) -> None:
+        """T216 (D213) - validate ONE link edge WITHOUT mutating: distinct
+        endpoints (no self-link, D14), non-empty ``because`` (T116), both
+        endpoints exist, neither retired (D36), and the meta-island constraint
+        (D26 / T87). Raises InvariantError/ValidationError on the first
+        problem. Shared by ``_add_link`` (single insert) and ``links_add``
+        (validate-all-first), so the two paths cannot drift on what a valid
+        edge is."""
         if a == b:
             raise InvariantError(f"a task cannot link to itself (T{a}).")
         if not because or not because.strip():
@@ -657,6 +656,15 @@ class Core:
                 f"cascade so meta work (release tracking, experiments) cannot drag "
                 f"spec/production tasks into a stale review and vice versa."
             )
+
+    def _add_link(self, a: int, b: int, because: str) -> None:
+        """D5 + D14 + T116 - add a symmetric link between ``a`` and ``b`` with a
+        required ``because`` rationale describing WHY the two tasks are coupled.
+        Edge validity (self-link, because, existence, retired, meta-island) is
+        checked by ``_check_link_edge``. Cascade-ergonomics discipline (per
+        [[T116]]): describe the coupling, not the implementation -- rationales
+        stay stable when implementations change."""
+        self._check_link_edge(a, b, because)
         ta, tb = self._canonical(a, b)
         try:
             self.conn.execute(
@@ -809,6 +817,85 @@ class Core:
                     "DELETE FROM links WHERE task_a = ? AND task_b = ?", (ta, tb)
                 )
         return self.show(a)
+
+    def _prefixed_of(self, tid: int) -> str:
+        """Compact prefixed-id (e.g. 'S30') for a task id -- used in link echoes."""
+        row = self.conn.execute(
+            "SELECT kind FROM tasks WHERE id = ?", (tid,)
+        ).fetchone()
+        if row is None:
+            raise NotFoundError(f"no task with id {tid}.")
+        return prefixed_id(row["kind"], tid)
+
+    def links_add(self, edges: list[dict]) -> dict:
+        """T216 (D213) - bulk-create links between EXISTING tasks. Each edge is
+        ``{"a", "b", "because"}`` where ``a``/``b`` are an id or a prefixed-name
+        (resolved + kind-validated via ``_resolve_existing_ref``) and
+        ``because`` is the per-edge coupling rationale (T116). NO ``delta``
+        (link ops don't cascade) and NO batch-wide because (a shared because is
+        the membership-link anti-pattern, D38).
+
+        Validate-all-first: any structural offender -- bad/unknown ref, self-
+        link, retired endpoint, meta-island, empty because -- refuses the WHOLE
+        batch and names EVERY offender (no mutation), so the caller fixes all in
+        one pass. An already-linked edge (or an intra-batch duplicate) is a
+        benign no-op (counted, not rejected), so a partially-applied intent is
+        safely re-runnable. One transaction, one version bump (none if nothing
+        new is created -- D20 no-op discipline).
+
+        Returns ``{"created", "already_linked", "created_pairs"}`` where
+        ``created_pairs`` lists the newly-created edges by prefixed-name."""
+        resolved: list[tuple[int, int, str]] = []
+        offenders: list[str] = []
+        for edge in edges:
+            a_raw = edge.get("a")
+            b_raw = edge.get("b")
+            because = edge.get("because", "")
+            try:
+                a_id = self._resolve_existing_ref(a_raw)
+                b_id = self._resolve_existing_ref(b_raw)
+                self._check_link_edge(a_id, b_id, because)
+            except (ValidationError, InvariantError, NotFoundError) as exc:
+                offenders.append(f"  {a_raw!r} <-> {b_raw!r}: {exc}")
+                continue
+            resolved.append((a_id, b_id, because))
+        if offenders:
+            raise ValidationError(
+                f"links_add refused the WHOLE batch ({len(offenders)} bad "
+                f"edge(s)) -- fix every one and re-run:\n" + "\n".join(offenders)
+            )
+        # Dedup against the store AND within the batch before mutating, so an
+        # already-linked edge is a benign no-op and _mutate is entered only when
+        # there is genuinely something new (no version bump on a pure no-op).
+        seen_pairs: set[tuple[int, int]] = set()
+        to_create: list[tuple[int, int, str]] = []
+        already_linked = 0
+        for a_id, b_id, because in resolved:
+            ta, tb = self._canonical(a_id, b_id)
+            if (ta, tb) in seen_pairs:
+                already_linked += 1  # intra-batch duplicate
+                continue
+            exists = self.conn.execute(
+                "SELECT 1 FROM links WHERE task_a = ? AND task_b = ?", (ta, tb)
+            ).fetchone()
+            if exists is not None:
+                already_linked += 1
+                continue
+            seen_pairs.add((ta, tb))
+            to_create.append((a_id, b_id, because))
+        created_pairs: list[list[str]] = []
+        if to_create:
+            with self._mutate():
+                for a_id, b_id, because in to_create:
+                    self._add_link(a_id, b_id, because)
+                    created_pairs.append(
+                        [self._prefixed_of(a_id), self._prefixed_of(b_id)]
+                    )
+        return {
+            "created": len(created_pairs),
+            "already_linked": already_linked,
+            "created_pairs": created_pairs,
+        }
 
     def _linked_with(self, task_id: int) -> list[NeighborRef]:
         """D6 - every task that shares a link with ``task_id``, id-sorted. Single

@@ -209,7 +209,7 @@ Every task displays a synthesized `<kind-letter><id>` prefix (design→**D**, sc
 
 ## Wire links explicitly — including within a batch
 - why: the cascade-ergonomics filter runs on the `because`; an unwired or placeholder edge degrades the cascade to "open every downstream."
-- do: wire each edge with a specific `because` — to existing tasks (found via `links`/`search`) AND among tasks you add together (the internal DAG is the case most forgotten). In a `load`, wire external anchors inline via `depends_on: <S30|#id> :: <because>` (T215) instead of a follow-up `link_add` pass.
+- do: wire each edge with a specific `because` — to existing tasks (found via `links`/`search`) AND among tasks you add together (the internal DAG is the case most forgotten). In a `load`, wire external anchors inline via `depends_on: <S30|#id> :: <because>` (T215) instead of a follow-up `link_add` pass. For a pure existing↔existing wiring pass (no new tasks), `links_add(edges=[{a, b, because}, …])` creates many links in one atomic, validate-all-first call (T216) — endpoints are id or prefixed-name, already-linked edges are benign no-ops.
 
 ## Write real `because` rationales
 - why: the cascade compares `because × delta`; a vague because filters nothing.

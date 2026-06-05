@@ -405,6 +405,29 @@ def build_server() -> FastMCP:
             return _wrap(c, c.link_rm(a, b).model_dump(mode="json"))
 
     @mcp.tool()
+    def links_add(edges: list[dict]) -> dict:
+        """Bulk-create links between EXISTING tasks (D213) -- the existing<->
+        existing wiring pass that `load` can't cover (load only creates NEW
+        tasks). Each edge is `{"a", "b", "because"}`: `a`/`b` are an id or a
+        prefixed-name (e.g. "S30", kind-letter validated against the target),
+        `because` is the per-edge coupling rationale (T116). There is
+        deliberately NO batch-wide because (a shared because is the membership-
+        link anti-pattern, D38 -- the flat list with mandatory per-edge because
+        forbids it) and NO `delta` (link ops don't cascade, D213).
+
+        Validate-all-first: any structural offender -- self-link (D14), cross-
+        kind meta (D26), retired endpoint (D36), unknown/malformed ref, or empty
+        because -- refuses the WHOLE batch and names EVERY offender so you fix
+        them in one pass. An already-linked edge (or intra-batch duplicate) is a
+        benign no-op (counted, re-runnable), NOT a rejection. One transaction.
+
+        Returns a COMPACT `{"created", "already_linked", "created_pairs"}`
+        (pairs by prefixed-name); never the because text or neighborhoods (link
+        ops are structural -- the result carries no obligation to act on)."""
+        with _core() as c:
+            return _wrap(c, c.links_add(edges), short_alert=True)
+
+    @mcp.tool()
     def label_add(id: int, label: str) -> dict:
         """Attach a freeform label to a task (D4)."""
         with _core() as c:

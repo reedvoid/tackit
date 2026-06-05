@@ -534,3 +534,21 @@ def test_cli_links_anchor_and_neighborhood(cli, capsys):
     assert main(["links", "1", "--json"]) == 0       # D1's neighborhood
     nbrs = json.loads(capsys.readouterr().out)
     assert [n["id"] for n in nbrs] == [2]            # T2
+
+
+def test_cli_links_add_bulk(cli, tmp_path, capsys):
+    """T216: `tackit links-add` bulk-links existing tasks from a file/stdin,
+    one edge per line as `<a> <b> :: <because>`."""
+    main(["add", "design slice", "--kind", "design"])    # D1
+    main(["add", "impl a", "--kind", "production"])       # T2
+    main(["add", "impl b", "--kind", "production"])       # T3
+    edges = tmp_path / "edges.txt"
+    edges.write_text(
+        "T2 D1 :: T2 realizes the D1 decision\n"
+        "T3 D1 :: T3 realizes the D1 decision\n"
+    )
+    capsys.readouterr()
+    assert main(["links-add", str(edges), "--json"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["created"] == 2
+    assert result["already_linked"] == 0

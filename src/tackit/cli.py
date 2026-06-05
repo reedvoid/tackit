@@ -227,6 +227,43 @@ def _cmd_load(args) -> int:
     return 0
 
 
+def _cmd_links_add(args) -> int:
+    """T216: bulk-link EXISTING tasks. Reads edges from a file or stdin, one
+    per line as `<a> <b> :: <because>` (a/b are id or prefixed-name)."""
+    text = Path(args.file).read_text() if args.file else sys.stdin.read()
+    edges = []
+    for lineno, raw in enumerate(text.splitlines(), start=1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "::" not in line:
+            print(
+                f"line {lineno}: expected `<a> <b> :: <because>` (got {line!r})",
+                file=sys.stderr,
+            )
+            return 2
+        endpoints, _, because = line.partition("::")
+        parts = endpoints.split()
+        if len(parts) != 2:
+            print(
+                f"line {lineno}: expected exactly two endpoints before `::` "
+                f"(got {endpoints.strip()!r})",
+                file=sys.stderr,
+            )
+            return 2
+        edges.append({"a": parts[0], "b": parts[1], "because": because.strip()})
+    with _core_session() as core:
+        result = core.links_add(edges)
+        out = (
+            f"created {result['created']}, already_linked "
+            f"{result['already_linked']}"
+        )
+        for a, b in result["created_pairs"]:
+            out += f"\n  + {a} <-> {b}"
+        _emit(out, result, args.json)
+    return 0
+
+
 def _cmd_search(args) -> int:
     with _core_session() as core:
         hits = core.search(args.terms, name_only=args.name_only)
@@ -668,6 +705,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp = add("load", _cmd_load, "bulk-import a plan atomically: [key] tasks with "
              "multi-paragraph desc + depends_on by key (D24/D40). Prefer over N adds.")
     sp.add_argument("file", nargs="?", help="plan file (omit to read stdin)")
+
+    sp = add("links-add", _cmd_links_add, "bulk-link EXISTING tasks atomically "
+             "(D213/T216): edges from a file or stdin, one per line as "
+             "`<a> <b> :: <because>` (a/b are id or prefixed-name). Validate-all-"
+             "first; already-linked edges are benign no-ops.")
+    sp.add_argument("file", nargs="?", help="edges file (omit to read stdin)")
 
     sp = add("show", _cmd_show, "slice fetch: task + deps + dependents + labels (D9)")
     sp.add_argument("id", type=int)
