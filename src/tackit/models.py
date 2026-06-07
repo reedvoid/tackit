@@ -332,25 +332,47 @@ class LabelUsage(BaseModel):
 # included or omitted, never half-shown; show() is the full-body path.
 
 
+_TASK_LIST_DROP = {"name", "created_at", "updated_at"}
+# T221: fields dropped from every LIST/GRAPH projection row. `name` is fully
+# contained in the computed `prefixed_name` ("<L><id> — <name>"), so emitting
+# both duplicates it on every row; the `created_at`/`updated_at` timestamps are
+# not needed to scan a list. These are the dominant cost of a large ls/board
+# payload over MCP (which is always JSON). `show` remains the full-scalar path.
+
+
 def project_task(task: "Task", *, include_description: bool) -> dict:
-    """D211: lean projection of a Task for ls/board. Drops `description` unless
-    asked. Keeps every scalar + the computed `prefixed_name`."""
-    exclude = None if include_description else {"description"}
+    """D211 + T221: lean LIST projection of a Task for `ls`. Always drops the
+    bare `name` (recoverable from `prefixed_name`) and the `created_at` /
+    `updated_at` timestamps; drops `description` too unless asked. Keeps id,
+    prefixed_name, kind, status, stale, wont_do_reason. For one row's full
+    scalars use `show`."""
+    exclude = set(_TASK_LIST_DROP)
+    if not include_description:
+        exclude.add("description")
     return task.model_dump(mode="json", exclude=exclude)
 
 
 def project_slice(
     slice_: "Slice", *, include_description: bool, include_neighbor_because: bool
 ) -> dict:
-    """D211: lean projection of a board Slice. By default drops the task's
+    """D211 + T221: lean projection of a board Slice. Always drops the focal
+    task's redundant `name` + `created_at`/`updated_at` and each neighbor's bare
+    `name` (the prefixed_name carries it). By default also drops the task's
     `description` AND each neighbor's `because` + `last_edit_delta` (keeping the
-    graph SHAPE: id/prefixed_name/status/stale/kind). Each is opt-in
+    graph SHAPE: id/prefixed_name/status/stale/kind); those two are opt-in
     independently. Never truncates."""
-    exclude: dict = {}
+    # T221: the focal task drops the same redundant name + timestamps as the ls
+    # list projection; each neighbor drops the bare `name` (its prefixed_name
+    # carries it). NeighborRef has no timestamps.
+    task_excl = set(_TASK_LIST_DROP)
     if not include_description:
-        exclude["task"] = {"description"}
+        task_excl.add("description")
+    nbr_excl = {"name"}
     if not include_neighbor_because:
-        nbr = {"__all__": {"because", "last_edit_delta"}}
-        exclude["dependencies"] = nbr
-        exclude["dependents"] = nbr
-    return slice_.model_dump(mode="json", exclude=exclude or None)
+        nbr_excl |= {"because", "last_edit_delta"}
+    exclude = {
+        "task": task_excl,
+        "dependencies": {"__all__": nbr_excl},
+        "dependents": {"__all__": nbr_excl},
+    }
+    return slice_.model_dump(mode="json", exclude=exclude)

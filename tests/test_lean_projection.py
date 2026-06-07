@@ -25,6 +25,46 @@ def test_project_task_lean_omits_description(core):
     assert project_task(t, include_description=True)["description"] == "a long body"
 
 
+def test_project_task_drops_redundant_name_and_timestamps(core):
+    """T221: the bare `name` (carried by prefixed_name) and the created_at/
+    updated_at timestamps are dropped from the list projection; the canonical
+    scalars stay."""
+    core.add("a task", kind="production")
+    t = core.ls()[0]
+    lean = project_task(t, include_description=False)
+    assert "name" not in lean
+    assert "created_at" not in lean and "updated_at" not in lean
+    # canonical id/handle + the scalars worth scanning remain
+    assert lean["prefixed_name"] == t.prefixed_name
+    assert lean["id"] == t.id and lean["kind"] == "production" and lean["status"] == "open"
+    assert "wont_do_reason" in lean  # kept: a dropped row's reason is useful inline
+
+
+def test_show_remains_the_full_scalar_path(core):
+    """T221: trimming the list projection must not touch show() -- it still
+    carries name + timestamps for one row."""
+    core.add("a task", kind="production")
+    full = core.show(1).model_dump(mode="json")
+    assert full["task"]["name"] == "a task"
+    assert "created_at" in full["task"] and "updated_at" in full["task"]
+
+
+def test_project_slice_drops_focal_and_neighbor_name(core):
+    """T221: board cards drop the focal task's name+timestamps and each
+    neighbor's bare name (prefixed_name carries it)."""
+    d = core.add("design", kind="design")  # D1
+    t = core.add("impl", kind="production")  # T2
+    core.link_add(t.id, d.id, because="T2 realizes D1")
+    card = project_slice(
+        core.show(t.id), include_description=False, include_neighbor_because=False
+    )
+    assert "name" not in card["task"]
+    assert "created_at" not in card["task"] and "updated_at" not in card["task"]
+    assert card["task"]["prefixed_name"].startswith("T2")
+    nbr = card["dependencies"][0]
+    assert "name" not in nbr and nbr["prefixed_name"].startswith("D1")
+
+
 def test_project_task_empty_description_omitted_not_truncated(core):
     core.add("a task", kind="production")  # description defaults to ""
     t = core.ls()[0]
