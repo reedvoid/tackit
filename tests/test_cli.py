@@ -67,6 +67,16 @@ def test_cli_add_json_output(cli, capsys):
     assert data["task"]["name"] == "json task"
 
 
+def test_cli_ls_name_prefix(cli, capsys):
+    """T220: --name-prefix scopes the ls query."""
+    main(["add", "§9.1 search", "--kind", "design"])
+    main(["add", "§8.2 other", "--kind", "design"])
+    capsys.readouterr()
+    assert main(["ls", "--name-prefix", "§9.1", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert [t["id"] for t in data] == [1]
+
+
 def test_cli_edit_surfaces_stale_on_stderr(cli, capsys):
     main(["add", "base", "--kind", "production"])
     main(["add", "dep", "--kind", "production"])

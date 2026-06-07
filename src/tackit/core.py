@@ -1813,12 +1813,21 @@ class Core:
         label: str | None = None,
         stale: bool | None = None,
         kind: str | None = None,
+        name_prefix: str | None = None,
     ) -> list[Task]:
-        """D15 + T157 + D36 (v0.5) + D211 - list/filter tasks by status, label,
-        stale, and/or kind. The work queue and any board are *queries over the fields*,
-        not maintained lists. Status filter accepts the full v0.5 set
-        (open, closed, wont_do for production/meta; spec, retired for
-        design/schema) per D7+D36's five-status partitioned taxonomy."""
+        """D15 + T157 + D36 (v0.5) + D211 + T220 - list/filter tasks by status,
+        label, stale, kind, and/or name_prefix. The work queue and any board are
+        *queries over the fields*, not maintained lists. Status filter accepts
+        the full v0.5 set (open, closed, wont_do for production/meta; spec,
+        retired for design/schema) per D7+D36's five-status partitioned taxonomy.
+
+        T220: ``name_prefix`` scopes results to tasks whose stored ``name``
+        begins with the given string -- a LITERAL, case-sensitive prefix (no
+        LIKE/GLOB wildcards), so a project can pull one section of a large
+        layer (e.g. ``name_prefix='§9.1'``) instead of the whole kind. NOTE: it
+        matches the bare stored name, NOT the synthesized ``prefixed_name``
+        (which begins with the kind-letter + id), so filter on ``'§9.1'``, not
+        ``'D39'``."""
         if status is not None and status not in (
             "open", "closed", "wont_do", "spec", "retired"
         ):
@@ -1829,6 +1838,11 @@ class Core:
         if kind is not None and kind not in KIND_VALUES:
             raise ValidationError(
                 f"kind filter must be one of {', '.join(KIND_VALUES)} (D211/D26)."
+            )
+        if name_prefix is not None and name_prefix == "":
+            raise ValidationError(
+                "name_prefix filter must be non-empty (an empty prefix matches "
+                "everything -- omit the filter instead) (T220)."
             )
         clauses, params = [], []
         join = ""
@@ -1845,6 +1859,12 @@ class Core:
         if kind is not None:
             clauses.append("t.kind = ?")
             params.append(kind)
+        if name_prefix is not None:
+            # T220: literal case-sensitive prefix -- substr equality avoids LIKE
+            # wildcard ('%','_') and GLOB ('*','?') reinterpretation of the input.
+            clauses.append("substr(t.name, 1, ?) = ?")
+            params.append(len(name_prefix))
+            params.append(name_prefix)
         where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
         rows = self.conn.execute(
             f"SELECT DISTINCT t.* FROM tasks t {join} {where} ORDER BY t.id", tuple(params)

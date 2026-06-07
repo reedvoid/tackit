@@ -450,17 +450,26 @@ def build_server() -> FastMCP:
         label: str | None = None,
         stale: bool = False,
         kind: str | None = None,
+        name_prefix: str | None = None,
         include_description: bool = False,
     ) -> dict:
-        """Query/board (D15 + D211): filter tasks by status, label, stale, and/or
-        kind. Returns a LEAN projection by default -- task scalars only, NO
-        `description` (D211); pass include_description=True for full bodies. For
-        ONE full body use `show`. `status` choices (D36 v0.5): open | closed |
-        wont_do | spec | retired; `kind`: design | schema | production | meta."""
+        """Query/board (D15 + D211 + T220): filter tasks by status, label, stale,
+        kind, and/or name_prefix. Returns a LEAN projection by default -- task
+        scalars only, NO `description` (D211); pass include_description=True for
+        full bodies. For ONE full body use `show`. `status` choices (D36 v0.5):
+        open | closed | wont_do | spec | retired; `kind`: design | schema |
+        production | meta. `name_prefix` (T220) scopes to tasks whose name begins
+        with a LITERAL case-sensitive prefix -- use it to pull one section of a
+        large layer (e.g. name_prefix='§9.1') instead of the whole kind. It
+        matches the bare name, NOT the synthesized prefixed_name (so filter on
+        '§9.1', not 'D39')."""
         with _core() as c:
             stale_filter = True if stale else None
             tasks = []
-            for t in c.ls(status=status, label=label, stale=stale_filter, kind=kind):
+            for t in c.ls(
+                status=status, label=label, stale=stale_filter,
+                kind=kind, name_prefix=name_prefix,
+            ):
                 tasks.append(project_task(t, include_description=include_description))
             return _wrap(c, tasks, short_alert=True)
 
@@ -528,20 +537,26 @@ def build_server() -> FastMCP:
         label: str | None = None,
         stale: bool = False,
         kind: str | None = None,
+        name_prefix: str | None = None,
         include_description: bool = False,
         include_neighbor_because: bool = False,
     ) -> dict:
-        """Dependency-aware board (D22 + D36 + D211): the filtered tasks, each as
-        a slice (task + dependencies + dependents + labels), so you see the whole
-        graph's structure in ONE call (richer than `ls`). LEAN by default: NO
-        task `description` and NO neighbor `because`/`last_edit_delta` -- just the
-        graph SHAPE (ids/prefixed_names/status/stale/kind). Opt in per axis:
-        include_description (full bodies), include_neighbor_because (edge
-        rationales). Filters: status, label, stale, kind."""
+        """Dependency-aware board (D22 + D36 + D211 + T220): the filtered tasks,
+        each as a slice (task + dependencies + dependents + labels), so you see
+        the whole graph's structure in ONE call (richer than `ls`). LEAN by
+        default: NO task `description` and NO neighbor `because`/`last_edit_delta`
+        -- just the graph SHAPE (ids/prefixed_names/status/stale/kind). Opt in per
+        axis: include_description (full bodies), include_neighbor_because (edge
+        rationales). Filters: status, label, stale, kind, name_prefix (T220:
+        literal case-sensitive name prefix, e.g. '§9.1', matching the bare name
+        not the synthesized prefixed_name)."""
         with _core() as c:
             stale_filter = True if stale else None
             cards = []
-            for t in c.ls(status=status, label=label, stale=stale_filter, kind=kind):
+            for t in c.ls(
+                status=status, label=label, stale=stale_filter,
+                kind=kind, name_prefix=name_prefix,
+            ):
                 cards.append(project_slice(
                     c.show(t.id),
                     include_description=include_description,

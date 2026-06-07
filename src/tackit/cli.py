@@ -458,7 +458,8 @@ def _cmd_label(args) -> int:
 def _cmd_ls(args) -> int:
     with _core_session() as core:
         stale = True if args.stale else None
-        tasks = core.ls(status=args.status, label=args.label, stale=stale, kind=args.kind)
+        tasks = core.ls(status=args.status, label=args.label, stale=stale,
+                        kind=args.kind, name_prefix=args.name_prefix)
         if tasks:
             lines = []
             for t in tasks:
@@ -496,7 +497,8 @@ def _cmd_render(args) -> int:
 def _cmd_board(args) -> int:
     with _core_session() as core:
         stale = True if args.stale else None
-        tasks = core.ls(status=args.status, label=args.label, stale=stale, kind=args.kind)
+        tasks = core.ls(status=args.status, label=args.label, stale=stale,
+                        kind=args.kind, name_prefix=args.name_prefix)
         if args.json:
             cards = []
             for t in tasks:
@@ -939,6 +941,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--stale", action="store_true", help="only stale tasks")
     sp.add_argument("--kind", choices=["design", "schema", "production", "meta"],
                     help="filter by kind (D211)")
+    sp.add_argument("--name-prefix",
+                    help="literal case-sensitive name prefix, e.g. '§9.1' (T220)")
     sp.add_argument("--include-description", action="store_true",
                     help="include full task bodies (D211; default lean)")
 
@@ -953,6 +957,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--stale", action="store_true", help="only stale tasks")
     sp.add_argument("--kind", choices=["design", "schema", "production", "meta"],
                     help="filter by kind (D211)")
+    sp.add_argument("--name-prefix",
+                    help="literal case-sensitive name prefix, e.g. '§9.1' (T220)")
     sp.add_argument("--include-description", action="store_true",
                     help="include full task bodies in --json (D211; default lean)")
     sp.add_argument("--include-neighbor-because", action="store_true",

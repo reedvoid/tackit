@@ -79,6 +79,20 @@ def test_mcp_board_returns_slices_with_edges(tmp_path, monkeypatch):
     assert [n["id"] for n in t2["dependencies"]] == [1]  # board carries each task's edges
 
 
+def test_mcp_ls_and_board_name_prefix(tmp_path, monkeypatch):
+    """T220: name_prefix flows through both ls and board over MCP."""
+    async def scenario(s):
+        await s.call_tool("add", {"name": "§9.1 search", "kind": "design"})
+        await s.call_tool("add", {"name": "§8.2 other", "kind": "design"})
+        ls = await s.call_tool("ls", {"name_prefix": "§9.1"})
+        board = await s.call_tool("board", {"name_prefix": "§9.1"})
+        return ls, board
+
+    ls_res, board_res = _drive(tmp_path, monkeypatch, scenario)
+    assert [t["id"] for t in _envelope(ls_res)["result"]] == [1]
+    assert [c["task"]["id"] for c in _envelope(board_res)["result"]] == [1]
+
+
 def test_mcp_success_wraps_result_in_envelope(tmp_path, monkeypatch):
     async def scenario(s):
         await s.call_tool("add", {"name": "base", "kind": "production"})
