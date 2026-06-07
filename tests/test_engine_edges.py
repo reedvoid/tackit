@@ -165,10 +165,14 @@ def test_traversal_is_status_blind(core):
     assert deps[0].status == "closed"
 
 
-def test_search_malformed_fts_syntax_refused(core):
+def test_search_metachars_sanitized_not_refused(core):
+    """T222: previously a query carrying FTS5 metacharacters (here an unbalanced
+    quote) raised a loud refusal. Sanitization now per-token-quotes the input so
+    it can no longer be malformed -- the query is handled gracefully (returns
+    cleanly, no exception) instead of erroring."""
     core.add("a", kind="production")
-    with pytest.raises(ValidationError):
-        core.search('"unbalanced')  # malformed FTS5 MATCH -> loud refusal, not raw error
+    # no exception, and an unmatched term simply returns nothing
+    assert core.search('"unbalanced') == []
 
 
 def test_ls_invalid_status_refused(core):

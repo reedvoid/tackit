@@ -50,6 +50,33 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _fts_sanitize(query: str) -> str:
+    """T222 - turn a raw user query into a safe FTS5 MATCH expression.
+
+    FTS5 has its OWN query mini-language (separate from SQL) in which '.', ':',
+    '-', "'", parens and '*' are operators or syntax -- so a structured key the
+    caller most wants to search (a dotted section id like '4.2.4', a hyphenated
+    term, an apostrophe) is interpreted instead of matched and the query errors
+    ("syntax error near '.'" / "no such column: foo"). FTS5 offers no per-char
+    escape; the ONLY escape mechanism is the double-quoted phrase, inside which
+    the sole metacharacter is '"' itself (escaped by doubling). So we wrap each
+    whitespace-separated token as its own quoted string literal: this matches
+    every operator char literally while preserving today's per-token implicit-
+    AND semantics. (Quoting the WHOLE query instead would make it a single
+    phrase and force adjacency, silently changing results -- so it is per-token
+    on purpose.)
+
+    Usability fix, NOT security: the MATCH value is already a bound parameter,
+    so SQL injection is impossible regardless; this only stops natural queries
+    from erroring. Trade-off: intentional FTS operators (prefix '*', AND/OR/
+    NEAR) are neutralized -- an acceptable default for a keyword tracker."""
+    tokens = query.split()
+    quoted = []
+    for tok in tokens:
+        quoted.append('"' + tok.replace('"', '""') + '"')
+    return " ".join(quoted)
+
+
 def _require_delta(delta: str | None, op: str) -> None:
     """T117 / cascade-ergonomics B - every mutating op that fires the cascade
     (edit, reclassify, link_add, link_rm) requires the agent to provide a short
@@ -1870,18 +1897,23 @@ class Core:
         hits adding noise."""
         if not query or not query.strip():
             raise ValidationError("search query must be non-empty (D17).")
+        # T222: sanitize per-token so dotted/punctuated keys are searchable
+        # instead of erroring; the column filter scopes the whole expression.
+        match_query = _fts_sanitize(query)
         if name_only:
-            query = "{name}: " + query
+            match_query = "{name}: (" + match_query + ")"
         try:
             rows = self.conn.execute(
                 "SELECT t.id AS id, t.name AS name, t.status AS status, t.kind AS kind, "
                 "t.wont_do_reason AS wont_do_reason, bm25(tasks_fts) AS bm25 "
                 "FROM tasks_fts JOIN tasks t ON t.id = tasks_fts.rowid "
                 "WHERE tasks_fts MATCH ? ORDER BY bm25 LIMIT ?",
-                (query, limit),
+                (match_query, limit),
             ).fetchall()
         except sqlite3.OperationalError as exc:
-            # malformed FTS5 query syntax -> fail loud at the boundary (D2)
+            # T222: post-sanitization this should be unreachable -- kept as a
+            # defensive backstop so any unforeseen FTS5 syntax still fails loud
+            # at the boundary (D2) rather than surfacing as a raw sqlite error.
             raise ValidationError(f"invalid search query (FTS5 syntax): {exc}") from exc
         return [
             SearchHit(
