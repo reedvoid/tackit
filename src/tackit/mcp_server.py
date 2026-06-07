@@ -258,7 +258,13 @@ def build_server() -> FastMCP:
         items. Use edit() to refine a decision; retire() if 100% abandoned
         with no replacement (D36). REFUSED on wont_do / retired (no double-
         decide). On success returns the task's dependencies and dependents
-        to review."""
+        to review.
+
+        close() records "done" and does NOT cascade -- so DON'T first edit the
+        body with a bookkeeping note ("done", "committed <hash>"); that fires a
+        pointless cascade and the status + git already carry it. Only a
+        fold-back (a discovered constraint/decision a reader needs) earns a
+        pre-close edit. See SKILL.md "Edits aren't free"."""
         with _core() as c:
             return _wrap(c, c.close(id).model_dump(mode="json"))
 

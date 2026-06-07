@@ -105,7 +105,7 @@ The three edit variants are operationally equivalent (same cascade, same S7 audi
 
 ### close — production/meta work shipped
 - why: close means "we did this" (distinct from wont_do = "we decided not to").
-- do: close a production/meta task when its deliverable shipped.
+- do: close a production/meta task when its deliverable shipped — that records "done" and does NOT cascade, so don't *also* edit the body with a completion note (`"done"` / `"committed <hash>"`); git carries the commit. Only a **fold-back** (a decision/constraint a future reader needs, not in git or the closed status) earns a pre-close edit.
 - don't-do: close a design/schema spec (refused — `edit` to refine, `retire` if 100% gone) or a stale / linked-stale task (the close-gate — reconcile the upstream first). Full refusal matrix: `close()` docstring.
 
 ### reopen — resume closed work
@@ -139,7 +139,7 @@ The three edit variants are operationally equivalent (same cascade, same S7 audi
 
 - why: every edit fires the cascade depth-1; open/spec neighbors land on the worklist and pressure the close-gate. Low-quality edits grow the worklist → pressure to bulk-reconcile → eroded per-row review → the `delta × because` filter becomes a rubber stamp, and then a *real* edit's cascade gets reconciled away the same way. The discipline that catches genuine drift dies by being **trained on noise**; the cascade is only as useful as the signal you feed it.
 - do: make every edit **consequential and necessary**; the `delta` must name a **substantive impact** — a real semantic shift (corrected fact, refined contract, fold-back finding, fixed stale reference). The test before editing: "what would a downstream reader, FAST-filtering this stale flag against the link's `because`, learn that justifies opening their task?" If "nothing" — don't edit.
-- don't-do: cosmetic polish (tone/flow, meaning unchanged); "while I'm here" cleanup (file a separate task); stylistic alignment to a neighbor; defensive elaboration with no observed misread; vague deltas (`"small fix"` / `"updated for clarity"` — same cascade cost, zero filter signal). Typo fix only if the wrong character impedes meaning.
+- don't-do: cosmetic polish (tone/flow, meaning unchanged); "while I'm here" cleanup (file a separate task); stylistic alignment to a neighbor; defensive elaboration with no observed misread; vague deltas (`"small fix"` / `"updated for clarity"` — same cascade cost, zero filter signal). Typo fix only if the wrong character impedes meaning. (Recording that work shipped is a `close()`, not an edit — see the `### close` rule.)
 
 ## Reconciliation — keep the plan in sync
 
