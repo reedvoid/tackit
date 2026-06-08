@@ -10,8 +10,8 @@ survives across sessions and context-window compaction, and a change to one task
 traceable to everything that depends on it. A typed boundary refuses malformed data,
 and a reconcile-on-change discipline surfaces what each change invalidates.
 
-> **Status: alpha (0.6.0).** Data model, interfaces, and sync design are settled
-> and implemented; 400+ tests across unit / CLI / MCP / Hypothesis property
+> **Status: alpha (0.8.1).** Data model, interfaces, and sync design are settled
+> and implemented; 550+ tests across unit / CLI / MCP / Hypothesis property
 > suites. v0.5 added a typed status partition (design/schema slices live at
 > `spec`/`retired`; production/meta at `open`/`closed`/`wont_do`) and a new
 > `retire` verb for fully-abandoned design decisions — see
@@ -251,6 +251,32 @@ that routes around broken things), at different moments.
   — that fix sat at `status='open'` the entire time. See `SKILL.md`
   "Ship-on-pain" for the full anchoring incident and the six application rules.
 
+### v0.8 highlights
+
+v0.6–v0.8 are read-path and wiring refinements on the v0.5 model — nothing in the
+partition or verb taxonomy moved, so if you know v0.5 you already know the shape.
+Two changes affect which op you reach for:
+
+- **Lean reads by default (D211).** `ls` and `board` return a *lean* projection —
+  task scalars and graph shape, **no `description` bodies** (and `board` omits
+  neighbor `because` / `last_edit_delta` too). That's what keeps a board query
+  bounded as a project grows past a couple hundred tasks. Opt back in per call with
+  `include_description=True` (both) / `include_neighbor_because=True` (`board`);
+  for one full body, use `show`. `ls`/`board` also gained a `name_prefix` filter
+  (T220) to scope a query to a single name prefix.
+- **Bulk-link existing tasks with `links_add` (D213).** Where `load` creates *new*
+  tasks with their edges in one atomic import, `links_add` wires edges between tasks
+  that **already exist** — the pass `load` can't cover. It takes a flat list of
+  `{a, b, because}` edges (ids or prefixed-names like `S30`), each with its own
+  mandatory `because`; there is deliberately no batch-wide rationale (a shared
+  `because` is the membership-link anti-pattern, D38). It validates the whole batch
+  first and names *every* structural offender at once, so a bad edge rolls back the
+  lot instead of half-wiring the graph.
+
+Search also got more forgiving: FTS5 query input is now sanitized (T222), so a
+keyword carrying a dot, colon, hyphen, or apostrophe (e.g. a dotted config key) is
+searchable rather than raising an FTS5 syntax error.
+
 ### v0.5 highlights
 
 v0.5 reshapes how design/schema slices relate to the lifecycle. The shape is
@@ -452,9 +478,9 @@ The agent's primary door is the MCP server: the harness pushes typed tool schema
 into the agent's tool zone (no `--help` round-trip, no shell quoting, can't
 hallucinate a flag that doesn't exist). Tool names are the bare verbs — `add`,
 `show`, `search`, `edit`, `edit_append`, `edit_replace_substring`, `close`,
-`reopen`, `reconcile`, `wont_do`, `retire`, `reclassify`, `link_add`,
-`link_rm`, `label_add`, `label_rm`, `ls`, `board`, `stale`, `labels`,
-`render`, `history`, `load`. (T179: the two `edit_*` ops are diff-shaped
+`reopen`, `reconcile`, `wont_do`, `retire`, `reclassify`, `links`,
+`link_add`, `link_rm`, `links_add`, `label_add`, `label_rm`, `ls`,
+`board`, `stale`, `labels`, `render`, `history`, `load`. (T179: the two `edit_*` ops are diff-shaped
 variants of `edit` — only the snippet or the `(old, new)` pair crosses the
 wire — designed for the "append a Phase N finding" / "fix one phrase"
 patterns that otherwise round-trip a large body. Same cascade, same audit
@@ -477,6 +503,7 @@ Everything you can drive through your agent — it maps your request to tackit's
 | "Show me task 12 and what it touches" | `show` — task + linked tasks + labels + because + last_edit_delta on each |
 | "Update task 12's description" | `edit` — and stales its linked tasks (cascade) |
 | "Task 12 is linked to task 7" / "remove that link" | `link_add` (with `because`) / `link_rm` |
+| "Wire up these N links between existing tasks" | `links_add` — atomic batch of `{a, b, because}` edges (per-edge `because` required; whole batch rolls back on any bad edge) |
 | "What can I link to?" | `links` — anchor layer (design+schema) or depth-1 expansion |
 | "Tag task 12 `smoke-test`" / "untag it" | `label_add` / `label_rm` |
 | "What's open / closed / stale?" | `ls` / `stale` (status accepts open/closed/wont_do/spec/retired) |
@@ -539,7 +566,7 @@ Honest notes:
 
 ## Testing
 
-400+ tests: unit, adapter integration (CLI and MCP driven end-to-end), and
+550+ tests: unit, adapter integration (CLI and MCP driven end-to-end), and
 **property-based** (Hypothesis stateful testing). The property machine fuzzes
 random operation sequences against the always-true invariants — including
 **kind/status partition holds** (D36), worklist filter
