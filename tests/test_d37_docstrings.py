@@ -489,6 +489,38 @@ def test_skill_md_contains_findings_overflow_rule():
     )
 
 
+def test_skill_md_contains_reactive_side_door_trigger():
+    """SKILL.md carries the reactive side-door trigger (T227): net-new work
+    entering outside a plan or a state-change on an existing task -- a bug
+    found in use, an unplanned change, a follow-up spotted mid-task, an
+    ad-hoc decision -- gets filed the moment it's recognized. Without this
+    section the only trigger for such work was the narrow ship-on-pain
+    friction case, so it landed in git untracked. The fork test is what
+    disambiguates it from a fold-back."""
+    import pathlib
+    skill = (
+        pathlib.Path(__file__).resolve().parent.parent
+        / "src" / "tackit" / "data" / "SKILL.md"
+    )
+    text = skill.read_text()
+    assert _contains(text, "File side-door work the moment it appears"), (
+        "SKILL.md must carry the 'File side-door work the moment it "
+        "appears' heading -- the reactive trigger for net-new work that "
+        "has no plan and no parent task to fire off (T227)."
+    )
+    assert _contains(text, "an OPEN task already covers this"), (
+        "SKILL.md must carry the fork test ('an OPEN task already covers "
+        "this? yes -> fold-back; no -> new task') -- it is what "
+        "disambiguates filing a NEW task from folding into an existing one."
+    )
+    # Propagation surface (D41): the rule must also live in the add() docstring.
+    assert _contains(_mcp_tool_source("add"), "Side-door work"), (
+        "The add() MCP docstring must carry the one-line side-door trigger "
+        "(D41 propagation) -- agents who jump straight to the tool never "
+        "read SKILL.md, so dropping it there silently un-propagates T227."
+    )
+
+
 def test_skill_md_dev_copies_match_canonical():
     """The canonical SKILL.md (src/tackit/data/SKILL.md, ships in the
     package) and the dev copies (.claude/skills/tackit/SKILL.md, .agents/
