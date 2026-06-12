@@ -93,6 +93,13 @@ def build_server() -> FastMCP:
         relationship belongs on a link, not narrated in this body -- the
         cascade can't see prose; wire it with link_add (or depends_on).
 
+        Side-door work -- a bug found in use, a change no task covers, a
+        follow-up spotted mid-task, an ad-hoc decision -- gets filed the moment
+        it's recognized (at diagnosis for a bug), not after the fix lands in
+        git untracked. The test vs. a fold-back: is there an OPEN task whose
+        scope already covers this? yes -> edit that one; no -> add() this. See
+        SKILL.md "File side-door work the moment it appears".
+
         Returns the new task's slice plus any ``stale_alert``."""
         with _core() as c:
             t = c.add(name, kind=kind, description=description, labels=labels, deps=deps)

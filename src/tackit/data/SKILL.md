@@ -38,6 +38,11 @@ not retold here.
 - do: reach for `load` whenever you're creating more than a couple of related tasks.
 - don't-do: hand-loop `add()` for a known set of tasks.
 
+## File side-door work the moment it appears (the reactive trigger)
+- why: every other trigger fires off something already in tackit — a plan you're loading, a task you're closing or folding back into. Net-new work that enters another way — a bug found in use, a change no task covers, a follow-up spotted mid-task, an ad-hoc decision — has no trigger, so it lands in git and never the graph, right at the reactive moment where tracking is skipped and code↔task traceability breaks.
+- do: the moment you recognize work that isn't a state-change on an existing task, file it — at diagnosis for a bug, before/with the edit for an unplanned change, parked for a follow-up, a D# for a decision — kind classified on its OWN scope. Same reflex as filing during planning.
+- don't-do: fix-first-track-maybe; inline an unrelated follow-up because you're "already here"; fold into whatever task you're in. The test: an OPEN task already covers this? yes → fold-back; no → new task. (Actionless learning → memory, not a task.)
+
 ## Kinds — every task is classified by what it touches
 
 **Reference.** Every task carries a required `kind` (set at create, T94); kind is
