@@ -513,11 +513,33 @@ def test_skill_md_contains_reactive_side_door_trigger():
         "this? yes -> fold-back; no -> new task') -- it is what "
         "disambiguates filing a NEW task from folding into an existing one."
     )
-    # Propagation surface (D41): the rule must also live in the add() docstring.
-    assert _contains(_mcp_tool_source("add"), "Side-door work"), (
+    # T229 re-anchoring: the trigger must be an OBSERVABLE event (a write to a
+    # tracked file the current task doesn't name), not the internal act of
+    # "recognizing side-door work" -- that recognition is the step that fails
+    # silently, so pinning the observable phrasing guards against a revert.
+    assert _contains(text, "Edit/Write a version-controlled file the current task doesn't name"), (
+        "SKILL.md must anchor the side-door trigger to an OBSERVABLE event -- "
+        "a write to a version-controlled file the current task doesn't name -- "
+        "not to recognizing 'side-door work' (the recognition is what silently "
+        "fails). T229 re-anchoring; reverting it un-fixes the core failure."
+    )
+    assert _contains(text, "STATE the disposition out loud"), (
+        "SKILL.md must require the disposition be STATED out loud (new task / "
+        "fold-back / not-tracked) so a SILENT skip -- the actual failure mode "
+        "-- is forbidden, not merely discouraged (T229)."
+    )
+    # Propagation surface (D41): the rule must also live in the add() docstring,
+    # carrying both the one-line trigger AND the re-anchored observable framing.
+    add_src = _mcp_tool_source("add")
+    assert _contains(add_src, "Side-door work"), (
         "The add() MCP docstring must carry the one-line side-door trigger "
         "(D41 propagation) -- agents who jump straight to the tool never "
         "read SKILL.md, so dropping it there silently un-propagates T227."
+    )
+    assert _contains(add_src, "Edit/Write a tracked file the current task doesn't name"), (
+        "The add() docstring must propagate the T229 observable-event trigger "
+        "(write to a tracked file the current task doesn't name), not the old "
+        "recognition-gated wording -- else the propagation surface drifts back."
     )
 
 

@@ -39,9 +39,9 @@ not retold here.
 - don't-do: hand-loop `add()` for a known set of tasks.
 
 ## File side-door work the moment it appears (the reactive trigger)
-- why: every other trigger fires off something already in tackit — a plan you're loading, a task you're closing or folding back into. Net-new work that enters another way — a bug found in use, a change no task covers, a follow-up spotted mid-task, an ad-hoc decision — has no trigger, so it lands in git and never the graph, right at the reactive moment where tracking is skipped and code↔task traceability breaks.
-- do: the moment you recognize work that isn't a state-change on an existing task, file it — at diagnosis for a bug, before/with the edit for an unplanned change, parked for a follow-up, a D# for a decision — kind classified on its OWN scope. Same reflex as filing during planning.
-- don't-do: fix-first-track-maybe; inline an unrelated follow-up because you're "already here"; fold into whatever task you're in. The test: an OPEN task already covers this? yes → fold-back; no → new task. (Actionless learning → memory, not a task.)
+- why: every other trigger fires off something already in tackit — a plan you're loading, a task you're closing or folding back into. Net-new work that enters another way — a bug found in use, a change no task covers, a follow-up spotted mid-task, an ad-hoc decision — has no such trigger, so it lands in git and never the graph, right at the reactive moment where tracking is skipped and code↔task traceability breaks. The trap: the one trigger left is "recognize side-door work" — an internal judgment that goes quiet at exactly that moment — so anchor to an OBSERVABLE event instead.
+- do: the observable trigger is a write you can't miss — the moment you Edit/Write a version-controlled file the current task doesn't name, run the test and STATE the disposition out loud (new task / fold-back into <id> / not-tracked because <reason>); never silently skip it. File at diagnosis for a bug, before/with the edit for an unplanned change, parked for a follow-up, a D# for a decision — kind classified on its OWN scope. Same reflex as filing during planning.
+- don't-do: fix-first-track-maybe; inline an unrelated follow-up because you're "already here"; fold into whatever task you're in; skip stating the call because the change "felt like housekeeping." The test: an OPEN task already covers this? yes → fold-back; no → new task. (Actionless learning → memory, not a task.)
 
 ## Kinds — every task is classified by what it touches
 

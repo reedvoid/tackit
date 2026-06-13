@@ -94,9 +94,11 @@ def build_server() -> FastMCP:
         cascade can't see prose; wire it with link_add (or depends_on).
 
         Side-door work -- a bug found in use, a change no task covers, a
-        follow-up spotted mid-task, an ad-hoc decision -- gets filed the moment
-        it's recognized (at diagnosis for a bug), not after the fix lands in
-        git untracked. The test vs. a fold-back: is there an OPEN task whose
+        follow-up spotted mid-task, an ad-hoc decision -- has no trigger of its
+        own but an OBSERVABLE one: the moment you Edit/Write a tracked file the
+        current task doesn't name, state the disposition (new task / fold-back /
+        not-tracked because X) -- don't skip it because the change "felt like
+        housekeeping". The test vs. a fold-back: is there an OPEN task whose
         scope already covers this? yes -> edit that one; no -> add() this. See
         SKILL.md "File side-door work the moment it appears".
 
