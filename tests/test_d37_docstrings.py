@@ -543,6 +543,44 @@ def test_skill_md_contains_reactive_side_door_trigger():
     )
 
 
+def test_skill_md_contains_spec_slice_holds_decisions_rule():
+    """SKILL.md carries the D234 content rule: a design/schema slice holds
+    the DECISION + rationale + derivation rule, never a literal whose
+    authoritative home is code (a default, a full enumerated value list).
+    The rule was minted because a reconcile of D50 silently RE-INTRODUCED
+    the anti-pattern (re-listing 39 vars with defaults to make the slice
+    "correct"), so the pin guards both the authority-vs-copy litmus and the
+    reconcile-specific clause -- a revert un-fixes the recognition-gated
+    failure (see D231 / [[design_dependency_discovery_reframe]] sibling)."""
+    import pathlib
+    skill = (
+        pathlib.Path(__file__).resolve().parent.parent
+        / "src" / "tackit" / "data" / "SKILL.md"
+    )
+    text = skill.read_text()
+    assert _contains(text, "A spec slice holds decisions, not code's literals"), (
+        "SKILL.md must carry the D234 rule heading -- the content rule that "
+        "design/schema slices hold decisions, not code-owned literals."
+    )
+    # The authority-vs-copy litmus is the operative judgment; pinning it stops
+    # a revert to a vaguer 'avoid duplication' phrasing that doesn't tell the
+    # agent which literals stay (decisions) and which become pointers (copies).
+    assert _contains(text, "is this slice the *authority* for this value, or a *copy*"), (
+        "SKILL.md must carry the authority-vs-copy litmus verbatim -- it is "
+        "the test that separates a value the slice OWNS (a decision, stays) "
+        "from a value copied out of code (becomes a rule + pointer)."
+    )
+    # The reconcile clause is where the failure actually happened (D50): the
+    # reconcile is the vector that re-imports stale literals, so the rule must
+    # forbid it explicitly, not just discourage mirroring at create time.
+    assert _contains(text, "never re-snapshots derived values"), (
+        "SKILL.md must carry the reconcile-specific clause -- a reconcile "
+        "updates the DECISIONS, never re-snapshots derived literal values. "
+        "This is the recognition-gated re-introduction path the rule exists "
+        "to close (D234 / D231)."
+    )
+
+
 def test_skill_md_dev_copies_match_canonical():
     """The canonical SKILL.md (src/tackit/data/SKILL.md, ships in the
     package) and the dev copies (.claude/skills/tackit/SKILL.md, .agents/
