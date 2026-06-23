@@ -53,5 +53,20 @@ packages = ["src/tackit"]
 # copy it (design.md "Interface - Skill"; skill.md).
 artifacts = ["src/tackit/data/SKILL.md"]
 
+[tool.hatch.build.targets.sdist]
+# WHITELIST what the source distribution contains. hatchling's default sweeps the
+# WHOLE project dir, which packaged local machine config (.claude/settings.local.json,
+# carrying a developer's filesystem paths) into the public PyPI sdist through 0.8.2.
+# Only ship the package, its tests, the public recovery artifact, and the docs.
+include = [
+    "/src",
+    "/tests",
+    "/examples/specs.sql",
+    "/README.md",
+    "/LICENSE",
+    "/CLAUDE.md",
+    "/pyproject.toml",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
