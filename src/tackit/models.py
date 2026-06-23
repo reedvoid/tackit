@@ -219,26 +219,29 @@ class Slice(BaseModel):
 
 class CloseResult(BaseModel):
     """D12 - close obligation payload. Closing returns the one-hop set the agent
-    is obliged to review, riding in the operation's own result."""
+    is obliged to review, riding in the operation's own result.
+
+    T239 (2026-06-23): the one-hop set is a single symmetric `links` list (D5),
+    not duplicated dependencies/dependents (mirrors the Slice collapse, T237)."""
 
     model_config = ConfigDict(extra="forbid")
 
     task: Task
-    dependencies: list[NeighborRef]
-    dependents: list[NeighborRef]
+    links: list[NeighborRef]  # T239/D5: the single symmetric neighbour set
 
 
 class WontDoResult(BaseModel):
     """T132 / 2026-06-01 - wont_do obligation payload. Mirrors CloseResult
     shape (task + one-hop neighbors) since both are terminal-status verbs
     returning the same review obligation. wont_do does NOT fire the staling
-    cascade (status change, not content edit; symmetric with close)."""
+    cascade (status change, not content edit; symmetric with close).
+
+    T239 (2026-06-23): single symmetric `links` list (D5), like CloseResult."""
 
     model_config = ConfigDict(extra="forbid")
 
     task: Task
-    dependencies: list[NeighborRef]
-    dependents: list[NeighborRef]
+    links: list[NeighborRef]  # T239/D5: the single symmetric neighbour set
 
 
 class ChangeResult(BaseModel):

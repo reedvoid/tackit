@@ -33,7 +33,7 @@ def test_wont_do_returns_one_hop_neighbors(core):
     core.link_add(2, 1, because="setup")
     core.link_add(3, 1, because="setup")
     result = core.wont_do(1, reason="not doing this", delta="dropped")
-    nbr_ids = sorted(n.id for n in result.dependencies)
+    nbr_ids = sorted(n.id for n in result.links)
     assert nbr_ids == [2, 3]
 
 

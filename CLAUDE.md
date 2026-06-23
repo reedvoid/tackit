@@ -24,6 +24,13 @@ part of the dogfood that belongs in the public repo: design slices +
 schema slices are durable architecture decisions worth recovering;
 production / meta tasks are dev noise.
 
+The dump carries only **current** spec state — slice bodies, labels,
+spec-to-spec links, and status_transitions. It does **not** include
+`description_revisions` (the edit audit trail): per T240, a revision
+preserves the prior-verbatim text of every edit, so transient content
+edited out of a slice draft would still leak through the public dump.
+The drafting history stays in the private gitignored DB.
+
 **Trigger discipline:** manual command before commits that touch
 specs, not a pre-commit hook by default. The maintainer's discretion
 is the right granularity — intermediate brainstorm states (a spec

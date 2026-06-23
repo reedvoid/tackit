@@ -87,7 +87,7 @@ def test_retire_returns_linked_neighbors_in_payload(core):
     core.add("d2", kind="design")
     core.link_add(1, 2, because="related decisions")
     result = core.retire(1, reason="d2 superseded d1", delta="retiring")
-    nbr_ids = {n.id for n in result.dependencies}
+    nbr_ids = {n.id for n in result.links}
     assert 2 in nbr_ids
 
 

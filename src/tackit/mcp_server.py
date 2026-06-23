@@ -355,8 +355,8 @@ def build_server() -> FastMCP:
         status='spec' -- design/schema slices are living spec, not work
         items. Use edit() to refine a decision; retire() if 100% abandoned
         with no replacement (D36). REFUSED on wont_do / retired (no double-
-        decide). On success returns the task's dependencies and dependents
-        to review.
+        decide). On success returns the task's `links` (the single symmetric
+        neighbour set, T239) to review.
 
         close() records "done" and does NOT cascade -- so DON'T first edit the
         body with a bookkeeping note ("done", "committed <hash>"); that fires a

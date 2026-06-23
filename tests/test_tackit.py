@@ -174,7 +174,7 @@ def test_d12_close_returns_neighbors(core):
     core.link_add(2, 1, because="test fixture")
     result = core.close(2)
     assert result.task.status == "closed"
-    assert [n.id for n in result.dependencies] == [1]
+    assert [n.id for n in result.links] == [1]
 
 
 def test_d14_close_gate_refuses_stale_then_allows_after_reconcile(core):

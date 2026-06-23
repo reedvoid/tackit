@@ -142,11 +142,17 @@ def test_export_specs_only_round_trip(core, tmp_path):
     finally:
         target.close_conn()
 
-    # Spec layer is bit-equal.
-    assert target_snapshot == source_snapshot, (
-        f"round-trip drift: source={source_snapshot!r} vs "
-        f"target={target_snapshot!r}"
+    # Spec layer round-trips EXCEPT description_revisions, which T240
+    # intentionally excludes from the public dump (current state, not the edit
+    # audit trail). Everything else must be bit-equal.
+    assert target_snapshot["revisions"] == [], (
+        "audit revisions must NOT be exported into the public dump (T240)"
     )
+    for key in ("tasks", "labels", "links", "transitions"):
+        assert target_snapshot[key] == source_snapshot[key], (
+            f"round-trip drift in {key}: source={source_snapshot[key]!r} vs "
+            f"target={target_snapshot[key]!r}"
+        )
 
 
 def test_export_specs_only_empty_corpus(core, tmp_path):
@@ -170,11 +176,12 @@ def test_export_specs_only_empty_corpus(core, tmp_path):
     }
 
 
-def test_export_specs_only_excludes_retired_audit_only_of_non_specs(core, tmp_path):
-    """description_revisions on production tasks must NOT appear in the
-    dump even when the production task has been edited (the audit row
-    exists in the source). This pins the task_id filter on the
-    description_revisions query."""
+def test_export_specs_only_excludes_all_description_revisions(core, tmp_path):
+    """T240: NO description_revisions are exported into the public spec dump --
+    not the production task's (never were) and now not the spec slice's either.
+    A revision preserves prior-verbatim text edited out of a slice draft, which
+    would leak through the public dump; the recovery artifact carries current
+    spec state only."""
     core.add("design slice", kind="design", description="design body")
     core.add("production task", kind="production", description="prod body")
     # Edit BOTH to generate revisions on both.
@@ -182,24 +189,19 @@ def test_export_specs_only_excludes_retired_audit_only_of_non_specs(core, tmp_pa
     core.edit(2, delta="prod edit", description="prod body v2")
 
     sql = core.export_specs_only()
-    # The production task's description revision text must not appear.
-    assert "prod body" not in sql, (
-        "production task description must not leak into the spec-only "
-        "dump via description_revisions"
-    )
+    assert "prod body" not in sql                          # production never exported
+    assert "INSERT INTO description_revisions" not in sql  # spec audit not exported (T240)
 
-    # Apply to fresh store and verify target has only the spec's revision.
+    # Apply to a fresh store and verify NO revisions land.
     target = _fresh_store(tmp_path)
     try:
         _apply_dump(target, sql)
         snap = _spec_snapshot(target)
     finally:
         target.close_conn()
-    assert len(snap["revisions"]) == 1, (
-        f"target should have exactly 1 revision (the spec edit); got: "
-        f"{snap['revisions']!r}"
+    assert snap["revisions"] == [], (
+        f"no audit revisions may be exported (T240); got: {snap['revisions']!r}"
     )
-    assert snap["revisions"][0]["task_id"] == 1
 
 
 def test_cli_export_specs_only_to_stdout(tmp_path, monkeypatch, capsys):

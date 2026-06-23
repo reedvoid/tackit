@@ -1401,8 +1401,7 @@ class Core:
                 self._set_status(task_id, "closed", clear_stale=False)
         return CloseResult(
             task=self.get(task_id),
-            dependencies=self.dependencies_of(task_id),
-            dependents=self.dependents_of(task_id),
+            links=self._linked_with(task_id),  # T239: single symmetric set (D5)
         )
 
     # ====================================================================
@@ -1485,8 +1484,7 @@ class Core:
             self._record_transition(task_id, row["status"], "wont_do")
         return WontDoResult(
             task=self.get(task_id),
-            dependencies=self.dependencies_of(task_id),
-            dependents=self.dependents_of(task_id),
+            links=self._linked_with(task_id),  # T239: single symmetric set (D5)
         )
 
     # ====================================================================
@@ -1603,8 +1601,7 @@ class Core:
             self._record_transition(task_id, row["status"], "retired")
         return WontDoResult(
             task=self.get(task_id),
-            dependencies=self.dependencies_of(task_id),
-            dependents=self.dependents_of(task_id),
+            links=self._linked_with(task_id),  # T239: single symmetric set (D5)
         )
 
     # ====================================================================
@@ -2084,11 +2081,13 @@ class Core:
     # ====================================================================
     def export_specs_only(self) -> str:
         """T193 / M187 — emit a SQL dump of only the spec layer (design +
-        schema tasks, their labels, spec-to-spec links, and their audit
-        rows from status_transitions + description_revisions). Production
-        and meta rows are excluded; the FTS index (S5) and meta table (S6)
-        are excluded — both are derived/managed by `tackit init` + the
-        migration path.
+        schema tasks, their labels, spec-to-spec links, and their
+        status_transitions). Production and meta rows are excluded; the FTS
+        index (S5) and meta table (S6) are excluded — both are derived/managed
+        by `tackit init` + the migration path. T240: description_revisions (the
+        edit audit trail) are also excluded — the dump is public and a revision
+        preserves prior-verbatim text that could carry transient private
+        content; recovery needs current spec state, not drafting history.
 
         The output is consumable by `tackit import` against a freshly
         initialized store: the schema already exists, this dump appends
@@ -2140,12 +2139,12 @@ class Core:
             ).fetchall():
                 out.append(_sql_insert("status_transitions", row))
 
-            for row in self.conn.execute(
-                f"SELECT * FROM description_revisions WHERE task_id IN ({placeholders}) "
-                f"ORDER BY id",
-                spec_ids,
-            ).fetchall():
-                out.append(_sql_insert("description_revisions", row))
+            # T240: description_revisions are deliberately NOT dumped. The dump
+            # is PUBLIC (examples/specs.sql); a revision preserves the verbatim
+            # PRIOR text of every edit, so any transient content edited out of a
+            # slice draft would still leak through its audit row even when the
+            # current body is clean. Recovery needs current spec state, not the
+            # drafting history; that history stays in the private gitignored DB.
 
         out.append("COMMIT;")
         return "\n".join(out) + "\n"

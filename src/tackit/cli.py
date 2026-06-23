@@ -351,8 +351,7 @@ def _cmd_close(args) -> int:
     with _core_session() as core:
         result = core.close(args.id)
         text = ["closed " + _fmt_task(result.task), "  review obligations (one hop):"]
-        text += _fmt_neighbors("depends on", result.dependencies)
-        text += _fmt_neighbors("depended on by", result.dependents)
+        text += _fmt_neighbors("links", result.links)
         _emit("\n".join(text), _dump(result), args.json)
     return 0
 
@@ -365,8 +364,7 @@ def _cmd_wont_do(args) -> int:
             f"  reason: {result.task.wont_do_reason}",
             "  review obligations (one hop):",
         ]
-        text += _fmt_neighbors("depends on", result.dependencies)
-        text += _fmt_neighbors("depended on by", result.dependents)
+        text += _fmt_neighbors("links", result.links)
         _emit("\n".join(text), _dump(result), args.json)
     return 0
 
@@ -379,8 +377,7 @@ def _cmd_retire(args) -> int:
             f"  reason: {result.task.wont_do_reason}",
             "  review obligations (one hop):",
         ]
-        text += _fmt_neighbors("depends on", result.dependencies)
-        text += _fmt_neighbors("depended on by", result.dependents)
+        text += _fmt_neighbors("links", result.links)
         _emit("\n".join(text), _dump(result), args.json)
     return 0
 
