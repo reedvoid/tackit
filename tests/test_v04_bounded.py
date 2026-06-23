@@ -724,8 +724,8 @@ def test_show_dep_entries_carry_link_because(core):
     rationale = "b extends a's contract; changes to a require b's review"
     core.link_add(a=1, b=2, because=rationale)
     slice_ = core.show(1)
-    assert len(slice_.dependencies) == 1
-    assert slice_.dependencies[0].because == rationale
+    assert len(slice_.links) == 1
+    assert slice_.links[0].because == rationale
 
 
 def test_show_dep_entries_carry_last_edit_delta(core):
@@ -737,7 +737,7 @@ def test_show_dep_entries_carry_last_edit_delta(core):
     # Edit B; its last delta should surface on A's dep entry for B.
     core.edit(2, description="new shape", delta="changed b's serialization")
     slice_ = core.show(1)
-    assert slice_.dependencies[0].last_edit_delta == "changed b's serialization"
+    assert slice_.links[0].last_edit_delta == "changed b's serialization"
 
 
 def test_show_last_edit_delta_none_if_neighbor_never_edited(core):
@@ -747,7 +747,7 @@ def test_show_last_edit_delta_none_if_neighbor_never_edited(core):
     core.add("b", kind="production")
     core.link_add(a=1, b=2, because="coupling")
     slice_ = core.show(1)
-    assert slice_.dependencies[0].last_edit_delta is None
+    assert slice_.links[0].last_edit_delta is None
 
 
 def test_show_because_reminder_fires_iff_a_dep_is_stale(core):
@@ -767,7 +767,7 @@ def test_show_because_reminder_fires_iff_a_dep_is_stale(core):
     # When viewing b, its dep `a` is stale -> reminder fires.
     b_view = core.show(2)
     # a (its neighbor) carries stale=True via cascade.
-    assert any(n.stale for n in b_view.dependencies)
+    assert any(n.stale for n in b_view.links)
     assert b_view.because_reminder == LINK_BECAUSE_REMINDER
 
 

@@ -196,20 +196,24 @@ class NeighborRef(BaseModel):
 
 class Slice(BaseModel):
     """D9 - slice fetch payload: one task plus its directly-linked context
-    (dependencies it points at, dependents that point at it, and its labels).
-    The core anti-context-bloat unit of access.
+    (its `links` -- the symmetric neighbour set, D5 -- and its labels). The
+    core anti-context-bloat unit of access.
 
-    D34 / T166 (v0.4): when at least one dep entry has stale=True, the
+    T237 (2026-06-23): under D5 symmetric links a task's dependencies and
+    dependents are the IDENTICAL set, so the slice carries ONE `links` list,
+    not two duplicated `dependencies`/`dependents` fields (which made a
+    high-degree slice double its payload and read every edge twice).
+
+    D34 / T166 (v0.4): when at least one link entry has stale=True, the
     `because_reminder` field carries the FAST-filter discipline reminder
     pointing the agent at the per-entry `because` + `last_edit_delta` they
-    should use to orient reconciliation. None when no dep entry is stale."""
+    should use to orient reconciliation. None when no link entry is stale."""
 
     model_config = ConfigDict(extra="forbid")
 
     task: Task
     labels: list[str]
-    dependencies: list[NeighborRef]  # D6: what this task points at (prerequisites)
-    dependents: list[NeighborRef]  # D6: what points at this task
+    links: list[NeighborRef]  # T237/D9: the single symmetric neighbour set (D5)
     because_reminder: Optional[str] = None  # D34/T166
 
 
@@ -372,7 +376,6 @@ def project_slice(
         nbr_excl |= {"because", "last_edit_delta"}
     exclude = {
         "task": task_excl,
-        "dependencies": {"__all__": nbr_excl},
-        "dependents": {"__all__": nbr_excl},
+        "links": {"__all__": nbr_excl},
     }
     return slice_.model_dump(mode="json", exclude=exclude)

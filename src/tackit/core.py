@@ -77,6 +77,27 @@ def _fts_sanitize(query: str) -> str:
     return " ".join(quoted)
 
 
+_SECTION_RE = re.compile(r"^§?\d+(?:\.\d+)*$")
+
+
+def _is_section_query(query: str) -> bool:
+    """T238 - True iff the WHOLE query is a section-id lookup, which core.search
+    routes to an anchored name-substring match instead of FTS (D17 option b).
+
+    The default unicode61 FTS tokenizer shreds a section id at index time
+    ('§9.4' -> tokens 9,4, indistinguishable from '§8.9.4'), so a section
+    lookup can't be ranked correctly through FTS. We detect the shape here and
+    bypass FTS for it. The match is anchored, so we require digit-groups
+    (optional leading '§') AND either a '§' or a '.' -- a bare integer like
+    '11' stays an ordinary keyword search (too broad to route)."""
+    if query is None:
+        return False
+    q = query.strip()
+    if not _SECTION_RE.match(q):
+        return False
+    return ("§" in q) or ("." in q)
+
+
 def _require_delta(delta: str | None, op: str) -> None:
     """T117 / cascade-ergonomics B - every mutating op that fires the cascade
     (edit, reclassify, link_add, link_rm) requires the agent to provide a short
@@ -1302,17 +1323,16 @@ class Core:
         `last_edit_delta` (on the dep entry) against the link's `because`
         (also on the dep entry) before opening the dependent."""
         task = self.get(task_id)
-        deps = self.dependencies_of(task_id)
-        dependents = self.dependents_of(task_id)
-        # D34/T166 trigger: any stale neighbor reachable from this slice.
-        # Dependencies and dependents are the same set under symmetric
-        # semantics (D5), so checking either is equivalent; both for clarity.
-        has_stale_neighbor = any(n.stale for n in deps) or any(n.stale for n in dependents)
+        # T237: under D5 symmetric links the neighbour set is single -- the old
+        # dependencies/dependents were both _linked_with, i.e. identical -- so
+        # the slice carries one `links` list.
+        links = self._linked_with(task_id)
+        # D34/T166 trigger: any stale neighbour reachable from this slice.
+        has_stale_neighbor = any(n.stale for n in links)
         return Slice(
             task=task,
             labels=self.labels_of(task_id),
-            dependencies=deps,
-            dependents=dependents,
+            links=links,
             because_reminder=LINK_BECAUSE_REMINDER if has_stale_neighbor else None,
         )
 
@@ -1917,6 +1937,12 @@ class Core:
         hits adding noise."""
         if not query or not query.strip():
             raise ValidationError("search query must be non-empty (D17).")
+        # T238: a section-id-shaped query (e.g. '§9.4', '4.2.7.13') is routed to
+        # an anchored name-substring lookup -- FTS tokenization destroys section
+        # structure ('§9.4' -> tokens 9,4), so it cannot rank §9.4 above §8.9.4.
+        # FTS stays the path for every other query (D17 option b).
+        if _is_section_query(query):
+            return self._section_lookup(query)
         # T222: sanitize per-token so dotted/punctuated keys are searchable
         # instead of erroring; the column filter scopes the whole expression.
         match_query = _fts_sanitize(query)
@@ -1946,6 +1972,45 @@ class Core:
             )
             for r in rows
         ]
+
+    def _section_lookup(self, query: str) -> list[SearchHit]:
+        """T238 - anchored name-substring lookup for a section-id query (D17
+        option b). The leading '§' is the LEFT anchor: querying '§9.4' can't
+        match inside '§8.9.4' (its '§' is followed by '8'). A RIGHT boundary --
+        the character after the matched id must be a non-digit -- excludes digit
+        siblings ('§9.40', '§9.41') while keeping descendants ('§9.4.1'). A bare
+        '9.4' is normalised to '§9.4' first (the corpus convention). Matches the
+        raw `name` column, so the FTS index's tokenisation is irrelevant. Score
+        is 0.0 (no bm25); results are id-ordered."""
+        q = query.strip()
+        if not q.startswith("§"):
+            q = "§" + q
+        rows = self.conn.execute(
+            "SELECT id, name, status, kind, wont_do_reason FROM tasks "
+            "WHERE name LIKE ? ESCAPE '\\' ORDER BY id",
+            ("%" + q + "%",),
+        ).fetchall()
+        hits = []
+        for r in rows:
+            name = r["name"]
+            idx = name.find(q)
+            while idx != -1:
+                after = idx + len(q)
+                nxt = name[after] if after < len(name) else ""
+                if not nxt.isdigit():
+                    hits.append(
+                        SearchHit(
+                            id=r["id"],
+                            name=name,
+                            score=0.0,
+                            status=r["status"],
+                            kind=r["kind"],
+                            wont_do_reason=r["wont_do_reason"],
+                        )
+                    )
+                    break
+                idx = name.find(q, idx + 1)
+        return hits
 
     # ====================================================================
     # D8 - read status history

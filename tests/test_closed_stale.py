@@ -69,7 +69,7 @@ def test_closed_stale_link_add_allowed(core):
     core.add("sibling", kind="production")  # T3
     # Link T3 to T2 (the closed-stale task) — legitimate during migration.
     s = core.link_add(3, 2, because="T3 inherits T2's relationship to upstream")
-    ids = sorted(n.id for n in s.dependencies)
+    ids = sorted(n.id for n in s.links)
     assert 2 in ids
 
 

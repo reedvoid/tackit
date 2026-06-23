@@ -174,7 +174,7 @@ def test_wont_do_link_add_allowed(core):
     core.add("other", kind="production")
     core.wont_do(1, reason="dropped", delta="dropped")
     s = core.link_add(2, 1, because="historical edge to dropped task")
-    assert 1 in [n.id for n in s.dependencies]
+    assert 1 in [n.id for n in s.links]
 
 
 def test_wont_do_link_rm_allowed(core):

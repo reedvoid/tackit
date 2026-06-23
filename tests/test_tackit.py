@@ -137,8 +137,7 @@ def test_d9_slice_fetch(core):
     s = core.show(1)
     assert s.task.id == 1
     assert s.labels == ["x"]
-    assert [n.id for n in s.dependencies] == [2]
-    assert [n.id for n in s.dependents] == [2]  # symmetric: same set
+    assert [n.id for n in s.links] == [2]  # T237: one symmetric links list
 
 
 # --- D10 / D13: change cascade entry, one-hop (non-transitive) --------------

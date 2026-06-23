@@ -54,8 +54,7 @@ def _fmt_slice(s) -> str:
     if s.task.description.strip():
         lines.append(f"  {s.task.description.strip()}")
     lines.append(f"  labels: {', '.join(s.labels) if s.labels else '(none)'}")
-    lines += _fmt_neighbors("depends on", s.dependencies)
-    lines += _fmt_neighbors("depended on by", s.dependents)
+    lines += _fmt_neighbors("links", s.links)
     return "\n".join(lines)
 
 
@@ -146,13 +145,10 @@ def _render_board(core, tasks) -> str:
             tag = _board_paint(" [STALE]", [STALE, BOLD]) if t.stale else ""
             labs = ("  " + _board_paint(" ".join(s.labels), [LAB])) if s.labels else ""
             lines.append(f" {_board_paint('▌', [bar])} {tid}  {name}{tag}{labs}")
-            edges = []
-            if s.dependencies:
-                edges.append(_board_paint("needs→ ", [DIM]) + " ".join(f"T{n.id}" for n in s.dependencies))
-            if s.dependents:
-                edges.append(_board_paint("unblocks→ ", [DIM]) + " ".join(f"T{n.id}" for n in s.dependents))
-            if edges:
-                lines.append("     " + "   ".join(edges))
+            # T237: symmetric links -> one edge list, not duplicated needs/unblocks
+            if s.links:
+                edge = _board_paint("links→ ", [DIM]) + " ".join(f"T{n.id}" for n in s.links)
+                lines.append("     " + edge)
 
     opens = [t for t in tasks if t.status == "open"]
     dones = [t for t in tasks if t.status == "closed"]

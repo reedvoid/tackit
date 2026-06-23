@@ -76,7 +76,7 @@ def test_mcp_board_returns_slices_with_edges(tmp_path, monkeypatch):
     cards = env["result"]
     assert len(cards) == 2
     t2 = next(c for c in cards if c["task"]["id"] == 2)
-    assert [n["id"] for n in t2["dependencies"]] == [1]  # board carries each task's edges
+    assert [n["id"] for n in t2["links"]] == [1]  # board carries each task's edges
 
 
 def test_mcp_ls_and_board_name_prefix(tmp_path, monkeypatch):
@@ -407,7 +407,7 @@ def test_mcp_link_add_returns_compact_confirmation(tmp_path, monkeypatch):
     }
     # NOT a slice — no task body or neighbor lists echoed back.
     assert "task" not in env["result"]
-    assert "dependencies" not in env["result"]
+    assert "links" not in env["result"]
 
 
 def test_mcp_links_add_bulk_compact(tmp_path, monkeypatch):
@@ -464,12 +464,12 @@ def test_mcp_board_lean_default_and_opt_in(tmp_path, monkeypatch):
     t2_lean = lean[1]  # ls orders by id: [D1, T2]
     assert t2_lean["task"]["id"] == 2
     assert "description" not in t2_lean["task"]
-    nbr = t2_lean["dependencies"][0]
+    nbr = t2_lean["links"][0]
     assert "because" not in nbr and "last_edit_delta" not in nbr
     assert nbr["prefixed_name"].startswith("D1")  # graph shape kept
     t2_full = full[1]
     assert t2_full["task"]["description"] == "impl body"
-    assert t2_full["dependencies"][0]["because"] == "T2 realizes D1"
+    assert t2_full["links"][0]["because"] == "T2 realizes D1"
 
 
 def test_mcp_reconcile_ids_compact_payload_and_short_alert(tmp_path, monkeypatch):

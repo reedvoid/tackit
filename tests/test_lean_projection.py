@@ -61,7 +61,7 @@ def test_project_slice_drops_focal_and_neighbor_name(core):
     assert "name" not in card["task"]
     assert "created_at" not in card["task"] and "updated_at" not in card["task"]
     assert card["task"]["prefixed_name"].startswith("T2")
-    nbr = card["dependencies"][0]
+    nbr = card["links"][0]
     assert "name" not in nbr and nbr["prefixed_name"].startswith("D1")
 
 
@@ -81,7 +81,7 @@ def test_project_slice_lean_drops_body_and_neighbor_because(core):
         core.show(t.id), include_description=False, include_neighbor_because=False
     )
     assert "description" not in lean["task"]
-    nbr = lean["dependencies"][0]
+    nbr = lean["links"][0]
     assert "because" not in nbr and "last_edit_delta" not in nbr
     # graph SHAPE preserved
     assert nbr["id"] == d.id and nbr["prefixed_name"].startswith("D1") and nbr["status"] == "spec"
@@ -94,10 +94,10 @@ def test_project_slice_opt_in_axes_independent(core):
     sl = core.show(t.id)
     only_desc = project_slice(sl, include_description=True, include_neighbor_because=False)
     assert only_desc["task"]["description"] == "impl body"
-    assert "because" not in only_desc["dependencies"][0]
+    assert "because" not in only_desc["links"][0]
     only_nbr = project_slice(sl, include_description=False, include_neighbor_because=True)
     assert "description" not in only_nbr["task"]
-    assert only_nbr["dependencies"][0]["because"] == "T2 realizes D1"
+    assert only_nbr["links"][0]["because"] == "T2 realizes D1"
 
 
 # --- core.ls kind filter ----------------------------------------------------
@@ -165,11 +165,11 @@ def test_cli_board_lean_default_and_opt_in(cli, capsys):
     t2 = lean[1]  # ls orders by id: [D1, T2]
     assert t2["task"]["id"] == 2
     assert "description" not in t2["task"]
-    assert "because" not in t2["dependencies"][0]
-    assert t2["dependencies"][0]["prefixed_name"].startswith("D1")  # shape kept
+    assert "because" not in t2["links"][0]
+    assert t2["links"][0]["prefixed_name"].startswith("D1")  # shape kept
     capsys.readouterr()
     assert main(["board", "--include-description", "--include-neighbor-because", "--json"]) == 0
     full = json.loads(capsys.readouterr().out)
     t2f = full[1]
     assert t2f["task"]["description"] == "impl body"
-    assert t2f["dependencies"][0]["because"] == "T2 realizes D1"
+    assert t2f["links"][0]["because"] == "T2 realizes D1"

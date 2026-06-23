@@ -15,6 +15,8 @@ from __future__ import annotations
 from contextlib import contextmanager
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.utilities import func_metadata as _func_metadata
+from pydantic import ValidationError as _PydanticValidationError
 
 from .core import Core, stale_alert_payload
 from .models import project_slice, project_task
@@ -51,7 +53,93 @@ def _wrap(core: Core, result, short_alert: bool = False):
     }
 
 
+def _enforce_strict_param_gate() -> None:
+    """T236 / D2 - make every FastMCP tool REJECT an unrecognised parameter
+    loudly instead of silently dropping it (the fail-loud validation boundary,
+    extended to the adapter's param surface).
+
+    FastMCP builds each tool's argument validator as a pydantic model
+    subclassing ``ArgModelBase``; by default extras are IGNORED, so a guessed
+    param (e.g. ``ls(query=...)``) was dropped and the op ran UNFILTERED --
+    returning everything, which masked the agent's mistake as 'the filter is
+    broken'. Setting ``extra='forbid'`` on that shared base makes the validator
+    raise (and stamps ``additionalProperties:false`` into the advertised
+    schema), so the offending param name is surfaced back to the agent and it
+    can self-correct in-session.
+
+    This mutates an mcp-library internal (``ArgModelBase.model_config``); it is
+    deliberately pinned-version-coupled (mcp 1.27.x) and GUARDED by
+    ``_assert_param_gate`` below -- if the internal moves, ``build_server``
+    fails loud rather than silently losing the gate."""
+    _func_metadata.ArgModelBase.model_config["extra"] = "forbid"
+    _install_unknown_param_guidance()
+
+
+def _install_unknown_param_guidance() -> None:
+    """T236 / D2 - turn the bare rejection into actionable guidance: name the
+    unrecognised param(s) AND list the tool's valid params, so the agent is
+    pushed onto the right syntax in-session rather than just told 'no'.
+
+    pydantic's default ``extra_forbidden`` message names the bad param but not
+    the valid set; that set is the tool's ``arg_model.model_fields``. We wrap
+    ``FuncMetadata.call_fn_with_arg_validation`` -- the point where the raw
+    ``ValidationError`` is raised, before FastMCP's ``Tool.run`` stringifies it
+    into ``Error executing tool <name>: <msg>`` -- and re-raise extra-param
+    errors with the field list. Non-extra validation errors pass through
+    untouched. Idempotent and signature-agnostic (``*args``); pinned mcp
+    1.27.x, verified by the param-gate test asserting valid params appear in
+    the error text."""
+    fm = _func_metadata.FuncMetadata
+    if getattr(fm.call_fn_with_arg_validation, "_tackit_enriched", False):
+        return
+    _orig = fm.call_fn_with_arg_validation
+
+    async def _enriched(self, *args, **kwargs):
+        try:
+            return await _orig(self, *args, **kwargs)
+        except _PydanticValidationError as exc:
+            unknown = [
+                str(e["loc"][0])
+                for e in exc.errors()
+                if e.get("type") == "extra_forbidden" and e.get("loc")
+            ]
+            if not unknown:
+                raise  # a real validation error on a known field -- leave it
+            valid = ", ".join(self.arg_model.model_fields)
+            raise ValueError(
+                f"unrecognised parameter(s) {unknown}; this tool accepts only: "
+                f"{valid} (T236 -- params are validated strictly: tackit tools "
+                f"take typed filters, not a free-form query string)."
+            ) from exc
+
+    _enriched._tackit_enriched = True
+    fm.call_fn_with_arg_validation = _enriched
+
+
+def _assert_param_gate(mcp: FastMCP) -> None:
+    """Fail-loud guard for T236: confirm ``extra='forbid'`` actually propagated
+    into every registered tool's advertised schema. A silently-degraded gate is
+    exactly the failure mode this fix removes (D2), so a missed propagation must
+    break the build, not pass quietly."""
+    offenders = [
+        t.name
+        for t in mcp._tool_manager.list_tools()
+        if t.parameters.get("additionalProperties") is not False
+    ]
+    if offenders:
+        raise RuntimeError(
+            f"T236 strict-param gate did not take effect for tools {offenders}: "
+            "the mcp ArgModelBase internal may have moved (pinned mcp 1.27.x). "
+            "Re-establish extra='forbid' on the tool argument models before "
+            "shipping -- the adapter MUST fail loud on unknown params, never "
+            "silently ignore them (D2)."
+        )
+
+
 def build_server() -> FastMCP:
+    # T236: patch BEFORE any @mcp.tool() runs, so every tool's arg model inherits
+    # extra='forbid'. Idempotent across repeated build_server() calls.
+    _enforce_strict_param_gate()
     mcp = FastMCP("tackit")
 
     @mcp.tool()
@@ -109,7 +197,8 @@ def build_server() -> FastMCP:
 
     @mcp.tool()
     def show(id: int) -> dict:
-        """Slice fetch (D9): a task plus its dependencies, dependents, and labels."""
+        """Slice fetch (D9): a task plus its `links` (the single symmetric
+        neighbour set -- D5/T237, not duplicated deps/dependents) and labels."""
         with _core() as c:
             return _wrap(c, c.show(id).model_dump(mode="json"), short_alert=True)
 
@@ -557,7 +646,7 @@ def build_server() -> FastMCP:
         include_neighbor_because: bool = False,
     ) -> dict:
         """Dependency-aware board (D22 + D36 + D211 + T220): the filtered tasks,
-        each as a slice (task + dependencies + dependents + labels), so you see
+        each as a slice (task + links + labels, the symmetric neighbour set), so you see
         the whole graph's structure in ONE call (richer than `ls`). LEAN by
         default: NO task `description` and NO neighbor `because`/`last_edit_delta`
         -- just the graph SHAPE (ids/prefixed_names/status/stale/kind). Opt in per
@@ -579,6 +668,7 @@ def build_server() -> FastMCP:
                 ))
             return _wrap(c, cards, short_alert=True)
 
+    _assert_param_gate(mcp)  # T236: fail loud if the strict-param gate didn't take
     return mcp
 
 

@@ -269,7 +269,7 @@ def test_cli_board_groups_and_shows_edges(cli, capsys):
     assert "open" in out and "done" in out  # header counts
     assert "IN FLIGHT" in out and "DONE" in out  # both status sections
     assert "T1" in out and "T2" in out
-    assert "needs→" in out or "unblocks→" in out  # dependency edges rendered
+    assert "links→" in out  # T237: single symmetric links edge list
 
 
 def test_cli_board_stale_filter(cli, capsys):

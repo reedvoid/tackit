@@ -84,13 +84,17 @@ def test_per_token_not_phrase_adjacency(core):
 
 
 def test_name_only_filter_still_scopes_to_name(core):
-    core.add("§9.1 the title", kind="design", description="body has no marker")
-    core.add("plain title", kind="design", description="§9.1 only in the body")
+    # A punctuated key that is NOT whole-section-shaped (leading letter), so it
+    # still goes through the sanitized FTS path. Whole-section ids ('§9.1') now
+    # route to an anchored name-substring lookup instead (T238) and would bypass
+    # this FTS column filter -- hence 'v0.5' here, not a §-id.
+    core.add("v0.5 the title", kind="design", description="body has no marker")
+    core.add("plain title", kind="design", description="v0.5 only in the body")
     # name_only must match only the row whose NAME carries the dotted key
-    name_hits = core.search("§9.1", name_only=True)
+    name_hits = core.search("v0.5", name_only=True)
     assert [h.id for h in name_hits] == [1]
     # default (name+body) finds both
-    assert {h.id for h in core.search("§9.1")} == {1, 2}
+    assert {h.id for h in core.search("v0.5")} == {1, 2}
 
 
 def test_prefixed_name_lookup_still_resolves(core):
