@@ -10,12 +10,12 @@ survives across sessions and context-window compaction, and a change to one task
 traceable to everything that depends on it. A typed boundary refuses malformed data,
 and a reconcile-on-change discipline surfaces what each change invalidates.
 
-> **Status: alpha (0.8.2).** Data model, interfaces, and sync design are settled
-> and implemented; 550+ tests across unit / CLI / MCP / Hypothesis property
-> suites. v0.5 added a typed status partition (design/schema slices live at
-> `spec`/`retired`; production/meta at `open`/`closed`/`wont_do`) and a new
-> `retire` verb for fully-abandoned design decisions — see
-> [v0.5 highlights](#v05-highlights) below. Expect rough edges.
+> **Status: alpha (0.8.5).** The data model, interfaces, and sync design are
+> settled and implemented, with 600+ tests across unit / CLI / MCP / Hypothesis
+> property suites. The core shape — a kind/status partition (design/schema slices
+> live at `spec`/`retired`; production/meta at `open`/`closed`/`wont_do`) and the
+> `edit` / `close` / `wont_do` / `retire` verb taxonomy — is laid out under
+> [The model](#the-model-kinds-status-and-verbs) below. Expect rough edges.
 
 ## Contents
 
@@ -204,7 +204,7 @@ that routes around broken things), at different moments.
 - **Single source of truth.** Everything goes in tackit, via its tools — never ad-hoc
   markdown or TODO comments. If it isn't in tackit, it isn't tracked. It is *not* a
   knowledge base; durable learnings live in your memory.
-- **Reconcile on change (bounded by partition under v0.5).** A change marks the
+- **Reconcile on change (bounded by partition).** A change marks the
   task's directly linked neighbors **stale**. tackit surfaces the outstanding
   worklist on *every* call (deterministically — it's code in the app, not a
   reminder you can skip). The worklist is status-derived: only stale tasks with
@@ -251,11 +251,10 @@ that routes around broken things), at different moments.
   — that fix sat at `status='open'` the entire time. See `SKILL.md`
   "Ship-on-pain" for the full anchoring incident and the six application rules.
 
-### v0.8 highlights
+### Read-path and wiring refinements
 
-v0.6–v0.8 are read-path and wiring refinements on the v0.5 model — nothing in the
-partition or verb taxonomy moved, so if you know v0.5 you already know the shape.
-Two changes affect which op you reach for:
+Two refinements on top of [the model](#the-model-kinds-status-and-verbs) below affect
+which op you reach for (the partition and verb taxonomy are unchanged):
 
 - **Lean reads by default (D211).** `ls` and `board` return a *lean* projection —
   task scalars and graph shape, **no `description` bodies** (and `board` omits
@@ -277,11 +276,11 @@ Search also got more forgiving: FTS5 query input is now sanitized (T222), so a
 keyword carrying a dot, colon, hyphen, or apostrophe (e.g. a dotted config key) is
 searchable rather than raising an FTS5 syntax error.
 
-### v0.5 highlights
+### The model: kinds, status, and verbs
 
-v0.5 reshapes how design/schema slices relate to the lifecycle. The shape is
-worth the few minutes — it changes which verb you reach for, and the wrong
-choice gets refused at the boundary.
+How design/schema slices relate to the lifecycle is the shape worth the few
+minutes — it changes which verb you reach for, and the wrong choice gets refused
+at the boundary. (The full discipline is in `SKILL.md`; this is the orientation.)
 
 **The kind/status partition.** Every row is in one of two partitions, by kind:
 
@@ -315,74 +314,24 @@ open-neighbor refusal + immutable reason" embodies the 100%-gone contract. If
 you find yourself wanting to migrate some links to a new spec, you weren't
 retiring — you were editing.
 
-**Retiring a spec — the workflow.** retire is uncommon (most "spec change"
-scenarios are partial and use edit). Use retire only when the decision is
-truly dead with nowhere to go. The op runs a 6-step refusal matrix (reason
-validation incl. placeholder filter, `status='spec'`, kind in design/schema,
-stale gate, linked-stale gate, **open-neighbor gate**); the open-neighbor
-refusal is the load-bearing one — it lists each open neighbor with its
-`because` rationale and presents an (i)/(ii) decision tree inline:
-
-```text
-REFUSED: D17 has 2 open linked task(s). Resolve each before retiring:
-  - T42 (status=open) -- because: 'auth refresh impl realizes D17'
-  - T58 (status=open) -- because: 'session expiry decision rests on D17'
-For each open neighbor, decide:
-  (i)  If the neighbor's work realizes ONLY this retired decision:
-       link_rm + wont_do(neighbor, reason=...) -- the work is dead too.
-  (ii) If the neighbor's work has other reasons to exist (linked to
-       other living specs): link_rm -- work continues under remaining
-       live premises.
-Then re-attempt retire(D17).
-```
-
-After retire lands, the row stays as a graveyard marker. `show(retired_id)`
-still lists historical edges; new `link_add` to a retired endpoint is refused.
-If the decision later returns, file a fresh `D#` with the new direction — do
-**not** reanimate the retired row (T132 generalized: no double-decide on a
-terminal state).
+**Retiring a spec.** retire is uncommon — most "spec change" scenarios are
+partial and use edit. It runs a 6-step refusal matrix whose load-bearing check is
+the **open-neighbor gate**: a spec with open tasks linked to it can't be retired
+until each is resolved, and the refusal lists every open neighbor with its
+`because` and an (i)/(ii) resolve path inline. Once it lands the row stays as a
+graveyard marker — `link_add` to a retired endpoint is refused, and a returning
+decision is a fresh `D#`, never a reanimated row. (Full matrix: the `retire()`
+docstring / `SKILL.md`.)
 
 **Granular-description discipline (D37).** Task descriptions must be
-**implementation-ready**: a fresh-session agent — no conversation history, no
-prior context, only the task body and its linked neighbors — should be able to
-implement (or evaluate completion of) the task without asking for
-clarification. Anti-patterns are refused as defects, not style nits:
-
-- **Vague verbs** ("Fix bug", "update logic", "clean up X") — unsearchable,
-  unimplementable.
-- **Conversation references** ("as discussed", "see chat") — ephemeral context
-  that doesn't survive a session reset.
-- **Pointer-only bodies** ("see related task X") without inlining the scope —
-  forces traversal that loses on fresh-session.
-- **TBD / TODO placeholders** in committed task bodies — flag and resolve
-  before commit; if a detail genuinely isn't decided, the task isn't ready.
-- **Implementation-by-conversation** — agreeing on a detail in conversation
-  but never folding it into the task body. The task is durable; conversation
-  isn't.
-
-The discipline applies *at create time* (write impl-ready from the start),
-*during implementation* (when impl reveals an under-defined detail, `edit()`
-folds it back into the body — this is the same fold-back rule below at the
-description-granularity layer), and *before close* (re-read the description
-against what was actually implemented; if it no longer captures the impl,
-`edit()` before close).
-
-**A concrete example of the discipline applied.** Suppose during implementation
-you discover that the cascade's depth-1 marking has an edge case on retired
-endpoints that the original task body said nothing about. Don't ship the fix
-silently; `edit()` the task body before close:
-
-> *Before:* "Fix cascade bug on retired endpoints."
->
-> *After (edit):* "Fix cascade depth-1 marking on retired endpoints: edge
-> case where mig 009 leaves stale=1 on rows that should be record-only;
-> affects `core.py:_stale_linked_transitive` line 663; reproduced in
-> `test_d36_retire.py::test_edit_on_retired_fires_cascade_record_only`;
-> fix updates the predicate from `status='open'` to
-> `status IN ('open','spec')` so retired rows are correctly excluded."
-
-The "after" version is impl-ready in any future session: any agent reading it
-can grep the named file:line, run the named test, and verify the fix.
+**implementation-ready**: a fresh-session agent — no conversation history, only
+the task body and its linked neighbors — should be able to implement (or judge
+completion of) the task without asking for clarification. Vague verbs ("fix
+bug"), conversation references ("as discussed"), pointer-only bodies, and
+TBD/TODO placeholders are refused as defects, not style nits. The discipline
+applies at create time, *during* implementation (`edit()` folds back what impl
+reveals), and before close. (The full anti-pattern list and a worked example
+live in `SKILL.md`.)
 
 One convention is worth explaining in full right here — it's the one people skip and
 then regret, and it belongs in your always-on settings, not just in tackit:
@@ -467,6 +416,60 @@ point:
   any plan; capturing them in the task body is how the next session inherits the
   lesson.
 ```
+
+### Load the discipline at session start
+
+The snippet above is the **floor** — the few rules that hold with no skill loaded.
+The complete discipline is `SKILL.md`, and the surest way to apply it is to load it
+at the **start of every session** rather than rely on the agent to invoke the
+`tackit` skill when it recognizes task work. Two levers exist, both opt-in (tackit
+ships no hook of its own): an **always-loaded instructions file** carries the floor,
+and a **session-start hook** can inject the full skill. The mechanism differs per
+agent — pick yours.
+
+**Claude Code** — a `SessionStart` hook in `.claude/settings.json`. Its command's
+stdout is injected into context before the first prompt (it can't call the Skill
+tool itself; it prints a directive the agent then acts on):
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      { "matcher": "startup|resume|clear|compact",
+        "hooks": [ { "type": "command",
+          "command": "echo 'This project uses tackit. Before any task work, invoke the tackit skill to load its discipline.'" } ] }
+    ]
+  }
+}
+```
+
+Keep the `compact` matcher — it re-fires after a context compaction, where the
+loaded skill is otherwise the first thing dropped. To inject the discipline
+**verbatim** instead of a pointer, swap the `echo` for `cat
+<skills-path>/tackit/SKILL.md`.
+
+**Codex CLI** — the same hook model, in `.codex/config.toml` (or `.codex/hooks.json`,
+whose JSON mirrors Claude's block above). Same four matchers; stdout becomes
+developer context:
+
+```toml
+[[hooks.SessionStart]]
+matcher = "startup|resume|clear|compact"
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = "echo 'This project uses tackit. Before any task work, invoke the tackit skill to load its discipline.'"
+```
+
+**opencode** — no settings hook; it reads `AGENTS.md` as an always-loaded floor, so
+put the snippet there. (Its plugin system can subscribe to a `session.created` event
+for richer injection, but `AGENTS.md` is the reliable lever.)
+
+**Gemini CLI** — no session-start hook; `GEMINI.md` is concatenated and sent with
+every prompt, so the floor placed in `GEMINI.md` is effectively always loaded.
+
+`AGENTS.md` is the cross-agent floor file — Codex and opencode both read it, so one
+`AGENTS.md` can carry the always-on layer for several agents at once. An agent with
+no hook falls back to that floor.
 
 ### MCP tools
 
@@ -566,7 +569,7 @@ Honest notes:
 
 ## Testing
 
-550+ tests: unit, adapter integration (CLI and MCP driven end-to-end), and
+600+ tests: unit, adapter integration (CLI and MCP driven end-to-end), and
 **property-based** (Hypothesis stateful testing). The property machine fuzzes
 random operation sequences against the always-true invariants — including
 **kind/status partition holds** (D36), worklist filter
