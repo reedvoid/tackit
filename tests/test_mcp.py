@@ -136,6 +136,86 @@ def test_mcp_stale_alert_rides_in_envelope(tmp_path, monkeypatch):
     assert "STALE" in env["stale_alert"]["message"].upper()
 
 
+# -------------------------------------------------------------------------
+#  T242 -- lean-by-default return for the edit ops: the focal body the caller
+#  just wrote is NOT echoed back; the newly_stale obligation always is;
+#  include_description=True opts the body back in.
+# -------------------------------------------------------------------------
+
+def test_mcp_edit_return_is_lean_by_default(tmp_path, monkeypatch):
+    async def scenario(s):
+        await s.call_tool("add", {"name": "base", "kind": "production", "description": "the original body"})
+        await s.call_tool("add", {"name": "dep", "kind": "production"})
+        await s.call_tool("link_add", {"a": 2, "b": 1, "because": "test fixture"})
+        return await s.call_tool("edit", {"id": 1, "description": "rewritten body", "delta": "test edit"})
+
+    env = _envelope(_drive(tmp_path, monkeypatch, scenario))
+    assert "description" not in env["result"]["task"]   # body dropped
+    assert env["result"]["task"]["id"] == 1
+    assert env["result"]["newly_stale"][0]["id"] == 2   # obligation kept
+
+
+def test_mcp_edit_include_description_restores_body(tmp_path, monkeypatch):
+    async def scenario(s):
+        await s.call_tool("add", {"name": "base", "kind": "production", "description": "the original body"})
+        return await s.call_tool(
+            "edit",
+            {"id": 1, "description": "rewritten body", "delta": "test edit", "include_description": True},
+        )
+
+    env = _envelope(_drive(tmp_path, monkeypatch, scenario))
+    assert env["result"]["task"]["description"] == "rewritten body"
+
+
+def test_mcp_edit_append_return_is_lean_by_default(tmp_path, monkeypatch):
+    async def scenario(s):
+        await s.call_tool("add", {"name": "base", "kind": "production", "description": "original"})
+        await s.call_tool("add", {"name": "dep", "kind": "production"})
+        await s.call_tool("link_add", {"a": 2, "b": 1, "because": "test fixture"})
+        return await s.call_tool("edit_append", {"id": 1, "content": " appended", "delta": "test append"})
+
+    env = _envelope(_drive(tmp_path, monkeypatch, scenario))
+    assert "description" not in env["result"]["task"]
+    assert env["result"]["newly_stale"][0]["id"] == 2
+
+
+def test_mcp_edit_append_include_description_restores_body(tmp_path, monkeypatch):
+    async def scenario(s):
+        await s.call_tool("add", {"name": "base", "kind": "production", "description": "original"})
+        return await s.call_tool(
+            "edit_append",
+            {"id": 1, "content": " appended", "delta": "test append", "include_description": True},
+        )
+
+    env = _envelope(_drive(tmp_path, monkeypatch, scenario))
+    assert env["result"]["task"]["description"] == "original appended"
+
+
+def test_mcp_edit_replace_substring_return_is_lean_by_default(tmp_path, monkeypatch):
+    async def scenario(s):
+        await s.call_tool("add", {"name": "base", "kind": "production", "description": "hello world"})
+        return await s.call_tool(
+            "edit_replace_substring",
+            {"id": 1, "old_string": "world", "new_string": "there", "delta": "test replace"},
+        )
+
+    env = _envelope(_drive(tmp_path, monkeypatch, scenario))
+    assert "description" not in env["result"]["task"]
+    assert "newly_stale" in env["result"]
+
+
+def test_mcp_edit_replace_substring_include_description_restores_body(tmp_path, monkeypatch):
+    async def scenario(s):
+        await s.call_tool("add", {"name": "base", "kind": "production", "description": "hello world"})
+        return await s.call_tool(
+            "edit_replace_substring",
+            {"id": 1, "old_string": "world", "new_string": "there", "delta": "test replace", "include_description": True},
+        )
+
+    env = _envelope(_drive(tmp_path, monkeypatch, scenario))
+    assert env["result"]["task"]["description"] == "hello there"
+
+
 def test_mcp_close_stale_refusal_is_error(tmp_path, monkeypatch):
     async def scenario(s):
         await s.call_tool("add", {"name": "base", "kind": "production"})

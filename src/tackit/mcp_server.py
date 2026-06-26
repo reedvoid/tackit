@@ -53,6 +53,24 @@ def _wrap(core: Core, result, short_alert: bool = False):
     }
 
 
+def _change_result_payload(result, *, include_description: bool) -> dict:
+    """T242: lean-by-default return for the edit ops (edit / edit_append /
+    edit_replace_substring). Drops the focal task's reconstructed
+    ``description`` body UNLESS ``include_description`` -- the caller just
+    wrote that body, so echoing a multi-KB slice back on every edit is pure
+    context tax (the response-side twin of T179's input-side cost cut).
+
+    Keeps ``newly_stale`` in FULL: unlike link_add's structural neighborhood
+    echo (D39 #2), that set is the actionable cascade obligation the caller
+    must reconcile, not noise -- which is also why the edit ops keep the full
+    obligation paragraph (not short_alert). Mirrors D211's include_description
+    opt-in on ls/board, applied to the write return."""
+    payload = result.model_dump(mode="json")
+    if not include_description:
+        payload["task"].pop("description", None)
+    return payload
+
+
 def _enforce_strict_param_gate() -> None:
     """T236 / D2 - make every FastMCP tool REJECT an unrecognised parameter
     loudly instead of silently dropping it (the fail-loud validation boundary,
@@ -246,7 +264,7 @@ def build_server() -> FastMCP:
             return _wrap(c, out, short_alert=True)
 
     @mcp.tool()
-    def edit(id: int, delta: str, name: str | None = None, description: str | None = None) -> dict:
+    def edit(id: int, delta: str, name: str | None = None, description: str | None = None, include_description: bool = False) -> dict:
         """Edit a task (D13 + T117 + D29 + D36 + D37). First marks its direct
         linked tasks stale (D10); returns the task plus the now-stale set you
         must review.
@@ -273,12 +291,24 @@ def build_server() -> FastMCP:
 
         **Edits aren't free** -- fires the cascade depth-1; make edits
         consequential and necessary and the delta a substantive impact,
-        not cosmetic (see SKILL "Edits aren't free")."""
+        not cosmetic (see SKILL "Edits aren't free").
+
+        T242 -- the return is LEAN by default: the focal task's
+        ``description`` (the body you just wrote) is NOT echoed back; the
+        actionable ``newly_stale`` set always is. Pass
+        ``include_description=True`` to get the full reconstructed body
+        (e.g. to verify the edit landed as intended)."""
         with _core() as c:
-            return _wrap(c, c.edit(id, delta=delta, name=name, description=description).model_dump(mode="json"))
+            return _wrap(
+                c,
+                _change_result_payload(
+                    c.edit(id, delta=delta, name=name, description=description),
+                    include_description=include_description,
+                ),
+            )
 
     @mcp.tool()
-    def edit_append(id: int, content: str, delta: str) -> dict:
+    def edit_append(id: int, content: str, delta: str, include_description: bool = False) -> dict:
         """T179 - append ``content`` to a task's description. Diff-shaped
         variant of edit(): only the snippet crosses the wire, not the full
         new description. Cuts large-body edit cost ~10x.
@@ -299,18 +329,24 @@ def build_server() -> FastMCP:
         **Edits aren't free** -- fires the cascade depth-1 exactly like
         edit(); make edits consequential and necessary and the delta a
         substantive impact; diff-shape cuts transmission, not cascade cost
-        (see SKILL "Edits aren't free")."""
+        (see SKILL "Edits aren't free").
+
+        T242 -- lean-by-default return: the focal body is NOT echoed (you
+        just appended to it); ``newly_stale`` always is. Pass
+        ``include_description=True`` to see the full reconstructed body and
+        verify the append landed where intended / didn't duplicate."""
         with _core() as c:
             return _wrap(
                 c,
-                c.edit_append(id, content=content, delta=delta).model_dump(
-                    mode="json"
+                _change_result_payload(
+                    c.edit_append(id, content=content, delta=delta),
+                    include_description=include_description,
                 ),
             )
 
     @mcp.tool()
     def edit_replace_substring(
-        id: int, old_string: str, new_string: str, delta: str
+        id: int, old_string: str, new_string: str, delta: str, include_description: bool = False
     ) -> dict:
         """T179 - replace exact substring ``old_string`` with ``new_string``
         in a task's description. Diff-shaped variant of edit(): only the
@@ -335,16 +371,23 @@ def build_server() -> FastMCP:
         **Edits aren't free** -- fires the cascade depth-1 exactly like
         edit(); make edits consequential and necessary and the delta a
         substantive impact; diff-shape cuts transmission, not cascade cost
-        (see SKILL "Edits aren't free")."""
+        (see SKILL "Edits aren't free").
+
+        T242 -- lean-by-default return: the focal body is NOT echoed;
+        ``newly_stale`` always is. Pass ``include_description=True`` to see
+        the full reconstructed body and verify the replacement landed."""
         with _core() as c:
             return _wrap(
                 c,
-                c.edit_replace_substring(
-                    id,
-                    old_string=old_string,
-                    new_string=new_string,
-                    delta=delta,
-                ).model_dump(mode="json"),
+                _change_result_payload(
+                    c.edit_replace_substring(
+                        id,
+                        old_string=old_string,
+                        new_string=new_string,
+                        delta=delta,
+                    ),
+                    include_description=include_description,
+                ),
             )
 
     @mcp.tool()
@@ -630,7 +673,12 @@ def build_server() -> FastMCP:
         `depends_on:` is a continuation block, one edge per line as
         `<ref> :: <because rationale>` (D33), where `<ref>` is a batch-local key
         OR an EXISTING task by prefixed-name (`S30`) or `#id` (T215); a
-        prefixed-name's kind-letter is validated against the target."""
+        prefixed-name's kind-letter is validated against the target.
+
+        T243 -- a batch-local key is valid ONLY within THIS call and vanishes
+        when it commits. To depend on a task created by a PRIOR load, use its
+        now-persistent prefixed-name / `#id`, NOT that load's old batch key (an
+        ephemeral ref in a durable edge; see SKILL 'Wire links explicitly')."""
         with _core() as c:
             keymap = c.load(parse_plan(plan))
             return _wrap(c, {"loaded": keymap})

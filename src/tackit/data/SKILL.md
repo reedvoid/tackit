@@ -97,6 +97,7 @@ The three edit variants are operationally equivalent (same cascade, same S7 audi
 - `edit_append(content, delta)` — append; only the snippet crosses the wire.
 - `edit_replace_substring(old, new, delta)` — replace an exact UNIQUE substring (non-unique refused with the count; empty `new` = deletion; `old == new` = no-op).
 - do: prefer the diff ops for large bodies — the transmission cost compounds over a session (see T179). They cut transmission, not cascade.
+- return is lean by default (T242): all three echo back the now-stale neighbor set (your reconcile obligation) but NOT the focal body you just wrote — pass `include_description=True` only when you need to re-read the reconstructed body to verify the edit landed.
 
 ### edit vs retire — the all-or-nothing rule (D36)
 - why: edit's cascade IS the partial-change re-evaluation mechanism; retire's no-cascade + open-neighbor refusal + immutable reason embodies a "100% gone" contract.
@@ -215,6 +216,7 @@ Every task displays a synthesized `<kind-letter><id>` prefix (design→**D**, sc
 ## Wire links explicitly — including within a batch
 - why: the cascade-ergonomics filter runs on the `because`; an unwired or placeholder edge degrades the cascade to "open every downstream."
 - do: wire each edge with a specific `because` — to existing tasks (found via `links`/`search`) AND among tasks you add together (the internal DAG is the case most forgotten). In a `load`, wire external anchors inline via `depends_on: <S30|#id> :: <because>` (T215) instead of a follow-up `link_add` pass. For a pure existing↔existing wiring pass (no new tasks), `links_add(edges=[{a, b, because}, …])` creates many links in one atomic, validate-all-first call (T216) — endpoints are id or prefixed-name, already-linked edges are benign no-ops.
+- don't-do: put an **ephemeral reference** anywhere in an edge — a link is durable graph structure, so every part of it must still resolve in a later session. Two traps: (1) the **ref token** — never reuse a *prior* `load`'s batch-local key (`g1`, `t5`) in a later load; that key existed only inside its own `load()` call and vanished when that call committed, so address the task by its now-persistent prefixed-name (`D532`) or `#id`. Use the canonical prefixed-name, not a legacy display slot-number written into a name (the slice titled `D38 — …` is task **D197**; `D38` resolves to the wrong row or none). (2) the **because** — name the durable coupling, never session-relative context (`"the task I just made"`, `"see Stage C"`, `"as discussed"`); a rationale the next reader can't resolve is a dead edge.
 
 ## Write real `because` rationales
 - why: the cascade compares `because × delta`; a vague because filters nothing.
