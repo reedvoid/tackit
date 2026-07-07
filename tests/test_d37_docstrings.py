@@ -707,8 +707,12 @@ def test_readme_contains_granular_description_walkthrough():
         "space test for whether a description is granular enough), "
         "matching the SKILL.md framing."
     )
-    # Anti-patterns are called out.
-    assert "Anti-patterns" in text or "anti-patterns" in text, (
-        "README must enumerate the D37 anti-patterns so the install-time "
-        "reader sees what's NOT allowed, not just the abstract rule."
+    # The concrete anti-patterns are enumerated. The install-first sweep
+    # (586c4e7) folded them into prose rather than a literal "Anti-patterns"
+    # heading -- the *content* is what's install-relevant, and it's present in
+    # both the README prose and SKILL.md.
+    assert '"fix bug"' in text and "TBD/TODO" in text, (
+        "README must still enumerate the concrete D37 anti-patterns (a vague "
+        'verb like "fix bug", TBD/TODO placeholders) so the install-time reader '
+        "sees what's NOT allowed, not just the abstract rule."
     )
