@@ -105,6 +105,7 @@ def test_mcp_success_wraps_result_in_envelope(tmp_path, monkeypatch):
         "delta",
         "code_check_reminder",  # D31 (v0.4)
         "coherence_nudge",  # D250
+        "deadref_suggestions",  # D249
         "result",
     }
     assert env["stale_alert"] is None and env["label_nudge"] is None  # nothing stale, no new label

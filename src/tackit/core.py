@@ -293,6 +293,21 @@ def _coherence_nudge_text(kind: str, task_id: int, issues: list[str]) -> str:
     )
 
 
+_SECTION_ID = re.compile(r"§[\d]+(?:\.[\d]+)*[a-z]?")
+
+
+def _section_ids(text: str | None) -> set[str]:
+    """D249 -- the name-convention section ids (e.g. §9.4) present in text."""
+    return set(_SECTION_ID.findall(text or ""))
+
+
+def _ref_present(body: str | None, ref: str) -> bool:
+    """D249 -- boundary-guarded literal search for a reference id in a body.
+    §9.4 must not match §9.4.2; D12 must not match D123."""
+    pat = r"(?<!\w)" + re.escape(ref) + r"(?![\w.])"
+    return re.search(pat, body or "") is not None
+
+
 class Core:
     """The operation surface. Open via :meth:`open` for normal use (runs the D18
     startup sync first); construct directly only in tests with a ready store."""
@@ -319,6 +334,10 @@ class Core:
         # as a stacked changelog (append-not-rewrite) or with a dangling
         # reference. Advisory envelope field; ephemeral, one op's lifetime.
         self.last_coherence_nudge: str | None = None
+        # D249: set when retire/rename/reclassify of a task leaves LINKED
+        # neighbors still citing its now-dead id. A list of soft repoint/
+        # rationalize suggestions; advisory, ephemeral, one op's lifetime.
+        self.last_deadref_suggestions: list[str] | None = None
 
     # --- T124: shared prelude for cascade-firing / delta-bearing ops --------
     def _record_delta(self, delta: str, op_name: str) -> None:
@@ -1133,6 +1152,14 @@ class Core:
                     "UPDATE tasks SET kind = ?, updated_at = ? WHERE id = ?",
                     (new_kind, _now(), task_id),
                 )
+        # D249: reclassify OUT of design/schema kills the old D#/S# synthetic id
+        # (it becomes T#/M#); suggest a repoint to linked neighbors citing it.
+        if row["kind"] in ("design", "schema") and new_kind not in ("design", "schema"):
+            self._emit_deadref_suggestions(
+                task_id,
+                {prefixed_id(row["kind"], task_id)},
+                successor=prefixed_id(new_kind, task_id),
+            )
         return ChangeResult(task=self.get(task_id), newly_stale=newly_stale)
 
     # ====================================================================
@@ -1645,6 +1672,13 @@ class Core:
                 (reason.strip(), _now(), task_id),
             )
             self._record_transition(task_id, row["status"], "retired")
+        # D249: the retired task's id (synthetic + any §-name-convention id)
+        # is now dead; suggest a repoint to any linked neighbor still citing it.
+        self._emit_deadref_suggestions(
+            task_id,
+            {prefixed_id(row["kind"], task_id)} | _section_ids(row["name"]),
+            successor=None,
+        )
         return WontDoResult(
             task=self.get(task_id),
             links=self._linked_with(task_id),  # T239: single symmetric set (D5)
@@ -1653,6 +1687,42 @@ class Core:
     # ====================================================================
     # D13 - change (with cascade entry) -> D10
     # ====================================================================
+    def _emit_deadref_suggestions(
+        self, task_id: int, dead_ids: set[str], successor: str | None
+    ) -> None:
+        """D249 -- for each LINKED neighbor whose body still cites a now-dead
+        id of ``task_id``, emit a soft repoint/rationalize suggestion.
+        Detection-only: advisory, no gate, and never says delete/remove (a bare
+        deletion strands the logic and hides the drift). Scoped to linked
+        neighbors -- store-wide dead refs are the audit sweep's job (D247)."""
+        dead = {d for d in dead_ids if d}
+        if not dead:
+            return
+        out: list[str] = []
+        for n in self._linked_with(task_id):
+            nrow = self._require_row(n.id)
+            body = nrow["description"] or ""
+            for ref in sorted(dead):
+                if _ref_present(body, ref):
+                    nid = prefixed_id(nrow["kind"], n.id)
+                    if successor:
+                        action = (
+                            f"repoint it to {successor} and confirm the "
+                            f"surrounding logic still holds under the new target"
+                        )
+                    else:
+                        action = (
+                            "work out what that reference provided, then "
+                            "rationalize the passage -- fold in the superseding "
+                            "decision or restructure the logic coherently"
+                        )
+                    out.append(
+                        f"{nid} still references {ref}, which is no longer "
+                        f"live: {action}. (D249, advisory.)"
+                    )
+        if out:
+            self.last_deadref_suggestions = out
+
     def edit(
         self,
         task_id: int,
@@ -1718,6 +1788,16 @@ class Core:
             self.conn.execute(
                 f"UPDATE tasks SET {', '.join(sets)} WHERE id = ?", tuple(params)
             )
+        # D249: a rename that drops a §-name-convention id from the name kills
+        # that old id; suggest a repoint (to the new id, if any) to linked
+        # neighbors still citing it.
+        if name_changes:
+            _dropped = _section_ids(row["name"]) - _section_ids(new_name)
+            if _dropped:
+                _succ = sorted(_section_ids(new_name) - _section_ids(row["name"]))
+                self._emit_deadref_suggestions(
+                    task_id, _dropped, successor=(_succ[0] if _succ else None)
+                )
         # D31 (v0.4): code-check reminder on design/schema edits. tackit
         # can't introspect which files reference D#/S# -- the agent does the
         # grep -- so the reminder just names the slice id+name + nudges.

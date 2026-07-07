@@ -52,6 +52,9 @@ def _wrap(core: Core, result, short_alert: bool = False):
         # D250: set iff a design/schema edit left the resulting body reading as
         # an append/changelog or with a dangling reference. Advisory, non-blocking.
         "coherence_nudge": core.last_coherence_nudge,
+        # D249: set iff retire/rename/reclassify left a LINKED neighbor citing a
+        # now-dead id. A list of soft repoint suggestions; advisory, non-blocking.
+        "deadref_suggestions": core.last_deadref_suggestions,
         "result": result,
     }
 
