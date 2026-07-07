@@ -251,6 +251,48 @@ def label_nudge_text(created: list[str], existing: list[str]) -> str | None:
     )
 
 
+# D250 -- deterministic coherence check for spec-slice bodies. Flags a body
+# that reads as a stacked changelog (append-not-rewrite) or carries a dangling
+# reference (a token deleted leaving a fragment). Advisory only -- no content
+# judgement, never blocks an edit.
+_COH_ISO_DATE = re.compile(r"\b\d{4}-\d\d-\d\d\b")
+_COH_MARKERS = re.compile(r"\bSUPERSEDE[SD]?\b|\bIMPLEMENTED\b|\bRECONCILED\b|\bREVISED\b")
+_COH_STAMP_BAR = re.compile(r"[─-╿]{2,}")
+_COH_DANGLING = re.compile(r"\b(?:from|see|per|via)\s*[.,;:)]")
+_COH_BARE_SECTION = re.compile(r"§(?!\s*\d)")
+
+
+def _coherence_issues(body: str | None) -> list[str]:
+    """D250 -- flag a design/schema body reading as a stacked changelog, or
+    carrying a dangling reference left by a token deletion. Deterministic and
+    advisory; makes no judgement about the content itself."""
+    text = body or ""
+    issues: list[str] = []
+    if len(_COH_ISO_DATE.findall(text)) >= 2:
+        issues.append("multiple dated blocks")
+    if _COH_MARKERS.search(text):
+        issues.append("changelog markers (SUPERSEDES/IMPLEMENTED/RECONCILED/REVISED)")
+    if len(_COH_STAMP_BAR.findall(text)) >= 2:
+        issues.append("stacked stamp bars")
+    if _COH_DANGLING.search(text):
+        issues.append("dangling reference (trailing preposition)")
+    if _COH_BARE_SECTION.search(text):
+        issues.append("bare section marker")
+    return issues
+
+
+def _coherence_nudge_text(kind: str, task_id: int, issues: list[str]) -> str:
+    """D250 advisory nudge -- never says delete/remove; steers to a coherent
+    rewrite, with prior text preserved in the audit."""
+    return (
+        f"D250: {prefixed_id(kind, task_id)} still reads as an append/changelog "
+        f"or carries a dangling reference ({'; '.join(issues)}). A spec slice is "
+        f"the CURRENT answer, not a log -- rewrite it to one coherent "
+        f"current-state body; prior text is preserved in the revision audit "
+        f"(D29). Advisory; the edit landed."
+    )
+
+
 class Core:
     """The operation surface. Open via :meth:`open` for normal use (runs the D18
     startup sync first); construct directly only in tests with a ready store."""
@@ -273,6 +315,10 @@ class Core:
         # Sibling to label_nudge / stale_alert: structured envelope field.
         # Ephemeral.
         self.last_code_check_reminder: str | None = None
+        # D250: set when a design/schema edit leaves the resulting body reading
+        # as a stacked changelog (append-not-rewrite) or with a dangling
+        # reference. Advisory envelope field; ephemeral, one op's lifetime.
+        self.last_coherence_nudge: str | None = None
 
     # --- T124: shared prelude for cascade-firing / delta-bearing ops --------
     def _record_delta(self, delta: str, op_name: str) -> None:
@@ -1631,6 +1677,7 @@ class Core:
         at code referencing the slice's D#/S# id."""
         self._record_delta(delta, "edit")
         self.last_code_check_reminder = None  # D31: reflect only this op
+        self.last_coherence_nudge = None  # D250: reflect only this op
         row = self._require_row(task_id)
         if name is not None and not name.strip():
             raise ValidationError("task name cannot be set empty (D3/S1).")
@@ -1682,6 +1729,11 @@ class Core:
                 f"code by convention (SKILL.md code↔task naming rule). "
                 f"Grep for the id and check the associated files for drift."
             )
+            _coh = _coherence_issues(edited.description)
+            if _coh:
+                self.last_coherence_nudge = _coherence_nudge_text(
+                    row["kind"], task_id, _coh
+                )
         return ChangeResult(task=self.get(task_id), newly_stale=newly_stale)
 
     # --- T179: diff-shaped description edits (append + substring replace) ---
@@ -1735,6 +1787,11 @@ class Core:
                 f"code by convention (SKILL.md code↔task naming rule). "
                 f"Grep for the id and check the associated files for drift."
             )
+            _coh = _coherence_issues(edited.description)
+            if _coh:
+                self.last_coherence_nudge = _coherence_nudge_text(
+                    row["kind"], task_id, _coh
+                )
         return ChangeResult(task=self.get(task_id), newly_stale=newly_stale)
 
     def edit_append(
@@ -1751,7 +1808,17 @@ class Core:
         append is almost always a typo'd no-op the caller didn't mean."""
         self._record_delta(delta, "edit_append")
         self.last_code_check_reminder = None
+        self.last_coherence_nudge = None
         row = self._require_row(task_id)
+        if row["kind"] in ("design", "schema"):
+            raise ValidationError(
+                f"edit_append refused on {prefixed_id(row['kind'], task_id)}: a "
+                f"design/schema slice is a coherent CURRENT-STATE body, not an "
+                f"append log (D250). Rewrite it with edit(), or make a targeted "
+                f"change with edit_replace_substring(); prior text is preserved "
+                f"in the revision audit (D29). Append stays available on "
+                f"production/meta tasks, where chronological logs are correct."
+            )
         if not content or not content.strip():
             raise ValidationError(
                 "edit_append refused: content must be non-empty (no "
@@ -1795,6 +1862,7 @@ class Core:
         (str.replace count=1 semantics), not a recursive sweep."""
         self._record_delta(delta, "edit_replace_substring")
         self.last_code_check_reminder = None
+        self.last_coherence_nudge = None
         row = self._require_row(task_id)
         if not old_string:
             raise ValidationError(

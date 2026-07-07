@@ -209,6 +209,11 @@ tool telling you the plan is currently inconsistent.
 - do: when work settles something that alters what's decided or the store's shape, record it in the design/schema slice — `edit` the governing one, or `add kind=design`/`schema` + link. A production/meta body may *reference* a decision through its link; it is not the decision's home.
 - don't-do: append a decision to the production/meta task you're in because it's nearest; leave a settled decision living only in a production body with no spec slice.
 
+## A spec slice is current-state, not a changelog (D250)
+- why: appending dated "SUPERSEDES … above" blocks to a design/schema body makes it self-contradict — it asserts the old and the new at once, and a reader can't tell which is authoritative without diffing dates. `edit_append` is refused on design/schema for exactly this reason; `edit` / `edit_replace_substring`, which make you engage the existing body, are the path.
+- do: update a spec slice by rewriting it to ONE coherent current-state body — integrate the change and cut the superseded prose. Prior text is preserved in the revision audit (D29), so the removal is recoverable. A rewrite that still trips the D250 coherence nudge (stacked dates/markers, or a dangling reference) isn't done — fix the body, not the symptom.
+- don't-do (anti-pattern): tack a `━━ SUPERSEDES §X above (2026-…) ━━` block onto the end; leave the old claim standing above its correction.
+
 ## Auto-id name prefix (D32) — reference
 Every task displays a synthesized `<kind-letter><id>` prefix (design→**D**, schema→**S**, production→**T**, meta→**M**), computed from kind+id, never stored, and indexed in FTS (so `search("T157")` resolves).
 - do: write a bare name; reference tasks in code / PRs / conversation by the synthesized prefix (`# T157: …`) so grep bridges code↔task.

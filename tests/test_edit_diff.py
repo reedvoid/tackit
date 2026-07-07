@@ -91,20 +91,33 @@ def test_edit_append_on_closed_task_succeeds(core):
     assert len(revs) == 1
 
 
-def test_edit_append_on_retired_design_succeeds(core):
-    """D36 + D29: retired rows can still be edited; audit table records it."""
+def test_edit_append_refused_on_design_replace_still_works(core):
+    """D250: edit_append is refused on design/schema (a spec slice is a
+    coherent current-state body, not an append log) -- even on a retired one.
+    D36 + D29: the retired row can still be edited via a body-engaging op
+    (edit_replace_substring), and the audit table records it."""
     core.add("d", kind="design", description="decision text")  # T1, spec
     core.retire(1, reason="fully replaced by D2 with no migration", delta="retire d")
-    core.edit_append(1, content=" (clarification)", delta="historical note")
-    assert core.get(1).description == "decision text (clarification)"
+    with pytest.raises(ValidationError, match="edit_append refused"):
+        core.edit_append(1, content=" (clarification)", delta="historical note")
+    core.edit_replace_substring(
+        1,
+        old_string="decision text",
+        new_string="decision text (clarified)",
+        delta="historical clarification",
+    )
+    assert core.get(1).description == "decision text (clarified)"
     assert core.get(1).status == "retired"
 
 
-def test_edit_append_on_design_kind_fires_code_check_reminder(core):
-    """D31: design/schema edits set last_code_check_reminder."""
+def test_edit_replace_substring_on_design_fires_code_check_reminder(core):
+    """D31: design/schema edits set last_code_check_reminder. (edit_append is
+    refused on design per D250, so the diff-op path is edit_replace_substring.)"""
     core.add("d", kind="design", description="decision text")
     core.last_code_check_reminder = None
-    core.edit_append(1, content=" + clarification", delta="prose extension")
+    core.edit_replace_substring(
+        1, old_string="decision text", new_string="decision text v2", delta="prose extension"
+    )
     assert core.last_code_check_reminder is not None
     assert "D31" in core.last_code_check_reminder
 

@@ -49,6 +49,9 @@ def _wrap(core: Core, result, short_alert: bool = False):
         "delta": core.last_delta,  # T117: set iff a delta-bearing op just ran
         # D31 (v0.4): set iff an edit just landed on a design/schema slice.
         "code_check_reminder": core.last_code_check_reminder,
+        # D250: set iff a design/schema edit left the resulting body reading as
+        # an append/changelog or with a dangling reference. Advisory, non-blocking.
+        "coherence_nudge": core.last_coherence_nudge,
         "result": result,
     }
 
@@ -325,6 +328,11 @@ def build_server() -> FastMCP:
         Required ``delta`` (T117) -- one short sentence describing what
         changed semantically. The reconciler compares it against each
         stale link's `because` rationale to filter relevance.
+
+        D250 -- REFUSED on design/schema slices: a spec slice is a coherent
+        current-state body, not an append log; use edit() to rewrite or
+        edit_replace_substring() for a targeted change. Append stays legal on
+        production/meta, where chronological logs are correct.
 
         Refused on empty / whitespace-only ``content`` (a whitespace
         append is almost always a typo'd no-op). D37 -- granular description
