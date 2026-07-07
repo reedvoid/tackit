@@ -431,7 +431,7 @@ every randomized op so a future regression on the filter shape gets caught
 in CI.
 
 Backs (v0.5 additions): D35 (T167), D36 (T171), T173 (Phase 2a sweep),
-T180 (anchor-query residual), T176 Phase 4 (property invariant).', 'spec', 0, '2026-06-01T22:22:03.373143+00:00', '2026-06-03T02:49:05.759524+00:00', 'design', NULL);
+T180 (anchor-query residual), T176 Phase 4 (property invariant).', 'spec', 0, '2026-06-01T22:22:03.373143+00:00', '2026-07-07T18:45:04.413510+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (138, 'D29 — Description revisions audit table', 'Append-only audit table capturing every successful edit''s prior name and description plus the delta rationale. Backstop for the ''edit on closed/wont_do is allowed'' decision: descriptions can be updated in place but verbatim prior state is recoverable for archaeology. Replaces the v0.3.0 supersede marker (D25) — the marker addressed ''don''t get misled by old prose'' via inline-tagging hits with a superseder id; the audit table addresses it by preserving the prior verbatim version under the SAME task id. Simpler model, same archaeology capability. history() op extends to return description_revisions alongside status_transitions.
 
 ## v0.5 update (D35+D36 — retire interaction with audit table)
@@ -617,7 +617,7 @@ Edge cases:
 - User-supplied name that already looks prefixed (e.g., user writes "T157 — Fix ls() …" out of habit): allowed as raw text, but display will double-prefix to "T157 — T157 — Fix ls() …". A future refinement could refuse or strip; v0.4 just lets users learn the convention.
 - FTS rebuild for legacy rows: the search-by-synthesized-prefix property requires the FTS index to carry the prefix even for rows inserted before this slice landed. Migration 008 rebuilds tasks_fts with the synthesized prefix included.
 
-Backs: D17 (search) — search must find by synthesized prefix. D26 (kind taxonomy) — the kind letter comes from kind.', 'spec', 0, '2026-06-02T01:23:31.673423+00:00', '2026-06-03T05:12:38.596578+00:00', 'design', NULL);
+Backs: D17 (search) — search must find by synthesized prefix. D26 (kind taxonomy) — the kind letter comes from kind.', 'spec', 0, '2026-06-02T01:23:31.673423+00:00', '2026-07-07T18:45:04.413510+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (163, 'D33 — Link creation requires explicit `because`: refuse placeholder rationales at all creation paths', 'Every link-creation path in tackit must require a real, caller-supplied `because` rationale. Placeholder/convenience-default rationales (e.g. `"(established at task creation)"`, `"(established via bulk load)"`) are refused at the boundary.
 
 **Why:** the cascade-ergonomics filter (T116) compares `delta × because` to FAST-skip a stale neighbor without re-reading it. A placeholder rationale carries zero signal — it filters nothing, so every cascade hit through such an edge must take the slow path. Convenience shortcuts that ship placeholders silently corrupt the SNR of the entire cascade system: the link LOOKS wired but is functionally dead-weight to the reconciler. Concretely: of 312 links in this DB at the time of writing, 269 (86%) carry a placeholder or pre-T116 marker; the 36 add-deps placeholders are the recurring failure mode this rule prevents.
@@ -908,7 +908,7 @@ D33''s placeholder-rationale refusal exemplifies this: the rule fires in `link_a
 - D33 (placeholder rationale refusal — extends to retire''s reason field).
 - S1 (partition CHECK joint with D35; wont_do_reason column documented as terminal-verb-reason regardless of which verb wrote it).
 
-Backs: D7 (status taxonomy joint with D35), D14, D26, D27, D28, D29, D30, D31, D33, S1.', 'spec', 0, '2026-06-02T07:22:12.812393+00:00', '2026-06-03T07:13:22.827154+00:00', 'design', NULL);
+Backs: D7 (status taxonomy joint with D35), D14, D26, D27, D28, D29, D30, D31, D33, S1.', 'spec', 0, '2026-06-02T07:22:12.812393+00:00', '2026-07-07T18:45:04.413510+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (172, 'D37 — Granular-description discipline: task bodies must be impl-ready on fresh-session revisit; edit() before close to absorb impl-time discoveries', '**The granular-description discipline** (added 2026-06-02): task descriptions must be implementation-ready. On a new-session revisit, an agent reading the description should not be confused, should not feel the need to do additional scoping work, and should not encounter ambiguity that could be resolved. Under-defined task descriptions force fresh-session agents to re-derive context that should already be on the row — which is exactly the failure tackit exists to prevent.
 
 **The rule (forceful):**
@@ -1154,7 +1154,7 @@ ENFORCED AT FOUR SKILL.md SURFACES (each one-purpose, each cites this slice):
 
 DETECTION of an ALREADY-stranded decision is semantic (agent judgment), not deterministically computable; its fallback net is the stranded-decision audit (linked, provisional).
 
-ANTI-PATTERN: appending a decision to the nearest production task because that is where you are working; clearing a spec''s stale flag via reconcile when a decision still needs porting into it.', 'spec', 0, '2026-07-07T05:08:16.215200+00:00', '2026-07-07T05:08:16.215200+00:00', 'design', NULL);
+ANTI-PATTERN: appending a decision to the nearest production task because that is where you are working; clearing a spec''s stale flag via reconcile when a decision still needs porting into it.', 'spec', 0, '2026-07-07T05:08:16.215200+00:00', '2026-07-07T18:45:04.413510+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (247, 'stranded-decision audit — surface production/meta tasks harboring spec-grade decisions', 'PROVISIONAL (label: provisional) — design NOT settled; do not implement (see the linked provisional impl task). Fallback net for D245 (the decision-homing invariant): an after-the-fact, human-or-agent-triggered audit that surfaces production/meta tasks possibly harboring a design/schema-grade decision that belongs in — and is missing from — a spec slice.
 
 DIVISION OF LABOR: the tool NARROWS deterministically; the agent JUDGES. The tool never classifies prose or emits a verdict — "is there a stranded decision here?" is semantic. No accurate deterministic locator exists (tested: phrasing-grep is brittle and domain-polluted — "locked"/"canonical" are ordinary domain words; edit-graph churn has poor precision AND recall).
@@ -1174,7 +1174,7 @@ GROUNDING MESSAGE (returned WITH the candidate list so the deterministic output 
 
 OUT OF SCOPE v1: detecting a spec slice whose CONTENT is stale (describes superseded design) — needs to know the architecture changed, not deterministically computable; possible later facet.
 
-OPEN (why provisional): exact axis thresholds; new MCP tool vs an extension of ls/board; whether the grounding message lives in the return payload or a cited skill.', 'spec', 0, '2026-07-07T05:09:02.038867+00:00', '2026-07-07T05:09:02.038867+00:00', 'design', NULL);
+OPEN (why provisional): exact axis thresholds; new MCP tool vs an extension of ls/board; whether the grounding message lives in the return payload or a cited skill.', 'spec', 0, '2026-07-07T05:09:02.038867+00:00', '2026-07-07T18:45:04.413510+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (249, 'dead-reference soft-suggest on retire / rename / reclassify', 'DECISION: when a task''s identifier stops naming a live referent, tackit searches for references to it in its LINKED neighbors and EMITS A SOFT SUGGESTION on any that still cite it. Detection-and-suggest only — no hard gate.
 
 TRIGGERS — the only three events that kill a reference target:
@@ -1193,7 +1193,7 @@ SCOPE (narrow, deliberately): LINKED neighbors only (rides the cascade reach). S
 
 DEPENDENCY: accuracy is gated on D245. In a clean, D245-compliant store the three triggers above are the complete cause list and detection is exact; with buried decisions the liveness set has no single source of truth, so the clean deterministic version requires the D245/D247 cleanup first.
 
-REALIZATION: pending production task (part of the #2/#4 dead-ref build, sequenced AFTER the #3 spec-coherence work). Adds the id-search + suggestion emission to retire / rename-edit / reclassify, over the cascade''s linked-neighbor set.', 'spec', 0, '2026-07-07T18:05:54.321891+00:00', '2026-07-07T18:05:54.321891+00:00', 'design', NULL);
+REALIZATION: SHIPPED in T252 (commit 9a9831e) — id-search + soft repoint/rationalize suggestion on retire / rename-edit / reclassify over the cascade''s linked-neighbor set, surfaced as deadref_suggestions in the envelope. v1 SCOPE NOTE: reclassify-out-of-spec emits on the SYNTHETIC id only (D#->T#, unambiguously dead); the §-name-convention token is NOT emitted on a reclassify, because a reclassified section MOVED to production rather than died — that moved-vs-died ambiguity is the buried-decision ambiguity (D245-gated) and belongs to the audit sweep (D247), not this inline mechanism.', 'spec', 0, '2026-07-07T18:05:54.321891+00:00', '2026-07-07T18:44:52.329464+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (250, 'a spec slice is a coherent current-state body — rewrite, never append', 'DECISION: an update to a design/schema slice must yield ONE coherent current-state body. The slice is the CURRENT answer, not a changelog — superseded prose is removed and integrated, not stacked under a dated "SUPERSEDES ... above" block. Edit history lives in the description_revisions audit (D29), never inline.
 
 WHY: a spec slice that accretes dated blocks self-contradicts — it asserts the old and the new at once, and a reader can''t tell which sentence is authoritative without diffing dates. That is worse than a merely-stale slice (which is at least internally consistent). Measured: ~28% of spec slices in a real store carry the append fingerprint. Driver: the agent optimizes "is the new info now present" (which gets a completion signal) over "is the old, contradictory info now absent" (which nothing scores), and imitates the slice''s own established append house-style.
@@ -1205,7 +1205,7 @@ ENFORCEMENT — three surfaces:
 
 CHARACTER: non-destructive and PREVENTIVE — the inline half of the response. It prevents the anti-pattern at write-time without forcing any risky action (unlike a hard gate). Existing appended slices (the ~28% backlog) are remediated by the agent-driven audit sweep, not by this.
 
-BUILD ORDER: FIRST. It is the coherence quality-bar the dead-ref work (D249) depends on — a dead-ref suggestion resolved by a lazy deletion is a coherence failure this catches.', 'spec', 0, '2026-07-07T18:08:39.247451+00:00', '2026-07-07T18:14:31.834831+00:00', 'design', NULL);
+BUILD ORDER: FIRST. It is the coherence quality-bar the dead-ref work (D249) depends on — a dead-ref suggestion resolved by a lazy deletion is a coherence failure this catches.', 'spec', 0, '2026-07-07T18:08:39.247451+00:00', '2026-07-07T18:45:04.413510+00:00', 'design', NULL);
 INSERT INTO task_labels (task_id, label) VALUES (37, 'core');
 INSERT INTO task_labels (task_id, label) VALUES (37, 'schema');
 INSERT INTO task_labels (task_id, label) VALUES (38, 'schema');
