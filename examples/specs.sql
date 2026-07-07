@@ -1142,6 +1142,39 @@ THE GUARD (don''t over-correct into vagueness). Pointing to code instead of stat
 RELATION. Sibling to the no-hub / fake-task rules (D38) and the granular-description discipline (D37): D37 says have ENOUGH detail; this says don''t have the WRONG, stale-prone detail. Shared ancestor with no-hub: each artifact owns only what''s authoritative to it, nothing it merely mirrors. Kept distinct (no-hub = task decomposition; this = slice content).
 
 SURFACE (where it ships). Canonical SKILL.md as a standalone `##` immediately after the granular-description discipline (D37), form = positive recipe (state what the body IS), not a prohibition list — per writing-skills "match the form to the failure" (baseline failure is wrong-SHAPED output, for which prohibition wording backfires). Pinned by a presence-pin test on the litmus phrase + the reconcile clause so a revert fails CI. SKILL.md-only for now (not propagated to a per-op docstring — it''s a content discipline, not a single op''s sharp edge); revisit if edit/reconcile misuse recurs.', 'spec', 0, '2026-06-17T19:38:06.618392+00:00', '2026-06-17T19:38:06.618392+00:00', 'design', NULL);
+INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (245, 'a decision homes in a spec slice, not a production body', 'INVARIANT: a design/schema-grade decision — one that alters what is decided, or the store''s shape — homes in a design/schema slice, never in a production/meta task body. A production/meta task may reference a decision through a link; it is not the decision''s home.
+
+WHY: when a decision surfaces during production work, the fold-back reflex records it in the active task — which during build work is `production`. The decision then strands: the governing spec slice silently goes stale, the decision is not discoverable from the spec layer, and the existing link + a routine `reconcile` make the graph LOOK maintained. Observed pattern: an architectural decision (a locked layout) lived only in the production task that built it, while the design slices it linked to still described the superseded design, and a reconcile had cleared their stale flag without ever porting the decision in.
+
+ENFORCED AT FOUR SKILL.md SURFACES (each one-purpose, each cites this slice):
+- create: a task that BOTH settles a design/schema-grade decision AND builds it is split — decision → design/schema slice, build → production task linking to it.
+- fold: a fold-back that alters the spec lands in the governing design/schema slice (edit it, or add + link), not the production body you are in.
+- report: the end-of-turn fold-back report tags each discovery decision-vs-impl; a decision recorded in a production body is a defect, not a satisfied fold-back.
+- reconcile: reconciling a spec staled by a production/meta edit means PORTING the decision into the slice, not just acknowledging the prose still holds.
+
+DETECTION of an ALREADY-stranded decision is semantic (agent judgment), not deterministically computable; its fallback net is the stranded-decision audit (linked, provisional).
+
+ANTI-PATTERN: appending a decision to the nearest production task because that is where you are working; clearing a spec''s stale flag via reconcile when a decision still needs porting into it.', 'spec', 0, '2026-07-07T05:08:16.215200+00:00', '2026-07-07T05:08:16.215200+00:00', 'design', NULL);
+INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (247, 'stranded-decision audit — surface production/meta tasks harboring spec-grade decisions', 'PROVISIONAL (label: provisional) — design NOT settled; do not implement (see the linked provisional impl task). Fallback net for D245 (the decision-homing invariant): an after-the-fact, human-or-agent-triggered audit that surfaces production/meta tasks possibly harboring a design/schema-grade decision that belongs in — and is missing from — a spec slice.
+
+DIVISION OF LABOR: the tool NARROWS deterministically; the agent JUDGES. The tool never classifies prose or emits a verdict — "is there a stranded decision here?" is semantic. No accurate deterministic locator exists (tested: phrasing-grep is brittle and domain-polluted — "locked"/"canonical" are ordinary domain words; edit-graph churn has poor precision AND recall).
+
+WHAT IT ANALYZES — three ORTHOGONAL yes/no axes per production/meta task (independent, so tripping several = real corroboration, not a set-containment artifact):
+- Accretion: body-revision count >= threshold.
+- Volume: body length >= threshold.
+- Isolation: design/schema link-count ~ 0.
+(thresholds tuned at impl, deliberately not fixed here.)
+
+SURFACING: rank by intersection depth — tasks tripping all 3 axes first, then 2, then 1; each candidate labeled with which axes fired. Non-orthogonal/weak signals (spec-neighbor edit-lag; a window''s prod-vs-spec edit-kind ratio) are per-candidate ANNOTATIONS / header context, NOT ranking axes. Recall-biased: it is a human-skimmed review queue, so a false positive costs one glance and a false negative is the whole point; tiering improves skim ORDER, not precision (a legitimately-isolated churny task will sit next to a real stranding — the agent judges each).
+
+GROUNDING MESSAGE (returned WITH the candidate list so the deterministic output is actionable):
+- purpose: these may harbor decisions that belong in a spec slice.
+- interpret: the axes are proxies, not verdicts — read the body and its linked specs.
+- act: is there a decision here that alters the spec and is absent from a design/schema slice? yes → promote it (edit the governing slice, or add kind=design/schema + link; reclassify/split if the task conflates decision+build). no → leave it.
+
+OUT OF SCOPE v1: detecting a spec slice whose CONTENT is stale (describes superseded design) — needs to know the architecture changed, not deterministically computable; possible later facet.
+
+OPEN (why provisional): exact axis thresholds; new MCP tool vs an extension of ls/board; whether the grounding message lives in the return payload or a cited skill.', 'spec', 0, '2026-07-07T05:09:02.038867+00:00', '2026-07-07T05:09:02.038867+00:00', 'design', NULL);
 INSERT INTO task_labels (task_id, label) VALUES (37, 'core');
 INSERT INTO task_labels (task_id, label) VALUES (37, 'schema');
 INSERT INTO task_labels (task_id, label) VALUES (38, 'schema');
@@ -1229,6 +1262,7 @@ INSERT INTO task_labels (task_id, label) VALUES (202, 'cli');
 INSERT INTO task_labels (task_id, label) VALUES (202, 'skill');
 INSERT INTO task_labels (task_id, label) VALUES (207, 'docs');
 INSERT INTO task_labels (task_id, label) VALUES (207, 'skill');
+INSERT INTO task_labels (task_id, label) VALUES (247, 'provisional');
 INSERT INTO links (id, task_a, task_b, because) VALUES (60, 43, 44, 'D2 (typed Pydantic validation at the read/write boundary) is the mechanism that gates writes into D1''s persistent store, so any change to D2''s validation rules (e.g. NUL/surrogate refusal) or to D1''s store contract forces the other to be re-evaluated.');
 INSERT INTO links (id, task_a, task_b, because) VALUES (61, 44, 45, 'D3''s create/read/update operations are the surface that pushes input through D2''s Pydantic validation boundary, so any change to D3''s CRUD signatures or to D2''s validation rules forces the other to be re-evaluated.');
 INSERT INTO links (id, task_a, task_b, because) VALUES (63, 45, 46, 'D4 labels attach to D3 tasks (label_add takes a task id and a label string), so any change to D3''s task identity/CRUD or to D4''s attach-and-list contract forces the other to be re-evaluated.');
@@ -1309,6 +1343,12 @@ INSERT INTO links (id, task_a, task_b, because) VALUES (359, 167, 171, 'D35 and 
 INSERT INTO links (id, task_a, task_b, because) VALUES (363, 171, 172, 'D37 follows D36''s propagation principle pattern — discipline rules belong on every agent-facing surface (SKILL.md, MCP docstrings, CLI help, README). D37''s surface enumeration is a direct application of D36''s principle. Changes to D36''s propagation framing (e.g., adding a new surface category) affect D37''s surface list and vice versa.');
 INSERT INTO links (id, task_a, task_b, because) VALUES (395, 165, 197, 'D38 refines what a valid `because` expresses (a coupling consequence, not a membership category) — that IS the axis D34 surfaces for the FAST filter. If D34''s because/delta surfacing or filter framing changes, D38''s discriminator rule must be re-checked, and vice versa.');
 INSERT INTO links (id, task_a, task_b, because) VALUES (427, 231, 234, 'this rule is a fresh instance of the recognition-gated class D231 generalizes — the failure (a reconcile re-importing the 39 var defaults) was a SILENT recognition miss, and the fix borrows D231''s move: anchor the reconcile clause to an observable trigger (typing a literal that has a code home) rather than to noticing you''re mirroring');
+INSERT INTO links (id, task_a, task_b, because) VALUES (449, 245, 247, 'This audit is the deterministic fallback net for D245''s invariant; if D245''s definition of a spec-grade decision changes, the audit''s purpose and axes change, and vice-versa.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (451, 172, 245, 'D245''s fold/report surfaces refine D37''s ''absorb impl-time discoveries via edit before close'': D37 routes a discovery into the responsible task body, D245 carves out that a DECISION-grade discovery routes to the spec slice, not the production body. Editing either''s notion of where a discovery lands forces re-checking the other.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (452, 234, 245, 'Sibling boundary rules on spec-slice CONTENT: D234 says a slice holds decisions not code literals; D245 says decisions belong in slices not production bodies. Editing either''s definition of what a spec slice is the authority for forces re-checking the other.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (453, 171, 245, 'D245''s create-split routes the decision to the design/schema (spec) partition and the build to the open partition — it depends on D36''s kind/status partition; changing the partition changes what ''home a decision in a spec slice'' structurally means.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (454, 110, 245, 'D245''s create-split classifies by whether a task settles a design/schema-grade DECISION vs builds it — it leans on D26''s kind taxonomy + the ''alters running-app behavior'' classifier; a change to the kind set or that rule changes the split.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (455, 137, 245, 'D245''s reconcile surface refines D28''s bounded-obligation reconcile: reconciling a spec staled by a production/meta edit that SETTLED a decision means porting the decision in, not just acknowledging prose holds. Editing D28''s reconcile semantics forces re-checking D245''s port rule.');
 INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (80, 37, NULL, 'open', '2026-05-31T04:11:47.873715+00:00');
 INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (81, 38, NULL, 'open', '2026-05-31T04:11:47.876334+00:00');
 INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (82, 39, NULL, 'open', '2026-05-31T04:11:47.876420+00:00');
@@ -1459,4 +1499,6 @@ INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at)
 INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (503, 213, NULL, 'spec', '2026-06-05T08:26:46.942767+00:00');
 INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (537, 231, NULL, 'spec', '2026-06-13T01:14:50.143767+00:00');
 INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (541, 234, NULL, 'spec', '2026-06-17T19:38:06.618628+00:00');
+INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (563, 245, NULL, 'spec', '2026-07-07T05:08:16.215378+00:00');
+INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (565, 247, NULL, 'spec', '2026-07-07T05:09:02.039054+00:00');
 COMMIT;

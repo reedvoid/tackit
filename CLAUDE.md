@@ -38,10 +38,8 @@ edited 5 times before settling) don't need to land as git churn.
 Pre-commit hook and CI-check are available patterns for the
 paranoid; opt-in per contributor.
 
-**Pending impl (2026-06-03):** the `tackit export --specs-only`
-subcommand is filed for impl as **T193** and not yet shipped. Until
-it lands this rule is DORMANT — the next commit that touches a spec
-slice IS the ship-on-pain trigger to ship T193 first. Do NOT skip
-the rule with a verbal "I'll do it after T193 ships." Per
-ship-on-pain (SKILL.md + global CLAUDE.md): an unshipped fix that's
-blocking discipline IS the next task. Ship T193, then commit.
+**Status:** the `tackit export --specs-only` subcommand shipped as
+**T193** (2026-06-03; refined by T240 to exclude the
+`description_revisions` audit trail from the public dump). The rule is
+**ACTIVE** — run the dump before every commit that touches a spec
+slice.

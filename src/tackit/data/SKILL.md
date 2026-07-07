@@ -66,6 +66,7 @@ The partition invariant: `kind ∈ {production,meta} ⟹ status ∈ {open,closed
 ### Classify every new task by what it touches
 - why: a stray kind silently corrupts cascade reach (kind bounds the cascade via the meta-island).
 - do: ask "would landing this touch `core.py` / `models.py` / `SKILL.md` / `README.md` / contract tests?" → yes = **production**; sole output is editing a tackit task's description = **meta**; introduces a D#/S# slice = **design**/**schema**.
+- do: split a task that BOTH settles a design/schema-grade decision AND builds it — the decision is a design/schema slice, the build a production task that links to it (D245); don't let the decision ride inside the production body.
 
 ### The inheritance trap
 - why: kind bounds the cascade, so a misclassified task silently corrupts cascade reach — and a task tends to inherit the kind of the thread it was spawned in (a meta thread once spawned production children mis-filed as meta; see T115).
@@ -158,7 +159,7 @@ tool telling you the plan is currently inconsistent.
 
 **Bounded obligation (D28 + D36).**
 - why: terminal tasks (closed/wont_do/retired) CAN be stale, but the flag is record-only archaeology — "fixing" it would erase the signal that an upstream changed.
-- do: treat the worklist as `status IN ('open','spec')` only, and reconcile those. Reconciling a stale spec acknowledges its prose still holds after the upstream shift.
+- do: treat the worklist as `status IN ('open','spec')` only, and reconcile those. Reconciling a stale spec acknowledges its prose still holds after the upstream shift — but when the upstream was a production/meta edit that settled a decision, reconciling means PORTING that decision into the slice, not just acknowledging (D245).
 - don't-do: reconcile a terminal-status row (refused); chase closed-stale production/meta tasks.
 
 **Orient with `delta × because`.**
@@ -194,7 +195,7 @@ tool telling you the plan is currently inconsistent.
 - do: when a commit fixes a bug or changes behavior the responsible task body doesn't describe, edit that body the SAME turn — append a "Phase N finding" (symptom / root cause / fix / why-missed / pinning test). Trace which task's enumeration should have caught it: edit the D# if the design was wrong, the impl task if it was under-enumerated. At an enumeration sweep's end, grep for the pattern family (`status =`, `INSERT…status`), not the verb names.
 - don't-do: leave the fix only in the commit message (not searchable from the task graph); ship a fix without its fold-back.
 
-**Mandatory end-of-turn fold-back report.** Every turn with a code commit or behavior change states which task bodies absorbed discoveries — or "none — verified no scope gap." Silence is an incomplete turn.
+**Mandatory end-of-turn fold-back report.** Every turn with a code commit or behavior change states which task bodies absorbed discoveries — or "none — verified no scope gap." Tag each discovery **decision** (name the spec slice it landed in) or **impl** (production body); a decision recorded in a production body is a defect to fix, not a satisfied fold-back (D245). Silence is an incomplete turn.
 
 ### When findings outgrow the body — fold them out to a sibling
 - why: cumulative Phase N findings can dwarf the original scope and make every edit expensive (T168 hit 57k chars unsplit).
@@ -202,6 +203,11 @@ tool telling you the plan is currently inconsistent.
 - don't-do: retroactively split a body that already grew (the cost usually exceeds continuing).
 
 **Per-discovery format (reference):** `### Phase N finding — <label>` then **Symptom / Root cause / Fix / Why missed / Pinning test / Status (fixed in <hash>)**.
+
+## A decision homes in a spec slice, not a production body (D245)
+- why: a design/schema-grade decision folded into the production/meta task that surfaced it strands there — the governing spec slice silently goes stale, the decision isn't discoverable from the spec layer, and the link + a routine `reconcile` make the graph *look* maintained. Fold-back is what routes it wrong: during build work the active task is `production`, so "fold it into the task I'm in" lands a decision in the wrong layer.
+- do: when work settles something that alters what's decided or the store's shape, record it in the design/schema slice — `edit` the governing one, or `add kind=design`/`schema` + link. A production/meta body may *reference* a decision through its link; it is not the decision's home.
+- don't-do: append a decision to the production/meta task you're in because it's nearest; leave a settled decision living only in a production body with no spec slice.
 
 ## Auto-id name prefix (D32) — reference
 Every task displays a synthesized `<kind-letter><id>` prefix (design→**D**, schema→**S**, production→**T**, meta→**M**), computed from kind+id, never stored, and indexed in FTS (so `search("T157")` resolves).

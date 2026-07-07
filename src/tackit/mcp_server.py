@@ -177,6 +177,11 @@ def build_server() -> FastMCP:
         meta-island); a stray choice silently corrupts cascade reach, so
         refuse missing/invalid loudly via D2.
 
+        D245 -- if a task would BOTH settle a design/schema-grade decision AND
+        build it, split it: the decision is a design/schema slice, the build a
+        production task linking to it; never let the decision ride inside the
+        production body.
+
         Defaults status to 'spec' for design/schema, 'open' for production/
         meta (D36 partition rule). Optionally attach labels (D4) and
         symmetric links via ``deps``: under D33 / T164 each entry is
@@ -482,6 +487,10 @@ def build_server() -> FastMCP:
         'reconcile all stale' form; that would automate the judgment the
         cascade depends on (the rubber-stamp failure mode the edit-quality +
         D34 disciplines prevent). reconcile batches transport, not judgment.
+
+        D245 -- when a task's stale flag came from a production/meta edit that
+        SETTLED a decision, reconciling means PORTING that decision into this
+        spec slice first, not just confirming its prose still holds.
 
         Returns ``{"reconciled": [ids], "remaining_stale": N}`` with a SHORT
         alert -- a known-clean sweep doesn't reprint the full obligation
