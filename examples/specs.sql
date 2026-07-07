@@ -1175,6 +1175,37 @@ GROUNDING MESSAGE (returned WITH the candidate list so the deterministic output 
 OUT OF SCOPE v1: detecting a spec slice whose CONTENT is stale (describes superseded design) — needs to know the architecture changed, not deterministically computable; possible later facet.
 
 OPEN (why provisional): exact axis thresholds; new MCP tool vs an extension of ls/board; whether the grounding message lives in the return payload or a cited skill.', 'spec', 0, '2026-07-07T05:09:02.038867+00:00', '2026-07-07T05:09:02.038867+00:00', 'design', NULL);
+INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (249, 'dead-reference soft-suggest on retire / rename / reclassify', 'DECISION: when a task''s identifier stops naming a live referent, tackit searches for references to it in its LINKED neighbors and EMITS A SOFT SUGGESTION on any that still cite it. Detection-and-suggest only — no hard gate.
+
+TRIGGERS — the only three events that kill a reference target:
+1. retire(T) — T''s id dies.
+2. an edit(T) that changes the id in T''s NAME (a rename/renumber) — the OLD id dies.
+3. reclassify(T) out of design/schema — T is no longer a spec, its id leaves the spec liveness set.
+
+DETECTION — in each linked neighbor''s body, search for BOTH of T''s identifiers:
+- the SYNTHETIC prefixed-name (D32): D345 / T123 / S12 / M7 — always available, tackit-owned.
+- the NAME-CONVENTION id: a project token embedded in the name, e.g. `§9.3`, regex-extracted from T''s name. Convention-dependent / configurable (the `§`-style is one project''s scheme); best-effort, not universal.
+For a rename, search the OLD id (from prev_name); for retire/reclassify, T''s current id.
+
+OUTPUT — a soft SUGGESTION surfaced on the neighbor, worded toward REPOINT / RATIONALIZE / resolve-into-the-logic (for a rename, name the successor id). It must NEVER say ''delete'' or ''remove'': a bare token deletion strands the dependent''s logic AND converts a deterministically-detectable dead ref into an undetectable dangling one (the lazy-delete failure). And NO hard gate — a gate manufactures the lazy-delete incentive by making token-absence the pass condition.
+
+SCOPE (narrow, deliberately): LINKED neighbors only (rides the cascade reach). Store-wide / UNLINKED dead refs, and the liveness ambiguity the buried-decision anti-pattern injects (measured: ~half of dead-ref candidates become unresolvable without human judgment when section ids are smeared across spec slices and production task names), are DEFERRED to the agent-driven audit sweep — not this inline mechanism.
+
+DEPENDENCY: accuracy is gated on D245. In a clean, D245-compliant store the three triggers above are the complete cause list and detection is exact; with buried decisions the liveness set has no single source of truth, so the clean deterministic version requires the D245/D247 cleanup first.
+
+REALIZATION: pending production task (part of the #2/#4 dead-ref build, sequenced AFTER the #3 spec-coherence work). Adds the id-search + suggestion emission to retire / rename-edit / reclassify, over the cascade''s linked-neighbor set.', 'spec', 0, '2026-07-07T18:05:54.321891+00:00', '2026-07-07T18:05:54.321891+00:00', 'design', NULL);
+INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (250, 'a spec slice is a coherent current-state body — rewrite, never append', 'DECISION: an update to a design/schema slice must yield ONE coherent current-state body. The slice is the CURRENT answer, not a changelog — superseded prose is removed and integrated, not stacked under a dated "SUPERSEDES ... above" block. Edit history lives in the description_revisions audit (D29), never inline.
+
+WHY: a spec slice that accretes dated blocks self-contradicts — it asserts the old and the new at once, and a reader can''t tell which sentence is authoritative without diffing dates. That is worse than a merely-stale slice (which is at least internally consistent). Measured: ~28% of spec slices in a real store carry the append fingerprint. Driver: the agent optimizes "is the new info now present" (which gets a completion signal) over "is the old, contradictory info now absent" (which nothing scores), and imitates the slice''s own established append house-style.
+
+ENFORCEMENT — three surfaces:
+1. STRUCTURAL — refuse edit_append on design/schema kinds. edit_append is the ONLY op that tacks text on without engaging the existing body — the mechanical driver of the anti-pattern. Removing it forces edit / edit_replace_substring (which make you read or anchor the body). Append stays legal on production/meta, where chronological Phase-N logs are correct.
+2. REAL-TIME FEEDBACK — after an edit / edit_replace_substring of a design/schema slice, run a deterministic check on the RESULTING body and emit a soft, non-blocking nudge if it still reads as an append: the append fingerprint (recurring dates, "SUPERSEDES ... above", stacked stamp bars, IMPLEMENTED/RECONCILED/REVISED markers) OR a dangling-reference shape (a trailing preposition/citation left by a token deletion: "from .", "see ,", bare "§"). This is what catches "the rewrite that appended anyway," and the lazy-delete that D249''s dead-ref suggestions could otherwise induce.
+3. DISCIPLINE — a SKILL.md pattern/anti-pattern pair (the appended anti-pattern vs the rewritten current-state) + the rule: updating a spec slice, the deliverable is one coherent current-state body; rewrite, don''t append; history is in the audit.
+
+CHARACTER: non-destructive and PREVENTIVE — the inline half of the response. It prevents the anti-pattern at write-time without forcing any risky action (unlike a hard gate). Existing appended slices (the ~28% backlog) are remediated by the agent-driven audit sweep, not by this.
+
+BUILD ORDER: FIRST. It is the coherence quality-bar the dead-ref work (D249) depends on — a dead-ref suggestion resolved by a lazy deletion is a coherence failure this catches.', 'spec', 0, '2026-07-07T18:08:39.247451+00:00', '2026-07-07T18:14:31.834831+00:00', 'design', NULL);
 INSERT INTO task_labels (task_id, label) VALUES (37, 'core');
 INSERT INTO task_labels (task_id, label) VALUES (37, 'schema');
 INSERT INTO task_labels (task_id, label) VALUES (38, 'schema');
@@ -1349,6 +1380,16 @@ INSERT INTO links (id, task_a, task_b, because) VALUES (452, 234, 245, 'Sibling 
 INSERT INTO links (id, task_a, task_b, because) VALUES (453, 171, 245, 'D245''s create-split routes the decision to the design/schema (spec) partition and the build to the open partition — it depends on D36''s kind/status partition; changing the partition changes what ''home a decision in a spec slice'' structurally means.');
 INSERT INTO links (id, task_a, task_b, because) VALUES (454, 110, 245, 'D245''s create-split classifies by whether a task settles a design/schema-grade DECISION vs builds it — it leans on D26''s kind taxonomy + the ''alters running-app behavior'' classifier; a change to the kind set or that rule changes the split.');
 INSERT INTO links (id, task_a, task_b, because) VALUES (455, 137, 245, 'D245''s reconcile surface refines D28''s bounded-obligation reconcile: reconciling a spec staled by a production/meta edit that SETTLED a decision means porting the decision in, not just acknowledging prose holds. Editing D28''s reconcile semantics forces re-checking D245''s port rule.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (456, 137, 249, 'This soft-suggest rides D28''s depth-1 cascade to reach the changed task''s LINKED neighbors; a change to cascade reach or semantics changes which neighbors receive the suggestion.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (457, 160, 249, 'Detection searches the changed task''s SYNTHETIC prefixed-name (D32: D#/S#/T#/M#); a change to how that id is formed changes what is searched for.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (458, 171, 249, 'Two of the three triggers are retire() and cross-partition reclassify (both governed by D36); changing those ops'' behavior changes when this mechanism fires.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (459, 245, 249, 'The dead-reference liveness signal is only clean if decisions live in spec slices; buried decisions corrupt it, so this mechanism''s determinism is GATED on D245 holding.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (460, 247, 249, 'Sibling detection: the store-wide / UNLINKED dead-ref scan and the buried-decision liveness ambiguity are handled by the agent-driven audit sweep D247 seeds, NOT by this inline linked-only mechanism.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (461, 165, 250, 'Rewrite-vs-append is an edit-quality concern under D34 (edits aren''t free); refusing edit_append on spec + the coherence nudge extend D34''s ''make every edit consequential'' to spec bodies.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (462, 172, 250, 'D37''s impl-ready + fold-back-into-the-body discipline is exactly where append-not-rewrite bites (a fold-back appended rather than integrated); this refines D37 so a fold-back yields a coherent body, not a stacked note.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (463, 234, 250, 'Sibling spec-content hygiene: D234 says a slice holds decisions not code literals; this says a slice is coherent current-state not a changelog. Both define what a well-formed spec body is.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (464, 245, 250, 'Sibling spec-content-quality invariant: D245 governs the KIND that holds a decision; this governs whether the decision is recorded COHERENTLY. Editing either''s notion of a well-formed spec slice forces re-checking the other.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (465, 249, 250, 'This slice''s dangling-shape feedback is what keeps D249''s dead-ref suggestion from being resolved by a lazy token deletion; the two must agree on what a coherent post-edit body looks like.');
 INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (80, 37, NULL, 'open', '2026-05-31T04:11:47.873715+00:00');
 INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (81, 38, NULL, 'open', '2026-05-31T04:11:47.876334+00:00');
 INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (82, 39, NULL, 'open', '2026-05-31T04:11:47.876420+00:00');
@@ -1501,4 +1542,6 @@ INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at)
 INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (541, 234, NULL, 'spec', '2026-06-17T19:38:06.618628+00:00');
 INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (563, 245, NULL, 'spec', '2026-07-07T05:08:16.215378+00:00');
 INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (565, 247, NULL, 'spec', '2026-07-07T05:09:02.039054+00:00');
+INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (568, 249, NULL, 'spec', '2026-07-07T18:05:54.322673+00:00');
+INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (569, 250, NULL, 'spec', '2026-07-07T18:08:39.248206+00:00');
 COMMIT;
