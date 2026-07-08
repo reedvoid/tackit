@@ -10,8 +10,8 @@ survives across sessions and context-window compaction, and a change to one task
 traceable to everything that depends on it. A typed boundary refuses malformed data,
 and a reconcile-on-change discipline surfaces what each change invalidates.
 
-> **Status: alpha (0.8.5).** The data model, interfaces, and sync design are
-> settled and implemented, with 600+ tests across unit / CLI / MCP / Hypothesis
+> **Status: alpha (0.9.0).** The data model, interfaces, and sync design are
+> settled and implemented, with 660+ tests across unit / CLI / MCP / Hypothesis
 > property suites. The core shape — a kind/status partition (design/schema slices
 > live at `spec`/`retired`; production/meta at `open`/`closed`/`wont_do`) and the
 > `edit` / `close` / `wont_do` / `retire` verb taxonomy — is laid out under
@@ -42,7 +42,8 @@ single-source-of-truth store:
   document, so context cost stays bounded.
 - **Fail loud.** Malformed data and illegal transitions are refused at the boundary,
   not silently absorbed.
-- **Traceable change.** Editing a task flags everything that depends on it for review,
+- **Traceable change.** Editing a task flags its directly-linked neighbors (depth-1,
+  symmetric — not transitive; the close-gate is the transitive check) stale for review,
   so a change can't silently leave the rest of the plan wrong.
 
 ## Install
@@ -80,13 +81,14 @@ out — it does the wiring because it knows where its own config lives — and s
 Day to day you don't touch tackit directly — you tell your coding agent in plain
 language and it drives the tools. Common asks:
 
-- **"Add a task to rotate the JWT signing keys; it depends on the auth-token-endpoint
-  task."** → the agent searches for the prerequisite, creates the task, and wires the
-  dependency.
+- **"Add a task to rotate the JWT signing keys; it realizes our token-rotation design
+  slice."** → the agent searches for that governing spec, creates the production task,
+  and wires it to the slice it realizes (a production task must link the spec it
+  realizes — the D256 creation-gate).
 - **"What's open right now?"** / **"What's still outstanding?"** → it lists the open
   tasks and flags anything stale.
 - **"I changed the token format — update that task."** → it edits the task, and tackit
-  marks everything that depends on it *stale* for review.
+  marks its directly-linked neighbors *stale* for review.
 - **"What did that change affect?"** / **"What's stale?"** → it shows the reconciliation
   worklist.
 - **"Mark the parser task done."** → it closes the task — *refused* if the task is stale
@@ -108,17 +110,19 @@ rarely have to ask. For the complete set, see
 
 Concrete loops, so the discipline reads as habits, not rules:
 
-- **Start a piece of work.** *"Add a task to rate-limit the login endpoint; it depends
-  on the redis-session task."* → the agent `search`es for the prerequisite, creates the
-  task, wires the dependency, and echoes the task's vocabulary in the code it writes —
-  so later, `search "rate-limit"` lands on both the task and the code.
+- **Start a piece of work.** *"Add a task to rate-limit the login endpoint; it realizes
+  our auth-throttling design."* → the agent `search`es for that spec slice, creates the
+  production task, wires it to the slice it realizes (D256 — a production task must link
+  its governing spec), and echoes the task's vocabulary in the code it writes — so
+  later, `search "rate-limit"` lands on both the task and the code.
 - **Pick up after a break.** *"What's outstanding?"* → `board` / `stale` shows the open
   work and anything flagged, in one screen — **without re-reading a plan document.**
   (The whole point, if your "plan" is a 4000-line file today.)
 - **A change ripples.** *"Update the auth-token task — the format changed."* → the agent
-  edits it; tackit marks everything that depends on it **stale**, and you walk each one
-  against what changed and either fix or reconcile it. You can't leave a downstream task
-  quietly wrong — that's the core guarantee.
+  edits it; tackit marks its directly-linked neighbors **stale** (depth-1, symmetric —
+  the transitive check is the close-gate), and you walk each one against what changed and
+  either fix or reconcile it. You can't leave a directly-coupled task quietly wrong —
+  that's the core guarantee.
 - **Wrap up.** Nothing is "done" while the worklist `stale` (filtered to live
   partition: `status IN ('open', 'spec')`) is non-empty; an empty worklist is the
   only safe stopping point. Stale on terminal-status rows (`closed`, `wont_do`,
@@ -132,19 +136,22 @@ The CLI is the human door — debugging, scripting, and a fallback for the agent
 
 ```bash
 tackit init                                                              # create .tackit/ in this project
-tackit add "parse FTS5 query" --kind production --label search           # create a task
+tackit add "FTS5 search query contract" --kind design --label search     # a design slice (D1) — the decision to realize
+tackit add "parse FTS5 query" --kind production --label search \
+  --dep 1::"parser realizes the FTS5 query contract"                      # production links the spec it realizes (D256 gate)
 tackit add "rank search results" --kind production \
-  --dep 1::"ranking consumes the parsed query"                           # link task 2 to task 1 with a real because
+  --dep 1::"ranking realizes the FTS5 query contract" \
+  --dep 2::"ranking consumes the parsed query"                            # links the spec + the upstream parser task
 tackit search "fts"                                                      # ranked keyword search
-tackit show 2                                                            # slice: task + linked tasks + labels
-tackit edit 1 --desc "tokenized MATCH" \
-  --delta "switched from prefix to tokenized query"                      # marks linked tasks stale
+tackit show 3                                                            # slice: task + linked tasks + labels
+tackit edit 1 --desc "tokenized MATCH contract" \
+  --delta "switched from prefix to tokenized query"                      # edits the spec — marks linked tasks stale
 tackit stale                                                             # the reconciliation worklist
 tackit reconcile 2                                                       # reviewed-OK; clear stale
 tackit close 2                                                           # refused while stale (or atop stale deps)
 tackit wont-do 3 --reason "redundant with T2" --delta "dropping scope"   # decided NOT to do (production/meta)
-tackit retire 7 --reason "premise replaced by D99" \
-  --delta "retiring D7"                                                  # design/schema spec 100% abandoned
+tackit retire 1 --reason "premise replaced by D99" \
+  --delta "retiring D1"                                                  # design/schema spec 100% abandoned
 tackit ls --status open                                                  # query/board; --status accepts open/closed/wont_do/spec/retired
 ```
 
@@ -213,24 +220,31 @@ that routes around broken things), at different moments.
   and don't pressure the close-gate. Review each obligation-bearing stale task
   with its linked neighbors and `edit` or `reconcile` it. **Never end a turn
   while the worklist is non-empty** — a task left closed atop a changed
-  dependency is wrong *and* invisible. (Edits on any status — including
-  closed / wont_do / retired — are allowed and preserved verbatim in the
-  description_revisions audit table.)
+  dependency is wrong *and* invisible. (Edits are **refused on closed / wont_do**
+  tasks — they are frozen records, D259: to change a closed task, `reopen` it,
+  edit while open, then re-close; a wont_do task is terminal, so create a new
+  task. Only *retired* design/schema slices stay editable, and every allowed
+  edit is preserved verbatim in the description_revisions audit table.)
 - **Find, wire, right-size.** Use `links` (no input → anchor layer of live
   design+schema specs; with ids → depth-1 neighbors filtered to viable targets
   `status IN ('open','spec')`) to discover dependencies deterministically;
   wire links explicitly with a real `because` rationale (including among tasks
   you add together); keep tasks describable units of work.
-- **Fold back what implementation reveals.** No plan is complete; the call site
-  nobody listed, the partition CHECK nobody simulated, the message wording that
-  reads wrong only in practice — these emerge only at implementation time, and
-  they are the *highest-value* signal the work produces. When a commit fixes a
-  bug or changes behavior the responsible task body doesn't describe, edit that
-  task body to record the finding alongside the commit — the commit message is
-  not searchable from the task graph. The end-of-turn summary must include a
-  fold-back line (which task bodies were updated, or *none — verified*); silence
-  on fold-backs is not reassurance. See `SKILL.md` "Fold-backs" for the per-
-  discovery format and the enumeration meta-lesson (grep the pattern family,
+- **Fold back what implementation reveals — route it by type (D258).** No plan is
+  complete; the call site nobody listed, the partition CHECK nobody simulated, the
+  message wording that reads wrong only in practice — these emerge only at
+  implementation time, and they are the *highest-value* signal the work produces.
+  Fold-back is a **routing** discipline, not an append-to-the-current-body reflex:
+  classify each learning and send it to its home. A **decision** (alters what's
+  decided or the store's shape) → the design/schema slice it belongs in — `edit`
+  the governing D#/S#, **never** the production body (a decision stranded in a
+  production body is a defect — D245). A **correction** to the current production
+  task (a wrong forecast of the code path) → rewrite its body (append is refused on
+  production — D255). Transient **progress** (built X, committed `<hash>`) → git +
+  `close`/status, not tackit at all. The end-of-turn summary must include a
+  fold-back line naming where each discovery was routed (or *none — verified*);
+  silence on fold-backs is not reassurance. See `SKILL.md` "Fold-backs" for the
+  per-discovery format and the enumeration meta-lesson (grep the pattern family,
   not the verb name).
 - **Ship on pain — don't endure friction you can fix.** This is **the rule the
   other discipline rules serve**. If you're feeling friction *right now* from a
@@ -289,6 +303,14 @@ where a decision gets reached before it's distilled into a spec. When a task
 blurs: is it **deciding** (→ spec), **doing** a settled thing (→ production), or
 **thinking** (→ meta)? Work flows one way — `meta → spec → production → code`.
 
+**The creation-gate (D256).** Because a production task realizes an
+*already-made* decision, it **must link the spec it realizes**: `add` and `load`
+**refuse** a `kind='production'` task created with zero design/schema links,
+before any mutation. Author (or find) the governing design/schema slice first,
+then wire the production task to it. Genuinely spec-less mechanical work (a typo
+fix, a dependency bump) isn't a production task — leave it untracked or a meta
+note.
+
 **The kind/status partition.** Every row is in one of two partitions, by kind:
 
 | kind            | partition (status set)             | terminal verbs        | what it means          |
@@ -309,7 +331,7 @@ partition:
 
 | Verb     | When                                   | Partition  | Cascade? | Reversible?       |
 |----------|----------------------------------------|------------|----------|--------------------|
-| `edit`   | content change on any task             | any        | **yes**  | n/a                |
+| `edit`   | content change (NOT on closed/wont_do — D259) | spec or open (+retired) | **yes**  | n/a                |
 | `close`  | production/meta work shipped           | open / etc.| no       | `reopen`           |
 | `wont_do`| production/meta work dropped           | open / etc.| no       | terminal forever   |
 | `retire` | design/schema spec 100% abandoned      | spec / retired | no   | terminal forever   |
@@ -499,8 +521,8 @@ from the Python type hints, so they can't drift from the real interface. Every
 result is wrapped as `{stale_alert, label_nudge, delta, code_check_reminder,
 result}` so the outstanding stale set + per-op nudges ride along on every call;
 refusals (e.g. closing a stale task, retiring with an open neighbor, link_add
-to a retired endpoint) come back as errors that state the reason and — where
-relevant — the resolve path inline.
+to a retired endpoint, editing a closed / wont_do task — D259) come back as
+errors that state the reason and — where relevant — the resolve path inline.
 
 ## Examples: the full surface
 
@@ -525,7 +547,7 @@ Everything you can drive through your agent — it maps your request to tackit's
 | "I reviewed task 9 — still fine" | `reconcile` (clears stale, no cascade) |
 | "Bulk-import a plan from this file" | `load` (atomic; per-edge `because` required on every depends_on entry) |
 | "Write up the design-labelled tasks" | `render` — markdown narrative |
-| "Board view of the in-flight work" | `board` — rich slice-per-card view |
+| "Board view of the in-flight work" | `board` — slice-per-card view, lean by default (D211: no `because`/`description` unless opted in) |
 | "When did task 12 change status?" | `history` — status transitions + description revisions audit |
 
 (The same verbs are available as `tackit <verb>` on the CLI — see below.)
@@ -542,23 +564,34 @@ file you dread re-reading, you migrate it into tackit with `tackit load`:
 3. **It writes one plan file** — a compact `[key] Name` + fields format (far smaller
    than the source, so you can review it before committing). `kind` is required on
    every row, and every `depends_on` entry needs a real `because` rationale per edge
-   (D33 placeholder-rationale refusal):
+   (D33 placeholder-rationale refusal). Because of the creation-gate (D256), every
+   `production` row must link the design/schema slice it realizes — so a migration
+   authors the governing spec slices alongside the tasks:
 
    ```
+   [auth-throttle] Redis-backed sessions + per-IP login rate-limiting
+     kind: design
+     desc: sessions live in Redis; the login endpoint is throttled per-IP off that store
+     labels: auth
+
    [redis-session] Add a Redis-backed session store
      kind: production
      labels: auth
+     depends_on:
+       auth-throttle :: realizes the Redis session-store half of the decision
 
    [rate-limit] Rate-limit the login endpoint
      kind: production
      desc: token bucket, per-IP
      labels: auth
      depends_on:
+       auth-throttle :: realizes the per-IP throttling half of the decision
        redis-session :: rate-limit uses the session store for per-IP counters
    ```
 4. **`tackit load plan.txt`** — creates everything in one atomic pass, resolving
-   `depends_on` by key. A malformed line, missing `kind`, empty `because`, or unknown
-   dep key fails loud and rolls back the *whole* import — never a half-loaded plan.
+   `depends_on` by key. A malformed line, missing `kind`, empty `because`, unknown
+   dep key, or a `production` row with no design/schema link (D256 creation-gate)
+   fails loud and rolls back the *whole* import — never a half-loaded plan.
    Design/schema rows land at status='spec' by default (per the partition);
    production/meta at status='open'.
 5. **One collapse pass** — review the labels the import created (`load` reports them) and
@@ -576,14 +609,16 @@ Honest notes:
 
 ## Testing
 
-600+ tests: unit, adapter integration (CLI and MCP driven end-to-end), and
+660+ tests: unit, adapter integration (CLI and MCP driven end-to-end), and
 **property-based** (Hypothesis stateful testing). The property machine fuzzes
 random operation sequences against the always-true invariants — including
 **kind/status partition holds** (D36), worklist filter
 `status IN ('open', 'spec')` (D28+D36), retired-terminal-no-status-change
 (D36+T132 generalized), `links()` anchor excludes retired (T180), version-
 monotonic, canonical link pairs (T86), `description_revisions` append-only
-(D29), `wont_do_reason` non-null on wont_do rows, and `tackit.sql` round-trip
+(D29), `wont_do_reason` non-null on wont_do rows, the **spec-integrity model**
+(D254–D259: the kind ontology, the production creation-gate, the meta-only
+append-ban, and edit-refused-on-terminal), and `tackit.sql` round-trip
 fidelity. The machine has already caught real bugs: a serialization edge case,
 a `reopen()` no-op guard that didn't honor the spec/open partition, and a
 `load()` path that hardcoded `status='open'` regardless of kind — exactly the
