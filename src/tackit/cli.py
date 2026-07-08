@@ -306,10 +306,10 @@ def _cmd_edit(args) -> int:
         result = core.edit(args.id, delta=args.delta, name=args.name, description=args.desc)
         text = ["edited " + _fmt_task(result.task)]
         if result.newly_stale:
-            text.append("  ⚠ now STALE (review/reconcile these dependents):")
+            text.append("  ⚠ now STALE (review/reconcile these linked neighbors):")
             text += [f"    - T{n.id} {n.name}" for n in result.newly_stale]
         else:
-            text.append("  no dependents to review.")
+            text.append("  no linked neighbors to review.")
         _emit("\n".join(text), _dump(result), args.json)
     return 0
 
@@ -319,11 +319,11 @@ def _cmd_edit_append(args) -> int:
         result = core.edit_append(args.id, content=args.content, delta=args.delta)
         text = ["appended to " + _fmt_task(result.task)]
         if result.newly_stale:
-            text.append("  ⚠ now STALE (review/reconcile these dependents):")
+            text.append("  ⚠ now STALE (review/reconcile these linked neighbors):")
             for n in result.newly_stale:
                 text.append(f"    - T{n.id} {n.name}")
         else:
-            text.append("  no dependents to review.")
+            text.append("  no linked neighbors to review.")
         _emit("\n".join(text), _dump(result), args.json)
     return 0
 
@@ -338,11 +338,11 @@ def _cmd_edit_replace(args) -> int:
         )
         text = ["replaced in " + _fmt_task(result.task)]
         if result.newly_stale:
-            text.append("  ⚠ now STALE (review/reconcile these dependents):")
+            text.append("  ⚠ now STALE (review/reconcile these linked neighbors):")
             for n in result.newly_stale:
                 text.append(f"    - T{n.id} {n.name}")
         else:
-            text.append("  no dependents to review.")
+            text.append("  no linked neighbors to review.")
         _emit("\n".join(text), _dump(result), args.json)
     return 0
 
@@ -394,10 +394,10 @@ def _cmd_reclassify(args) -> int:
         result = core.reclassify(args.id, args.kind, delta=args.delta)
         text = [f"reclassified " + _fmt_task(result.task) + f" -> kind={result.task.kind}"]
         if result.newly_stale:
-            text.append("  ⚠ now STALE (review/reconcile these dependents):")
+            text.append("  ⚠ now STALE (review/reconcile these linked neighbors):")
             text += [f"    - T{n.id} {n.name}" for n in result.newly_stale]
         else:
-            text.append("  no dependents to review.")
+            text.append("  no linked neighbors to review.")
         _emit("\n".join(text), _dump(result), args.json)
     return 0
 

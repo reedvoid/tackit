@@ -34,7 +34,7 @@ def test_d19_alert_names_tasks_and_required_action(core):
     stale = core.stale_worklist()
     text = stale_alert_text(stale)
     assert "T3" in text
-    assert "depends_on" in text  # instructs inspecting neighbors
+    assert "linked neighbors" in text  # instructs inspecting neighbors
     assert "STALE" in text.upper()
     payload = stale_alert_payload(stale)
     assert payload["count"] == 1

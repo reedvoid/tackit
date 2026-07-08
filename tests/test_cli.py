@@ -344,13 +344,13 @@ def test_cli_stale_lists_nonempty_worklist(cli, capsys):
 
 def test_cli_edit_no_dependents(cli, capsys):
     # kind=meta: unaffected by the D256 gate, so this stays a genuinely
-    # link-free task -- the point under test is the "no dependents" message,
+    # link-free task -- the point under test is the "no linked neighbors" message,
     # which a gated production task (always linked to its anchor) could no
     # longer exercise.
     main(["add", "solo", "--kind", "meta"])
     capsys.readouterr()
     assert main(["edit", "1", "--desc", "changed", "--delta", "test"]) == 0
-    assert "no dependents" in capsys.readouterr().out.lower()
+    assert "no linked neighbors" in capsys.readouterr().out.lower()
 
 
 # --- T179: edit-append + edit-replace CLI surface ------------------------

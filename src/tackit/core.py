@@ -185,10 +185,10 @@ def _validate_text(value: str | None, field: str) -> None:
 LINK_BECAUSE_REMINDER = (
     "Each link's `because` describes WHY the two tasks are coupled. Each "
     "cascade-firing op's `delta` describes the upstream's semantic shift. "
-    "Read both BEFORE opening a stale dependent -- they tell you the "
+    "Read both BEFORE opening a stale linked neighbor -- they tell you the "
     "specific aspect to check. In the rare case where the shift doesn't "
     "intersect the coupling axis at all, you can `reconcile` without "
-    "re-reading the dependent (FAST path); otherwise re-read and edit-or-"
+    "re-reading the linked neighbor (FAST path); otherwise re-read and edit-or-"
     "reconcile (SLOW path with the question pre-formed)."
 )
 """D34 / T166 - the single-source reminder string. Emitted on show / board
@@ -214,9 +214,9 @@ def stale_alert_text(stale_tasks: list[Task]) -> str:
     return (
         f"⚠ STALE TASKS OUTSTANDING — {n} {noun} unreconciled: {id_list}.\n"
         f"Each was marked stale because something it depends on changed and it has "
-        f"NOT been re-verified. For each: read it together with its depends_on "
+        f"NOT been re-verified. For each: read it together with its linked "
         f"neighbors (`show <id>`), then `edit` it if it is now wrong (which re-stales "
-        f"its own dependents) or `reconcile` it if it is still correct. Until this "
+        f"its own linked neighbors) or `reconcile` it if it is still correct. Until this "
         f"list is empty the plan is KNOWN to be internally inconsistent, and a task "
         f"left closed on top of an unreconciled dependency is WRONG AND INVISIBLE — "
         f"the exact failure tackit exists to prevent. Do not treat any work as done "
@@ -797,7 +797,7 @@ class Core:
         (validate-all-first), so the two paths cannot drift on what a valid
         edge is."""
         if a == b:
-            raise InvariantError(f"a task cannot link to itself (T{a}).")
+            raise InvariantError(f"a task cannot link to itself (#{a}).")
         if not because or not because.strip():
             raise ValidationError(
                 "link `because` rationale must be a non-empty string (T116). "
