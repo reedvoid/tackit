@@ -188,6 +188,13 @@ def build_server() -> FastMCP:
         production task linking to it; never let the decision ride inside the
         production body.
 
+        D256 -- a production task is REFUSED at creation if it links zero
+        design/schema slices: it must link the spec it realizes (pass it in
+        ``deps``). D276 -- create the spec + production tasks only once the
+        decision is SETTLED; keep unsettled/exploratory work in a meta
+        scratchpad first. (A production task realizing an ALREADY-made
+        decision just links the existing spec -- it mints no new slice.)
+
         Defaults status to 'spec' for design/schema, 'open' for production/
         meta (D36 partition rule). Optionally attach labels (D4) and
         symmetric links via ``deps``: under D33 / T164 each entry is
@@ -296,9 +303,15 @@ def build_server() -> FastMCP:
         D37 -- granular-description discipline: if impl reveals under-defined
         details, edit() is the mechanism to fold them back BEFORE close.
         Closing with an out-of-date description destroys granularity for
-        future readers. Edit is allowed on any status (open/spec/closed/
-        wont_do/retired); the wont_do_reason field on wont_do/retired rows
-        is the only frozen part.
+        future readers. Edit is allowed on OPEN, SPEC, and RETIRED rows;
+        REFUSED on closed / wont_do (D259 -- reopen a closed task to edit it,
+        then re-close; a wont_do task is terminal). The wont_do/retire reason
+        is never editable.
+
+        D277 -- editing a production task is discouraged as a smell of thin
+        prep: on production, edit is correction / scope-shrink only (D255),
+        and a recurring need to edit signals the spec was underspecified --
+        fix the spec / re-derive rather than iterate the body.
 
         **Edits aren't free** -- fires the cascade depth-1; make edits
         consequential and necessary and the delta a substantive impact,
@@ -332,15 +345,18 @@ def build_server() -> FastMCP:
         changed semantically. The reconciler compares it against each
         stale link's `because` rationale to filter relevance.
 
-        D250 -- REFUSED on design/schema slices: a spec slice is a coherent
-        current-state body, not an append log; use edit() to rewrite or
-        edit_replace_substring() for a targeted change. Append stays legal on
-        production/meta, where chronological logs are correct.
+        edit_append is META-ONLY. REFUSED on design/schema (D250 -- a spec
+        slice is a coherent current-state body, not an append log; use edit()
+        to rewrite or edit_replace_substring() for a targeted change) AND on
+        production (D255 -- a production task is forecast-then-record and must
+        not accrete; use edit()/edit_replace_substring() to correct). Only
+        meta, the notepad, appends. Also refused on closed / wont_do (D259,
+        terminal rows are frozen).
 
         Refused on empty / whitespace-only ``content`` (a whitespace
-        append is almost always a typo'd no-op). D37 -- granular description
-        discipline: if impl reveals under-defined details, edit_append is
-        the cheap fold-back mechanism BEFORE close.
+        append is almost always a typo'd no-op). D37 -- on META, edit_append
+        is the cheap fold-back mechanism BEFORE close; on production/spec the
+        append is refused, so use the edit-family to fold detail back.
 
         **Edits aren't free** -- fires the cascade depth-1 exactly like
         edit(); make edits consequential and necessary and the delta a
@@ -377,10 +393,14 @@ def build_server() -> FastMCP:
           * empty ``old_string`` -> refused (no unambiguous match point).
           * ``old_string`` not found -> refused (caller likely typo'd).
           * ``old_string`` appears N>1 times -> refused with N.
+          * closed / wont_do task -> refused (D259 terminal-immutability;
+            reopen a closed task first). Retired slices stay editable.
 
         Empty ``new_string`` is ALLOWED -- it's a legitimate deletion.
         ``old_string == new_string`` is a no-op (D20): succeeds silently
-        with no cascade.
+        with no cascade. Allowed on production for correction / scope-shrink
+        (D255) -- but a recurring need to edit a production body is a smell
+        of thin prep (D277); fix the spec instead.
 
         Required ``delta`` (T117) -- semantic shift in one sentence.
 
@@ -672,7 +692,8 @@ def build_server() -> FastMCP:
         transitions and description revisions, both in chronological order.
         Description revisions preserve verbatim prior name/description
         plus the delta rationale, so archaeology can recover what the task
-        used to say -- the backstop for edit-on-closed under v0.4."""
+        used to say -- the record for terminal (closed/wont_do) rows, which
+        D259 freezes against edits (reopen a closed task to change it)."""
         with _core() as c:
             return _wrap(c, c.history(id).model_dump(mode="json"), short_alert=True)
 
@@ -683,8 +704,12 @@ def build_server() -> FastMCP:
         `desc:` / `labels:` / `depends_on:` (references batch keys OR existing
         tasks, T215). Creates all tasks in one atomic pass, resolving keys ->
         ids; a malformed line, missing/invalid kind, or unknown dep ref fails
-        loud and rolls back the whole import (no partial plan). Returns the
-        key->id map.
+        loud and rolls back the whole import (no partial plan). A production
+        task with zero design/schema `depends_on` links is REFUSED and rolls
+        back the whole plan (D256 creation-gate). Returns the key->id map.
+
+        D276 -- a plan of design/schema + production tasks presumes SETTLED
+        decisions; keep still-exploring work in a meta scratchpad instead.
 
         THIS is the path for importing many tasks at once -- prefer it over N
         separate add() calls. `desc:` may span multiple paragraphs: deeper-

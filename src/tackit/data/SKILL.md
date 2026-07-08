@@ -66,6 +66,16 @@ doing (a settled thing) → production; thinking / not-yet-settled → meta. The
 workflow only ever flows one way, never a shortcut: **meta → spec → production →
 code.**
 
+**Start unsettled work in meta; promote only when sure (D276).** Exploratory,
+not-yet-decided work belongs in a meta scratchpad FIRST; promote it to a spec
+slice — then a production task — only once the decision is settled. This is
+guidance, not a gate (a `provisional`-labeled spec slice is the tell you
+promoted early). But NOT every task starts in meta: work that *realizes an
+already-made decision* (a bug fix, a doc change) goes straight meta→production,
+LINKING the existing spec — it mints no new slice. Litmus: does this task DECIDE
+something new (→ author the spec first) or REALIZE something already decided
+(→ link the existing spec)?
+
 **Reference.** Every task carries a required `kind` (set at create, T94); kind is
 coupled to status by partition, enforced both typed (`Core.add` / `load` /
 `reclassify` default the partition-correct status) and by a DB CHECK on S1:
@@ -79,7 +89,7 @@ coupled to status by partition, enforced both typed (`Core.add` / `load` /
 
 - **design** — a decision slice (D#): what is decided, not how it's built. Lives at `status='spec'`; `retire()` only when 100% abandoned. `close`/`wont_do` are refused on spec — update a decision with `edit()` (the D29/S7 audit table preserves prior verbatim).
 - **schema** — a store-shape slice (S#); the DDL contract. Same spec/retired partition; changes typically need migrations.
-- **production** — code that alters the running app: source under `tackit/`, contract-pinning tests, **and README/SKILL.md** (they alter the agent's behavior). Lives `open` → `close`/`wont_do`.
+- **production** — code that alters the running app: source under `tackit/`, contract-pinning tests, **and README/SKILL.md** (they alter the agent's behavior). Lives `open` → `close`/`wont_do`. `add`/`load` **REFUSE** a production task created with zero design/schema links (D256 creation-gate — it must link the spec it realizes).
 - **meta** — work that does NOT alter the app: release bookkeeping, experiments, observations. Same open/closed/wont_do partition.
 
 The partition invariant: `kind ∈ {production,meta} ⟹ status ∈ {open,closed,wont_do}`; `kind ∈ {design,schema} ⟹ status ∈ {spec,retired}`. Cross-partition `reclassify` auto-shifts open↔spec; a move with no clean target (e.g. closed-production → design) is refused — resolve the source state first.
@@ -109,12 +119,12 @@ lives in its MCP docstring**.
 
 | Verb                     | When                                   | Partition    | Cascade? | Reversible?      |
 |--------------------------|----------------------------------------|--------------|----------|------------------|
-| `edit` (+ append / replace_substring) | content change (NOT on closed/wont_do — D259; append is meta-only — D255) | any spec/open | **yes**  | n/a              |
+| `edit` (+ append / replace_substring) | content change (NOT on closed/wont_do — D259; append is meta-only — D255) | spec or open (+retired) | **yes**  | n/a              |
 | `close`                  | production/meta work shipped           | open/etc.    | no       | `reopen`         |
 | `wont_do`                | production/meta work dropped           | open/etc.    | no       | terminal forever |
 | `retire`                 | design/schema spec 100% abandoned      | spec/retired | no       | terminal forever |
 
-The three edit variants are operationally equivalent (same cascade, same S7 audit row, same `delta` requirement); they differ only in how the new description is computed:
+The three edit variants share the cascade, the S7 audit row, and the `delta` requirement; they differ in how the new description is computed **and in partition** (append is meta-only — D255):
 - `edit(description=…)` — full new body; for sweeping rewrites or small bodies.
 - `edit_append(content, delta)` — append; **META-ONLY (D255)**: refused on design/schema (a coherent current-state body, D250) and on production (a forecast-then-record that must not accrete) — only meta, the notepad, appends. Only the snippet crosses the wire.
 - `edit_replace_substring(old, new, delta)` — replace an exact UNIQUE substring (non-unique refused with the count; empty `new` = deletion; `old == new` = no-op). Allowed on production (a rewrite, for correction / scope-shrink).
@@ -128,7 +138,7 @@ The three edit variants are operationally equivalent (same cascade, same S7 audi
 
 ### edit — change content
 - why: keeps the task the source of truth; the D29/S7 audit preserves prior verbatim, so editing in place is safe and recoverable.
-- do: edit an OPEN production/meta task, a spec design/schema slice, or a RETIRED slice, with a `delta` naming the real semantic shift. On production, edit is for **correction / scope-shrink only** — a wrong forecast of the code path is a legitimate correction (D255); to ADD scope, spawn a new production task; to record a decision, edit the spec slice. Edits on design/schema fire the D31 code-check reminder — grep the slice id and verify the code.
+- do: edit an OPEN production/meta task, a spec design/schema slice, or a RETIRED slice, with a `delta` naming the real semantic shift. On production, edit is for **correction / scope-shrink only** — a wrong forecast of the code path is a legitimate correction (D255); to ADD scope, spawn a new production task; to record a decision, edit the spec slice. Edits on design/schema fire the D31 code-check reminder — grep the slice id and verify the code. **Editing a production task is discouraged — a smell of thin prep (D277):** one correction is fine, but recurring edits mean the governing spec was underspecified; fix the spec / re-derive the task rather than keep iterating the body.
 - don't-do: edit a **closed or wont_do** task — they are frozen records (D259, refused). To change a closed task, `reopen` it first, edit while open, then close again; a wont_do task is terminal forever (create a new task). Never edit the frozen `wont_do`/`retire` reason (no API). Before any cosmetic edit, see *Edits aren't free*.
 
 ### close — production/meta work shipped
@@ -199,7 +209,7 @@ tool telling you the plan is currently inconsistent.
 
 **The close-gate (reference).** `close`/`wont_do` are refused if the task is itself obligation-bearing-stale, or transitively shares a link with one — reconcile the named upstream first. A named closed/wont_do/retired neighbor is record-only and won't trip the gate.
 
-**Edit on terminal rows is safe (D29).** Editing a closed/wont_do/retired task fires the cascade (terminal neighbors flagged record-only) and writes the S7 audit row; only the `wont_do`/`retire` reason is frozen.
+**Edit on a retired slice is safe; on closed/wont_do it is refused (D259).** Editing a *retired* design/schema slice fires the cascade (terminal neighbors flagged record-only) and writes the S7 audit row. Editing a **closed or wont_do** task is REFUSED (D259) — `reopen` a closed task to edit it, then re-close; a wont_do task is terminal (file a new task). The frozen `wont_do`/`retire` reason is never editable.
 
 ## Discover dependencies with `links`, not search
 - why: keyword search misses coupling that doesn't share vocabulary; `links` surfaces candidates deterministically and you do the semantic judgment.
@@ -242,7 +252,7 @@ Every task displays a synthesized `<kind-letter><id>` prefix (design→**D**, sc
 - don't-do: manually prefix the name (it double-prefixes at display). (Legacy pre-D32 design/schema names keep a manual slot prefix and display doubled — grandfathered, see T160.)
 
 ## Right-size tasks
-- why: a task is a describable unit of work — a black-box feature. Too small (can't describe without listing impl steps) bloats the graph; too big (many independent parts) defeats clean cascade + granular description (T168 reached 54k chars unsplit before becoming 8 tasks).
+- why: a task is a describable unit of work — a black-box feature. Too small (can't describe without listing impl steps) bloats the graph; too big (many independent parts) defeats clean cascade + granular description (T168 reached 57k chars unsplit before becoming 8 tasks).
 - do: file separate tasks when you'd reach for a second `###` heading to organize INDEPENDENT execution units; nested detail within one unit is fine.
 - don't-do: co-equal sections describing distinct units in one body; create a task with no deliverable or decision — a pure link-target or a status rollup of other tasks is a **fake task** (see *Links are coupling*).
 
@@ -256,7 +266,7 @@ Every task displays a synthesized `<kind-letter><id>` prefix (design→**D**, sc
 - do: one sentence naming why the two tasks must be reviewed together when one changes — e.g. "citations' FK references `documents.id`; a column rename breaks the join."
 - don't-do: describe the implementation or work order (`"test fixture"`, `"setup"`); write a because that just restates a shared label — that's membership, attach a label, not a link (see *Links are coupling*).
 
-**`ls` vs `board` (reference):** `ls` for a quick filtered id/title list; `board` for each matching task as a slice (deps + dependents + labels) in one call. Both are **lean by default** (D211): no `description`, and `board` shows the neighbor graph SHAPE without `because`/`last_edit_delta`. Both take a `kind` filter. Opt into bodies with `include_description` (and `board`'s `include_neighbor_because` for edge rationales); for ONE full body use `show`. Projection is include-or-omit — never truncated.
+**`ls` vs `board` (reference):** `ls` for a quick filtered id/title list; `board` for each matching task as a slice (the single symmetric `links` set + labels) in one call. Both are **lean by default** (D211): no `description`, and `board` shows the neighbor graph SHAPE without `because`/`last_edit_delta`. Both take a `kind` filter. Opt into bodies with `include_description` (and `board`'s `include_neighbor_because` for edge rationales); for ONE full body use `show`. Projection is include-or-omit — never truncated.
 
 ## Labels — when one earns its existence
 - why: a label groups tasks along a meaningful axis you'd name out loud (a phase/milestone, an epic/theme, a use case); it's a dumb tag with no behavior.

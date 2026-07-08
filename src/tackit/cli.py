@@ -669,7 +669,10 @@ def build_parser() -> argparse.ArgumentParser:
         "granularity: a fresh-session agent should be able to implement "
         "the task from its description alone -- avoid vague verbs, "
         "conversation references, TBD/TODO placeholders, pointer-only "
-        "bodies.",
+        "bodies. A production task is REFUSED at creation with zero "
+        "design/schema --dep links (D256). D276 -- create spec + production "
+        "tasks only once the decision is SETTLED; keep unsettled work in a "
+        "meta scratchpad first.",
     )
     sp.add_argument("name")
     sp.add_argument(
@@ -718,7 +721,10 @@ def build_parser() -> argparse.ArgumentParser:
                     help="ids already judged (excluded from the next hop)")
 
     sp = add("load", _cmd_load, "bulk-import a plan atomically: [key] tasks with "
-             "multi-paragraph desc + depends_on by key (D24/D40). Prefer over N adds.")
+             "multi-paragraph desc + depends_on by key (D24/D40). Prefer over N adds. "
+             "A production task with zero design/schema depends_on is REFUSED, "
+             "rolling back the whole plan (D256). D276 -- a plan presumes "
+             "SETTLED decisions; keep exploring work in a meta scratchpad.")
     sp.add_argument("file", nargs="?", help="plan file (omit to read stdin)")
 
     sp = add("links-add", _cmd_links_add, "bulk-link EXISTING tasks atomically "
@@ -727,7 +733,7 @@ def build_parser() -> argparse.ArgumentParser:
              "first; already-linked edges are benign no-ops.")
     sp.add_argument("file", nargs="?", help="edges file (omit to read stdin)")
 
-    sp = add("show", _cmd_show, "slice fetch: task + deps + dependents + labels (D9)")
+    sp = add("show", _cmd_show, "slice fetch: task + links (symmetric) + labels (D9)")
     sp.add_argument("id", type=int)
 
     sp = add(
@@ -735,7 +741,7 @@ def build_parser() -> argparse.ArgumentParser:
         _cmd_edit,
         "change a task -> stale its dependents (D13/D10 + D36 + D37). Use "
         "edit for ALL partial changes including major rewrites. If a design/"
-        "schema slice's premise is completely gone, use retire() instead. If impl "
+        "schema slice's premise is completely gone, use retire() instead. Edit is REFUSED on closed/wont_do (D259 -- reopen a closed task first); on production, edit is correction/scope-shrink only (D255) and even that is a smell of thin prep (D277). If impl"
         "reveals under-defined details, edit() is the mechanism to fold "
         "them back BEFORE close -- closing with an out-of-date description "
         "destroys granularity for future readers. **Edits aren't free** -- "
@@ -761,7 +767,7 @@ def build_parser() -> argparse.ArgumentParser:
         "T179: diff-shaped edit -- append `content` to a task's description "
         "without retransmitting the whole body. Fires the cascade depth-1 "
         "and writes the description_revisions audit row exactly like edit(). "
-        "Refused on empty / whitespace-only content. Cuts large-body edit "
+        "META-ONLY: refused on design/schema (D250) and production (D255) -- only meta appends; also refused on closed/wont_do (D259). Refused on empty / whitespace-only content. Cuts large-body edit"
         "cost ~10x. **Edits aren't free** -- fires the cascade depth-1 + "
         "pressures the close-gate; make edits consequential and necessary "
         "(substantive impact). Diff-shape cuts transmission cost, not "
@@ -786,7 +792,7 @@ def build_parser() -> argparse.ArgumentParser:
         "T179: diff-shaped edit -- replace the exact substring `--old` with "
         "`--new` in a task's description. Refused if `--old` is empty, not "
         "found, or appears multiple times (caller adds context to "
-        "disambiguate). Empty `--new` is a legitimate deletion. Cuts "
+        "disambiguate), or the task is closed/wont_do (D259 terminal-immutability). Empty`--new` is a legitimate deletion. Cuts "
         "large-body edit cost ~10x. **Edits aren't free** -- fires the "
         "cascade depth-1 + pressures the close-gate; make edits "
         "consequential and necessary (substantive impact). Diff-shape cuts "
@@ -813,7 +819,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp = add(
         "close",
         _cmd_close,
-        "close (refused if stale or status='spec') + print neighbors "
+        "close (refused if stale/linked-stale, on status='spec', or already "
+        "closed/wont_do -- no double-decide) + print neighbors "
         "(D12 / D14 / D36). For production+meta only. Use edit() to refine "
         "a design/schema decision; retire() if completely abandoned.",
     )
@@ -884,7 +891,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp = add(
         "reclassify",
         _cmd_reclassify,
-        "change a task's kind (T128); refuses if it would create cross-kind link",
+        "change a task's kind (D26/T128); refuses a cross-kind meta link "
+        "(meta-island) or a cross-partition move with no clean status target "
+        "(D36; e.g. closed-production -> design). open<->spec auto-shifts.",
     )
     sp.add_argument("id", type=int)
     sp.add_argument(
