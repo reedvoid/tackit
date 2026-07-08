@@ -97,12 +97,14 @@ def test_export_specs_only_round_trip(core, tmp_path):
     core.add("design slice A", kind="design", description="design body A",
              labels=["arch"])
     core.add("schema slice B", kind="schema", description="schema body B")
+    # Production task C's D256 creation-gate dep IS the spec-to-production
+    # link (deps={...} calls the same _add_link as link_add).
     core.add("production task C", kind="production",
-             description="prod body C", labels=["arch"])
+             description="prod body C", labels=["arch"],
+             deps={1: "spec realized by production task"})
     core.add("meta task D", kind="meta", description="meta body D")
-    # Wire a spec-to-spec link and a spec-to-production link.
+    # Wire the spec-to-spec link.
     core.link_add(1, 2, because="design + schema couple here")
-    core.link_add(1, 3, because="spec realized by production task")
     # Edit a spec to populate description_revisions.
     core.edit(1, delta="post-seed edit to populate audit",
               description="design body A v2")
@@ -183,7 +185,8 @@ def test_export_specs_only_excludes_all_description_revisions(core, tmp_path):
     would leak through the public dump; the recovery artifact carries current
     spec state only."""
     core.add("design slice", kind="design", description="design body")
-    core.add("production task", kind="production", description="prod body")
+    core.add("production task", kind="production", description="prod body",
+              deps={1: "realizes the design slice"})
     # Edit BOTH to generate revisions on both.
     core.edit(1, delta="spec edit", description="design body v2")
     core.edit(2, delta="prod edit", description="prod body v2")

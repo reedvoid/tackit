@@ -47,40 +47,66 @@ def test_dotted_section_id_is_searchable(core, query):
 
 def test_colon_term_does_not_become_a_column_filter(core):
     # raw "foo:bar" used to raise "no such column: foo"
-    core.add("foo bar widget", kind="production")
+    anchor = core.add("spec anchor", kind="design")  # D1
+    task = core.add(
+        "foo bar widget", kind="production",
+        deps={anchor.id: "task realizes the anchor decision"},
+    )  # T2
     hits = core.search("foo:bar")
-    assert [h.id for h in hits] == [1]
+    assert [h.id for h in hits] == [task.id]
 
 
 def test_hyphenated_term_is_searchable(core):
     # raw "read-projection" used to raise "no such column: projection"
-    core.add("lean read-projection default", kind="production")
+    anchor = core.add("spec anchor", kind="design")  # D1
+    task = core.add(
+        "lean read-projection default", kind="production",
+        deps={anchor.id: "task realizes the anchor decision"},
+    )  # T2
     hits = core.search("read-projection")
-    assert [h.id for h in hits] == [1]
+    assert [h.id for h in hits] == [task.id]
 
 
 def test_apostrophe_term_is_searchable(core):
     # raw "didn't" used to raise a syntax error near "'"
-    core.add("didn't ship yet", kind="production")
+    anchor = core.add("spec anchor", kind="design")  # D1
+    task = core.add(
+        "didn't ship yet", kind="production",
+        deps={anchor.id: "task realizes the anchor decision"},
+    )  # T2
     hits = core.search("didn't")
-    assert [h.id for h in hits] == [1]
+    assert [h.id for h in hits] == [task.id]
 
 
 # --- semantics preserved ----------------------------------------------------
 
 def test_multi_word_query_is_implicit_and(core):
-    core.add("alpha beta widget", kind="production")   # has both
-    core.add("alpha only", kind="production")          # has one
-    core.add("beta only", kind="production")           # has the other
+    anchor = core.add("spec anchor", kind="design")  # D1
+    both = core.add(
+        "alpha beta widget", kind="production",
+        deps={anchor.id: "realizes the anchor decision"},
+    )  # has both
+    core.add(
+        "alpha only", kind="production",
+        deps={anchor.id: "realizes the anchor decision"},
+    )  # has one
+    core.add(
+        "beta only", kind="production",
+        deps={anchor.id: "realizes the anchor decision"},
+    )  # has the other
     ids = {h.id for h in core.search("alpha beta")}
-    assert ids == {1}
+    assert ids == {both.id}
 
 
 def test_per_token_not_phrase_adjacency(core):
     """The decisive distinction: per-token quoting matches a row whose words are
     NON-adjacent; a single wrapping phrase ("alpha beta") would miss it."""
-    core.add("alpha gamma beta", kind="production")  # alpha..beta non-adjacent
-    assert [h.id for h in core.search("alpha beta")] == [1]
+    anchor = core.add("spec anchor", kind="design")  # D1
+    task = core.add(
+        "alpha gamma beta", kind="production",
+        deps={anchor.id: "realizes the anchor decision"},
+    )  # alpha..beta non-adjacent
+    assert [h.id for h in core.search("alpha beta")] == [task.id]
 
 
 def test_name_only_filter_still_scopes_to_name(core):
@@ -100,9 +126,13 @@ def test_name_only_filter_still_scopes_to_name(core):
 def test_prefixed_name_lookup_still_resolves(core):
     # D32: the synthesized "T<id>" prefix is FTS-indexed; sanitization must not
     # break search("T<id>")
-    core.add("rotate signing keys", kind="production")  # -> T1
-    hits = core.search("T1")
-    assert hits and hits[0].id == 1
+    anchor = core.add("spec anchor", kind="design")  # D1
+    task = core.add(
+        "rotate signing keys", kind="production",
+        deps={anchor.id: "realizes the anchor decision"},
+    )  # -> T2
+    hits = core.search(f"T{task.id}")
+    assert hits and hits[0].id == task.id
 
 
 # --- the refusal that survives ----------------------------------------------

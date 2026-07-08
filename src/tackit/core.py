@@ -135,6 +135,20 @@ def _require_kind(kind: str | None, op: str) -> None:
         )
 
 
+def _d256_gate_error(who: str) -> str:
+    """D256 creation-gate refusal message. ``who`` names the offending create
+    (e.g. ``add('build X')`` or ``load: task 'a'``)."""
+    return (
+        f"D256 creation-gate: a production task realizes an ALREADY-MADE "
+        f"decision, so it must link at least one design/schema slice at "
+        f"creation. {who} has no design/schema link. Author (or identify) the "
+        f"governing slice and link it (add: deps={{<slice_id>: '<why>'}}; load: "
+        f"a depends_on edge to a D#/S#). If this is genuinely spec-less "
+        f"mechanical work (a typo fix, a dep bump), it is NOT a production task "
+        f"-- leave it untracked or record it as a meta note."
+    )
+
+
 def _validate_text(value: str | None, field: str) -> None:
     """D2 fail-loud: refuse text that cannot be stored AND round-tripped. Two cases
     the property-based test surfaced, both rejected loudly at the boundary so the
@@ -421,6 +435,16 @@ class Core:
             raise NotFoundError(f"no task with id {task_id}.")
         return row
 
+    def _task_kind(self, task_id: int) -> str | None:
+        """The kind of a task by id, or None if no such row (D256 gate uses it
+        to test whether a dep resolves to a design/schema slice)."""
+        row = self.conn.execute(
+            "SELECT kind FROM tasks WHERE id = ?", (task_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        return row["kind"]
+
     def _neighbor_from_row(
         self,
         row: sqlite3.Row,
@@ -469,6 +493,12 @@ class Core:
         refused as missing/invalid via D2. Optionally attach labels (D4) and
         declare symmetric links via ``deps`` (D5).
 
+        D256 creation-gate: a ``production`` task must include at least one
+        ``deps`` edge to a design/schema slice (it realizes an already-made
+        decision) -- refused otherwise, before any mutation. design/schema/meta
+        creates are unaffected. Genuinely spec-less mechanical work is not a
+        production task.
+
         v0.4 (D33 / T164): ``deps`` is ``{dep_id: because}`` -- each edge
         wired at creation MUST carry a real, caller-supplied ``because``
         rationale describing the coupling. Empty/whitespace because is
@@ -495,6 +525,19 @@ class Core:
                     f"silently corrupts SNR. Pass `deps={{<id>: '<one-sentence "
                     f"coupling rationale>', ...}}` instead."
                 )
+        # D256 creation-gate: a production task realizes an ALREADY-MADE decision,
+        # so it must link >=1 design/schema slice AT CREATION. Fail loud before
+        # mutating (no partial create). Genuinely spec-less mechanical work (a
+        # typo fix, a dep bump) is NOT a production task -- leave it untracked or
+        # a meta note. No escape flag (the gate is the point).
+        if kind == "production":
+            has_spec_link = False
+            for dep_id in (deps or {}):
+                if self._task_kind(dep_id) in ("design", "schema"):
+                    has_spec_link = True
+                    break
+            if not has_spec_link:
+                raise ValidationError(_d256_gate_error(f"add({name!r})"))
         self.last_label_nudge = None  # D23: reflect only this op
         new_labels = self._new_labels(labels or [])  # D23: detect before they exist
         ts = _now()
@@ -526,8 +569,12 @@ class Core:
         Returns ``{key: task_id}``. Every spec must carry a valid ``kind`` (D26),
         enforced by the parser; re-checked here so a hand-built specs list can't
         slip past. Atomic: any error (bad name, missing/invalid kind, unknown
-        dep key, self-edge) rolls the whole import back -- never a partial plan
-        -- and is a single version bump."""
+        dep key, self-edge, D256 gate) rolls the whole import back -- never a
+        partial plan -- and is a single version bump.
+
+        D256 creation-gate: every ``production`` spec must carry a ``depends_on``
+        edge to a design/schema slice (a batch-local design/schema key, or an
+        existing D#/S# ref) -- refused, rolling back the whole import, otherwise."""
         keys: set[str] = set()
         for s in specs:
             keys.add(s["key"])
@@ -561,6 +608,28 @@ class Core:
                         f"`depends_on:` block with `<key> :: <rationale>` "
                         f"per entry (see plan.py docstring)."
                     )
+        # D256 creation-gate (pre-validate, fail loud -- no partial plan): every
+        # production spec must link at least one design/schema slice, resolved
+        # either to a batch-local design/schema key or to an existing D#/S# ref.
+        spec_kind_by_key: dict[str, str] = {}
+        for s in specs:
+            spec_kind_by_key[s["key"]] = s["kind"]
+        for s in specs:
+            if s["kind"] != "production":
+                continue
+            has_spec_link = False
+            for dep_entry in s["depends_on"]:
+                dep_key = dep_entry["key"]
+                existing_id = self._resolve_dep_ref(dep_key)
+                if existing_id is not None:
+                    if self._task_kind(existing_id) in ("design", "schema"):
+                        has_spec_link = True
+                        break
+                elif spec_kind_by_key.get(dep_key) in ("design", "schema"):
+                    has_spec_link = True
+                    break
+            if not has_spec_link:
+                raise ValidationError(_d256_gate_error(f"load: task '{s['key']}'"))
         # D23: which labels the import will newly create (before they exist), for the
         # post-load anti-sprawl summary (T67 — bulk load is the one path the per-op
         # creation-nudge misses, and a migration is when sprawl floods in).
@@ -1723,6 +1792,37 @@ class Core:
         if out:
             self.last_deadref_suggestions = out
 
+    def _refuse_edit_on_terminal(self, row: sqlite3.Row) -> None:
+        """D259 - closed + wont_do tasks are frozen RECORDS: the three content-
+        edit ops refuse on them. To change one, reopen() it first (an honest
+        status transition, visible in history), edit while open, then re-close /
+        re-wont_do. No in-place-edit escape flag.
+
+        Scope: status IN ('closed', 'wont_do'). RETIRED design/schema slices are
+        EXEMPT -- edit-on-retired stays allowed for annotating a dead decision
+        (D29 v0.5 + the D31 code-check). Reverses D29's v0.4 edit-on-closed
+        stance (see D259).
+
+        The recovery advice is status-specific: a CLOSED task can be reopen()ed
+        (edit while open, re-close); a WONT_DO task is terminal FOREVER (reopen
+        is refused, D36) -- its body can never change, so the only path is a new
+        task."""
+        if row["status"] == "closed":
+            raise ValidationError(
+                f"edit refused on {prefixed_id(row['kind'], row['id'])}: a closed "
+                f"task is a frozen record (D259) -- a completed unit of work, not "
+                f"a live body. To change it, reopen() it first, edit while open, "
+                f"then close again. (Retired design/schema slices stay editable "
+                f"-- D29 v0.5.)"
+            )
+        if row["status"] == "wont_do":
+            raise ValidationError(
+                f"edit refused on {prefixed_id(row['kind'], row['id'])}: a wont_do "
+                f"task is a frozen record (D259) and terminal forever (reopen is "
+                f"refused, D36) -- its body can never change. If the work revives, "
+                f"create a NEW task."
+            )
+
     def edit(
         self,
         task_id: int,
@@ -1736,11 +1836,12 @@ class Core:
         ``delta`` (T117) is required and surfaces in the stale_alert envelope so
         reconcilers compare it against each link's `because` rationale.
 
-        v0.4 (D29): edit is allowed on any status -- closed, wont_do, open.
-        The audit table preserves the verbatim prior state, so edit no longer
-        destroys history. (T118's "no-edit-closed" rule is retired.) The
-        wont_do reason field is not edited via this op -- it's set once at
-        wont_do() time and is immutable thereafter.
+        D259: edit is REFUSED on CLOSED and wont_do tasks -- they are frozen
+        records; reopen() to change. Allowed on open production/meta, on spec
+        design/schema, and on RETIRED slices (edit-on-retired stays for
+        annotating a dead decision, D29 v0.5). The audit table (S7) preserves
+        verbatim prior state for the allowed edits. The wont_do reason field is
+        never edited via this op.
 
         D31 (v0.4): if the edited task is kind in {design,schema}, the
         adapter envelope includes a code-check reminder pointing the agent
@@ -1749,6 +1850,7 @@ class Core:
         self.last_code_check_reminder = None  # D31: reflect only this op
         self.last_coherence_nudge = None  # D250: reflect only this op
         row = self._require_row(task_id)
+        self._refuse_edit_on_terminal(row)  # D259
         if name is not None and not name.strip():
             raise ValidationError("task name cannot be set empty (D3/S1).")
         _validate_text(name, "task name")
@@ -1884,20 +1986,29 @@ class Core:
         Diff-shaped vs ``edit()``: only ``content`` crosses the wire, not
         the full new description. Cuts large-body edit cost ~10x.
 
-        Refused on empty / whitespace-only ``content`` -- a whitespace-only
-        append is almost always a typo'd no-op the caller didn't mean."""
+        META-ONLY (D255 / D250): append is refused on design/schema (a spec
+        slice is a coherent current-state body) AND on production (a forecast-
+        then-record that must not accrete) -- only meta, the notepad, allows a
+        chronological append. Refused on any terminal (closed / wont_do) task
+        (D259 -- reopen to change). Refused on empty / whitespace-only
+        ``content`` -- a whitespace-only append is almost always a typo'd
+        no-op the caller didn't mean."""
         self._record_delta(delta, "edit_append")
         self.last_code_check_reminder = None
         self.last_coherence_nudge = None
         row = self._require_row(task_id)
-        if row["kind"] in ("design", "schema"):
+        self._refuse_edit_on_terminal(row)  # D259
+        if row["kind"] in ("design", "schema", "production"):
             raise ValidationError(
-                f"edit_append refused on {prefixed_id(row['kind'], task_id)}: a "
-                f"design/schema slice is a coherent CURRENT-STATE body, not an "
-                f"append log (D250). Rewrite it with edit(), or make a targeted "
-                f"change with edit_replace_substring(); prior text is preserved "
-                f"in the revision audit (D29). Append stays available on "
-                f"production/meta tasks, where chronological logs are correct."
+                f"edit_append refused on {prefixed_id(row['kind'], task_id)}: "
+                f"append is a META-ONLY operation (D255 / D250). A design/schema "
+                f"slice is a coherent current-state body (D250); a production task "
+                f"is a forecast-then-record that must not ACCRETE (D255) -- "
+                f"decisions and progress-noise strand there. Rewrite with edit() "
+                f"(on production: correction or scope-shrink only), or make a "
+                f"targeted change with edit_replace_substring(); prior text is "
+                f"preserved in the revision audit (D29). Append stays available "
+                f"on meta -- the notepad, where chronological logs are correct."
             )
         if not content or not content.strip():
             raise ValidationError(
@@ -1944,6 +2055,7 @@ class Core:
         self.last_code_check_reminder = None
         self.last_coherence_nudge = None
         row = self._require_row(task_id)
+        self._refuse_edit_on_terminal(row)  # D259
         if not old_string:
             raise ValidationError(
                 "edit_replace_substring refused: old_string must be "

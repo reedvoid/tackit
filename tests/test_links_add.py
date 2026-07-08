@@ -8,6 +8,15 @@ from tackit.errors import ValidationError
 
 
 def _seed(core, n, kind="production"):
+    """D256 creation-gate: a `production` task must link a design/schema
+    slice at creation. Seed ONE shared design anchor and link every
+    production task to it (deps=); non-production kinds are unaffected."""
+    if kind == "production":
+        anchor = core.add("spec anchor", kind="design").id
+        return [
+            core.add(f"task {i}", kind=kind, deps={anchor: "realizes the anchor decision"}).id
+            for i in range(n)
+        ]
     return [core.add(f"task {i}", kind=kind).id for i in range(n)]
 
 
@@ -20,7 +29,7 @@ def test_links_add_creates_multiple_edges(core):
     assert result["created"] == 2
     assert result["already_linked"] == 0
     n = core.conn.execute("SELECT COUNT(*) FROM links").fetchone()[0]
-    assert n == 2
+    assert n == 5  # 3 anchor<->task links from seeding + the 2 new edges just created
 
 
 def test_links_add_fan_in_and_fan_out(core):
@@ -32,12 +41,13 @@ def test_links_add_fan_in_and_fan_out(core):
         {"a": hub, "b": t2, "because": "hub drives t2"},        # fan-out
     ])
     assert result["created"] == 4
-    assert len(core.dependencies_of(hub)) == 4  # symmetric: all four neighbors
+    assert len(core.dependencies_of(hub)) == 5  # symmetric: anchor + all four neighbors
 
 
 def test_links_add_validate_all_first_lists_every_offender(core):
     a, b = _seed(core, 2)
     m = core.add("meta task", kind="meta").id
+    before = core.conn.execute("SELECT COUNT(*) FROM links").fetchone()[0]
     with pytest.raises(ValidationError) as exc:
         core.links_add([
             {"a": a, "b": b, "because": "valid edge"},          # ok
@@ -52,7 +62,7 @@ def test_links_add_validate_all_first_lists_every_offender(core):
     assert "because" in msg.lower()
     assert "meta" in msg.lower()
     # NOTHING created — the whole batch is refused before mutating.
-    assert core.conn.execute("SELECT COUNT(*) FROM links").fetchone()[0] == 0
+    assert core.conn.execute("SELECT COUNT(*) FROM links").fetchone()[0] == before
 
 
 def test_links_add_already_linked_is_benign_noop(core):
@@ -70,12 +80,15 @@ def test_links_add_already_linked_is_benign_noop(core):
 
 
 def test_links_add_resolves_prefixed_name_and_id(core):
-    d = core.add("a design slice", kind="design")     # D1
-    core.add("an impl task", kind="production")        # T2
+    d = core.add("a design slice", kind="design")       # D1
+    e = core.add("another design slice", kind="design")  # D2
+    # d.id satisfies the D256 creation-gate; the links_add call below wires a
+    # genuinely NEW edge to e, distinct from the gate-satisfying one.
+    core.add("an impl task", kind="production", deps={d.id: "realizes D1"})  # T3
     # mix: prefixed-name on one endpoint, raw id on the other.
-    result = core.links_add([{"a": "T2", "b": d.id, "because": "T2 realizes D1"}])
+    result = core.links_add([{"a": "T3", "b": e.id, "because": "T3 realizes D2"}])
     assert result["created"] == 1
-    assert result["created_pairs"] == [["T2", "D1"]]
+    assert result["created_pairs"] == [["T3", "D2"]]
 
 
 def test_links_add_empty_list_is_noop(core):
@@ -87,13 +100,14 @@ def test_links_add_empty_list_is_noop(core):
 
 def test_links_add_intra_batch_duplicate_deduped(core):
     a, b = _seed(core, 2)
+    before = core.conn.execute("SELECT COUNT(*) FROM links").fetchone()[0]
     result = core.links_add([
         {"a": a, "b": b, "because": "first"},
         {"a": b, "b": a, "because": "same pair, reversed → canonical dupe"},
     ])
     assert result["created"] == 1
     assert result["already_linked"] == 1
-    assert core.conn.execute("SELECT COUNT(*) FROM links").fetchone()[0] == 1
+    assert core.conn.execute("SELECT COUNT(*) FROM links").fetchone()[0] == before + 1
 
 
 def test_links_add_all_already_linked_no_version_bump(core):

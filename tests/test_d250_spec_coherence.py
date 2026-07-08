@@ -29,8 +29,10 @@ def test_edit_append_refused_on_spec_kind(core, kind):
         core.edit_append(1, content=" more", delta="d")
 
 
-@pytest.mark.parametrize("kind", ["production", "meta"])
+@pytest.mark.parametrize("kind", ["meta"])
 def test_edit_append_allowed_on_non_spec_kind(core, kind):
+    """D255 narrows append to META-ONLY: production joins design/schema in the
+    refusal set, so meta is the only kind where edit_append is allowed."""
     core.add("t", kind=kind, description="body")
     core.edit_append(1, content=" + note", delta="d")
     assert core.get(1).description == "body + note"
@@ -93,9 +95,13 @@ def test_nudge_fires_via_edit_replace_substring(core):
 
 def test_no_nudge_on_production_edit(core):
     # production tasks legitimately hold chronological logs -> no nudge
-    core.add("t", kind="production", description="impl")
+    core.add("spec anchor", kind="design")
+    core.add(
+        "t", kind="production", description="impl",
+        deps={1: "realizes the anchor"},
+    )
     core.edit(
-        1,
+        2,
         delta="d",
         description="phase 1 2026-01-01; phase 2 2026-02-02; SUPERSEDES above.",
     )

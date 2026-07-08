@@ -82,8 +82,17 @@ class TackitMachine(RuleBasedStateMachine):
     def add(self, name, kind):
         """T176: kind is randomized over all four. Core.add() sets the
         partition-correct default status (spec for design/schema, open
-        otherwise) per D36."""
-        t = self.core.add(name, kind=kind)
+        otherwise) per D36.
+
+        D256: a bare production add (no deps) is refused by the creation
+        gate -- it must link a design/schema slice at creation. This rule
+        doesn't manufacture a link, so the refusal is an EXPECTED outcome
+        (same shape as the other rules' refusal catches); the machine
+        just keeps walking without tracking a new id."""
+        try:
+            t = self.core.add(name, kind=kind)
+        except ValidationError:
+            return
         self.ids.append(t.id)
 
     @precondition(lambda self: self.ids)
@@ -91,11 +100,10 @@ class TackitMachine(RuleBasedStateMachine):
     def edit(self, i, name):
         try:
             self.core.edit(self._id(i), name=name, delta="property test")
-        except InvariantError:
-            # v0.4 D29 retired the no-edit-closed convention -- edit is now
-            # allowed on any status. InvariantError can still arise from other
-            # paths (e.g. an empty delta in a future API tweak); leaving the
-            # catch as a defensive marker.
+        except (InvariantError, ValidationError):
+            # D259: edit is REFUSED on closed / wont_do tasks (frozen records)
+            # -> ValidationError; reopen to change, retired slices stay editable.
+            # Other refusals (bad text, etc.) may also arise; all expected.
             pass
 
     @precondition(lambda self: self.ids)
@@ -210,9 +218,14 @@ class TackitMachine(RuleBasedStateMachine):
         the (i)/(ii) decision-tree message bank under hypothesis-driven
         scheduling."""
         d = self.core.add("prop d-target", kind="design")
-        p = self.core.add("prop p-neighbor", kind="production")
         rationale = "prop test rationale linking d to p"
-        self.core.link_add(d.id, p.id, because=rationale)
+        # D256 creation-gate: p (production) must link a design/schema slice
+        # at creation -- use d itself (already created above) as that link,
+        # which is the SAME edge the old post-hoc link_add call below used
+        # to create, so no separate link_add is needed.
+        p = self.core.add(
+            "prop p-neighbor", kind="production", deps={d.id: rationale}
+        )
         self.ids.append(d.id)
         self.ids.append(p.id)
         try:

@@ -372,19 +372,24 @@ def test_mig_004_adds_because_with_backfill_placeholder(tmp_path):
     _make_v1_store(tmp_path)
     c = Core.open(start=tmp_path)
     try:
+        # _make_v1_store pre-seeds 'alpha'/'beta' (ids 1, 2; backfilled to
+        # kind='production' by mig_001) -- new adds land at id 3+.
         # Seed a link via the runtime API (forces a meaningful because).
-        c.add("a", kind="production")
-        c.add("b", kind="production")
-        c.link_add(1, 2, because="T2 builds on T1")
+        # D256 creation-gate: production tasks must link a design/schema
+        # slice at creation, so seed a spec anchor first (id 3).
+        c.add("spec anchor", kind="design")
+        c.add("a", kind="production", deps={3: "realizes the anchor"})
+        c.add("b", kind="production", deps={3: "realizes the anchor"})
+        c.link_add(4, 5, because="T5 builds on T4")
         row = c.conn.execute(
-            "SELECT because FROM links WHERE task_a=1 AND task_b=2"
+            "SELECT because FROM links WHERE task_a=4 AND task_b=5"
         ).fetchone()
-        assert row["because"] == "T2 builds on T1"
+        assert row["because"] == "T5 builds on T4"
         # Verify the column has the right NOT NULL + length CHECK by trying to
         # write an empty rationale at the raw SQL layer.
         with pytest.raises(sqlite3.IntegrityError):
             c.conn.execute(
-                "INSERT INTO links(task_a, task_b, because) VALUES (1, 2, '');"
+                "INSERT INTO links(task_a, task_b, because) VALUES (4, 5, '');"
             )
     finally:
         c.close_conn()

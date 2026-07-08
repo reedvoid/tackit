@@ -32,7 +32,12 @@ def test_add_invalid_kind_refused(core, bad):
 
 @pytest.mark.parametrize("kind", list(KIND_VALUES))
 def test_add_all_four_kinds_accepted(core, kind):
-    t = core.add(f"a {kind} task", kind=kind)
+    if kind == "production":
+        # D256 creation-gate: production must link a design/schema at creation.
+        core.add("spec anchor", kind="design")  # T1 (D1)
+        t = core.add(f"a {kind} task", kind=kind, deps={1: "realizes the anchor decision"})
+    else:
+        t = core.add(f"a {kind} task", kind=kind)
     assert t.kind == kind
     assert core.get(t.id).kind == kind  # persisted, not just on the returned model
 
@@ -53,7 +58,12 @@ def test_add_default_status_by_kind_partition(core, kind, expected_status):
     active-work layer). Parametrize covers all four kinds so the
     partition contract is pinned by construction, not by assertion on
     a single fixture."""
-    t = core.add(f"a {kind} task", kind=kind)
+    if kind == "production":
+        # D256 creation-gate: production must link a design/schema at creation.
+        core.add("spec anchor", kind="design")  # T1 (D1)
+        t = core.add(f"a {kind} task", kind=kind, deps={1: "realizes the anchor decision"})
+    else:
+        t = core.add(f"a {kind} task", kind=kind)
     assert t.status == expected_status, (
         f"add(kind={kind!r}) should default to status={expected_status!r}; "
         f"got {t.status!r}. D36 v0.5 partition violated."
@@ -144,7 +154,8 @@ def test_add_meta_then_link_to_production_refused(core):
     cross-kind refusal still fires at link_add."""
     from tackit.errors import InvariantError
 
-    core.add("a meta thing", kind="meta")
-    core.add("a prod thing", kind="production")
+    core.add("spec anchor", kind="design")  # T1 (D1) -- D256 creation-gate anchor
+    core.add("a meta thing", kind="meta")  # T2
+    core.add("a prod thing", kind="production", deps={1: "realizes the anchor decision"})  # T3
     with pytest.raises(InvariantError, match="meta-island"):
-        core.link_add(1, 2, because="cross-kind")
+        core.link_add(2, 3, because="cross-kind")

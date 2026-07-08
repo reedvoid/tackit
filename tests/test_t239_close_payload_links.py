@@ -16,17 +16,20 @@ from tackit.core import Core
 
 
 def _two_linked(core):
-    core.add("a", kind="production")  # 1
-    core.add("b", kind="production")  # 2
-    core.link_add(1, 2, because="a couples to b")
+    core.add("spec anchor", kind="design")  # 1
+    core.add("a", kind="production", deps={1: "realizes the anchor"})  # 2
+    core.add("b", kind="production", deps={1: "realizes the anchor"})  # 3
+    core.link_add(2, 3, because="a couples to b")
 
 
 # --- close ------------------------------------------------------------------
 
 def test_close_result_single_links(core):
     _two_linked(core)
-    r = core.close(1)
-    assert [n.id for n in r.links] == [2]            # each neighbour once
+    r = core.close(2)
+    # 'a' (2) is linked to both the anchor (1, from its D256 creation-gate
+    # dep) and 'b' (3, explicit link_add) -- each neighbour appears once.
+    assert [n.id for n in r.links] == [1, 3]
     dumped = r.model_dump()
     assert "links" in dumped
     assert "dependencies" not in dumped and "dependents" not in dumped
@@ -36,8 +39,8 @@ def test_close_result_single_links(core):
 
 def test_wont_do_result_single_links(core):
     _two_linked(core)
-    r = core.wont_do(1, reason="dropped", delta="scope dropped")
-    assert [n.id for n in r.links] == [2]
+    r = core.wont_do(2, reason="dropped", delta="scope dropped")
+    assert [n.id for n in r.links] == [1, 3]
     assert "dependents" not in r.model_dump()
 
 
@@ -57,7 +60,10 @@ def test_retire_result_single_links(core):
 # --- degenerate + symmetry --------------------------------------------------
 
 def test_close_zero_links(core):
-    core.add("lonely", kind="production")
+    # kind="meta" is unaffected by the D256 creation-gate (which only
+    # constrains "production"), so this stays a true zero-link degenerate
+    # case rather than being forced to carry a spec-anchor link.
+    core.add("lonely", kind="meta")
     r = core.close(1)
     assert r.links == []
     assert "links" in r.model_dump()
@@ -65,10 +71,14 @@ def test_close_zero_links(core):
 
 def test_close_links_match_the_review_obligation_set(core):
     # the one-hop review set must be unchanged in CONTENT, just de-duplicated
-    core.add("focal", kind="production")              # 1
-    core.add("x", kind="production")                  # 2
-    core.add("y", kind="production")                  # 3
-    core.link_add(1, 2, because="focal couples to x")
-    core.link_add(1, 3, because="focal couples to y")
-    r = core.close(1)
-    assert sorted(n.id for n in r.links) == [2, 3]
+    core.add("spec anchor", kind="design")             # 1
+    core.add("focal", kind="production", deps={1: "realizes the anchor"})  # 2
+    core.add("x", kind="production", deps={1: "realizes the anchor"})      # 3
+    core.add("y", kind="production", deps={1: "realizes the anchor"})      # 4
+    core.link_add(2, 3, because="focal couples to x")
+    core.link_add(2, 4, because="focal couples to y")
+    r = core.close(2)
+    # focal's neighbours: the anchor (1, from its creation-gate dep) plus
+    # x (3) and y (4) from the explicit links -- unchanged in content,
+    # just de-duplicated.
+    assert sorted(n.id for n in r.links) == [1, 3, 4]

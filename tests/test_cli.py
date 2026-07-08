@@ -25,27 +25,38 @@ def test_cli_init_creates_store(tmp_path, monkeypatch):
 
 
 def test_cli_load(cli, tmp_path, capsys):
+    main(["add", "spec anchor", "--kind", "design"])  # D1: satisfies D256 gate
     plan = tmp_path / "plan.txt"
     plan.write_text(
         "[a] first task\n"
         "  kind: production\n"
+        "  depends_on:\n"
+        "    D1 :: realizes the anchor decision\n"
         "[b] second task\n"
         "  kind: production\n"
         "  depends_on:\n"
         "    a :: test fixture: b couples to a's interface\n"
+        "    D1 :: realizes the anchor decision\n"
     )
     capsys.readouterr()
     assert main(["load", str(plan)]) == 0
     out = capsys.readouterr().out
-    assert "loaded 2" in out and "T1" in out and "T2" in out
+    assert "loaded 2" in out and "T2" in out and "T3" in out
     capsys.readouterr()
-    main(["show", "2"])
-    assert "T1" in capsys.readouterr().out  # T2 depends on T1
+    main(["show", "3"])
+    assert "T2" in capsys.readouterr().out  # T3 depends on T2
 
 
 def test_cli_load_reports_new_labels_on_stderr(cli, tmp_path, capsys):
+    main(["add", "spec anchor", "--kind", "design"])  # D1: satisfies D256 gate
     plan = tmp_path / "p.txt"
-    plan.write_text("[a] one\n  kind: production\n  labels: freshlabel\n")
+    plan.write_text(
+        "[a] one\n"
+        "  kind: production\n"
+        "  labels: freshlabel\n"
+        "  depends_on:\n"
+        "    D1 :: realizes the anchor decision\n"
+    )
     capsys.readouterr()
     main(["load", str(plan)])
     err = capsys.readouterr().err
@@ -53,16 +64,24 @@ def test_cli_load_reports_new_labels_on_stderr(cli, tmp_path, capsys):
 
 
 def test_cli_add_and_show(cli, capsys):
-    assert main(["add", "parse FTS query", "--kind", "production", "--desc", "body"]) == 0
+    main(["add", "spec anchor", "--kind", "design"])  # D1
+    assert main([
+        "add", "parse FTS query", "--kind", "production", "--desc", "body",
+        "--dep", "1::realizes the anchor decision",
+    ]) == 0
     capsys.readouterr()
-    assert main(["show", "1"]) == 0
+    assert main(["show", "2"]) == 0
     out = capsys.readouterr().out
-    assert "T1" in out and "parse FTS query" in out
+    assert "T2" in out and "parse FTS query" in out
 
 
 def test_cli_add_json_output(cli, capsys):
+    main(["add", "spec anchor", "--kind", "design"])  # D1
     capsys.readouterr()
-    assert main(["add", "json task", "--kind", "production", "--json"]) == 0
+    assert main([
+        "add", "json task", "--kind", "production", "--json",
+        "--dep", "1::realizes the anchor decision",
+    ]) == 0
     data = json.loads(capsys.readouterr().out)
     assert data["task"]["name"] == "json task"
 
@@ -78,28 +97,31 @@ def test_cli_ls_name_prefix(cli, capsys):
 
 
 def test_cli_edit_surfaces_stale_on_stderr(cli, capsys):
-    main(["add", "base", "--kind", "production"])
-    main(["add", "dep", "--kind", "production"])
-    main(["link", "add", "2", "1", "--because", "test"])
+    main(["add", "spec anchor", "--kind", "design"])  # D1
+    main(["add", "base", "--kind", "production", "--dep", "1::realizes the anchor decision"])  # T2
+    main(["add", "dep", "--kind", "production", "--dep", "1::realizes the anchor decision"])  # T3
+    main(["link", "add", "3", "2", "--because", "test"])
     capsys.readouterr()
-    assert main(["edit", "1", "--desc", "changed", "--delta", "test"]) == 0
+    assert main(["edit", "2", "--desc", "changed", "--delta", "test"]) == 0
     err = capsys.readouterr().err
-    assert "STALE" in err.upper() and "T2" in err
+    assert "STALE" in err.upper() and "T3" in err
 
 
 def test_cli_close_stale_refused_exit_1(cli, capsys):
-    main(["add", "base", "--kind", "production"])
-    main(["add", "dep", "--kind", "production"])
-    main(["link", "add", "2", "1", "--because", "test"])
-    main(["edit", "1", "--desc", "x", "--delta", "test"])
+    main(["add", "spec anchor", "--kind", "design"])  # D1
+    main(["add", "base", "--kind", "production", "--dep", "1::realizes the anchor decision"])  # T2
+    main(["add", "dep", "--kind", "production", "--dep", "1::realizes the anchor decision"])  # T3
+    main(["link", "add", "3", "2", "--because", "test"])
+    main(["edit", "2", "--desc", "x", "--delta", "test"])
     capsys.readouterr()
-    assert main(["close", "2"]) == 1
+    assert main(["close", "3"]) == 1
     assert "REFUSED" in capsys.readouterr().err
 
 
 def test_cli_close_clean_succeeds(cli):
-    main(["add", "a", "--kind", "production"])
-    assert main(["close", "1"]) == 0
+    main(["add", "spec anchor", "--kind", "design"])  # D1
+    main(["add", "a", "--kind", "production", "--dep", "1::realizes the anchor decision"])  # T2
+    assert main(["close", "2"]) == 0
 
 
 def test_cli_retire_clean_succeeds(cli, capsys):
@@ -134,54 +156,60 @@ def test_cli_dep_add_reverse_args_is_idempotent(cli):
     # Under v0.3.0 symmetric semantics (T86), "1 -> 2" and "2 -> 1" are the
     # same link {1, 2}; reversed arguments hit the same canonical row and the
     # second dep_add is a successful no-op (exit 0), not a cycle refusal.
-    main(["add", "a", "--kind", "production"])
-    main(["add", "b", "--kind", "production"])
-    main(["link", "add", "1", "2", "--because", "test"])
-    assert main(["link", "add", "2", "1", "--because", "test"]) == 0  # idempotent, exit 0
+    main(["add", "spec anchor", "--kind", "design"])  # D1
+    main(["add", "a", "--kind", "production", "--dep", "1::realizes the anchor decision"])  # T2
+    main(["add", "b", "--kind", "production", "--dep", "1::realizes the anchor decision"])  # T3
+    main(["link", "add", "2", "3", "--because", "test"])
+    assert main(["link", "add", "3", "2", "--because", "test"]) == 0  # idempotent, exit 0
 
 
 def test_cli_ls_status_filter(cli, capsys):
-    main(["add", "a", "--kind", "production", "--label", "x"])
-    main(["add", "b", "--kind", "production", "--label", "y"])
-    main(["close", "2"])
+    main(["add", "spec anchor", "--kind", "design"])  # D1
+    main(["add", "a", "--kind", "production", "--label", "x", "--dep", "1::realizes the anchor decision"])  # T2
+    main(["add", "b", "--kind", "production", "--label", "y", "--dep", "1::realizes the anchor decision"])  # T3
+    main(["close", "3"])
     capsys.readouterr()
     main(["ls", "--status", "open"])
     out = capsys.readouterr().out
-    assert "T1" in out and "T2" not in out
+    assert "T2" in out and "T3" not in out
 
 
 def test_cli_search_ranks(cli, capsys):
-    main(["add", "rotate JWT signing keys", "--kind", "production"])
-    main(["add", "unrelated colour palette", "--kind", "production"])
+    main(["add", "spec anchor", "--kind", "design"])  # D1
+    main(["add", "rotate JWT signing keys", "--kind", "production", "--dep", "1::realizes the anchor decision"])  # T2
+    main(["add", "unrelated colour palette", "--kind", "production", "--dep", "1::realizes the anchor decision"])  # T3
     capsys.readouterr()
     main(["search", "JWT"])
     out = capsys.readouterr().out
-    assert "T1" in out
+    assert "T2" in out
 
 
 def test_cli_label_add_then_rm(cli):
-    main(["add", "a", "--kind", "production"])
-    assert main(["label", "add", "1", "tag"]) == 0
-    assert main(["label", "rm", "1", "tag"]) == 0
+    main(["add", "spec anchor", "--kind", "design"])  # D1
+    main(["add", "a", "--kind", "production", "--dep", "1::realizes the anchor decision"])  # T2
+    assert main(["label", "add", "2", "tag"]) == 0
+    assert main(["label", "rm", "2", "tag"]) == 0
 
 
 def test_cli_new_label_nudge_on_stderr(cli, capsys):
-    main(["add", "a", "--kind", "production", "--label", "existing"])
-    main(["add", "b", "--kind", "production"])
+    main(["add", "spec anchor", "--kind", "design"])  # D1
+    main(["add", "a", "--kind", "production", "--label", "existing", "--dep", "1::realizes the anchor decision"])  # T2
+    main(["add", "b", "--kind", "production", "--dep", "1::realizes the anchor decision"])  # T3
     capsys.readouterr()
-    assert main(["label", "add", "2", "brandnew"]) == 0
+    assert main(["label", "add", "3", "brandnew"]) == 0
     err = capsys.readouterr().err
     assert "brandnew" in err and "New label" in err  # nudge surfaced to stderr
 
 
 def test_cli_reopen_then_reconcile_clears_worklist(cli, capsys):
-    main(["add", "base", "--kind", "production"])
-    main(["add", "dep", "--kind", "production"])
-    main(["link", "add", "2", "1", "--because", "test"])
-    main(["close", "2"])
-    main(["reopen", "2"])
-    main(["edit", "1", "--desc", "x", "--delta", "test"])  # stales T2
-    assert main(["reconcile", "2"]) == 0
+    main(["add", "spec anchor", "--kind", "design"])  # D1
+    main(["add", "base", "--kind", "production", "--dep", "1::realizes the anchor decision"])  # T2
+    main(["add", "dep", "--kind", "production", "--dep", "1::realizes the anchor decision"])  # T3
+    main(["link", "add", "3", "2", "--because", "test"])
+    main(["close", "3"])
+    main(["reopen", "3"])
+    main(["edit", "2", "--desc", "x", "--delta", "test"])  # stales T3 and the anchor D1
+    assert main(["reconcile", "3", "1"]) == 0
     capsys.readouterr()
     assert main(["stale", "--json"]) == 0
     assert json.loads(capsys.readouterr().out) == []  # worklist now empty
@@ -190,7 +218,11 @@ def test_cli_reopen_then_reconcile_clears_worklist(cli, capsys):
 def test_cli_render_markdown(cli, capsys):
     # Use a non-reserved label string -- design/schema/production/meta are reserved
     # for the kind property since T84 (D26).
-    main(["add", "thing", "--kind", "production", "--desc", "body text", "--label", "spec"])
+    main(["add", "spec anchor", "--kind", "design"])  # D1
+    main([
+        "add", "thing", "--kind", "production", "--desc", "body text",
+        "--label", "spec", "--dep", "1::realizes the anchor decision",
+    ])
     capsys.readouterr()
     main(["render", "--label", "spec"])
     out = capsys.readouterr().out
@@ -198,10 +230,11 @@ def test_cli_render_markdown(cli, capsys):
 
 
 def test_cli_history(cli, capsys):
-    main(["add", "a", "--kind", "production"])
-    main(["close", "1"])
+    main(["add", "spec anchor", "--kind", "design"])  # D1
+    main(["add", "a", "--kind", "production", "--dep", "1::realizes the anchor decision"])  # T2
+    main(["close", "2"])
     capsys.readouterr()
-    main(["history", "1"])
+    main(["history", "2"])
     assert "closed" in capsys.readouterr().out
 
 
@@ -229,10 +262,11 @@ def test_cli_setup_emits_install_steps(cli, capsys):
 
 
 def test_cli_dep_rm(cli):
-    main(["add", "a", "--kind", "production"])
-    main(["add", "b", "--kind", "production"])
-    main(["link", "add", "2", "1", "--because", "test"])
-    assert main(["link", "rm", "2", "1"]) == 0
+    main(["add", "spec anchor", "--kind", "design"])  # D1
+    main(["add", "a", "--kind", "production", "--dep", "1::realizes the anchor decision"])  # T2
+    main(["add", "b", "--kind", "production", "--dep", "1::realizes the anchor decision"])  # T3
+    main(["link", "add", "3", "2", "--because", "test"])
+    assert main(["link", "rm", "3", "2"]) == 0
 
 
 def test_cli_restore_by_index(cli, capsys):
@@ -259,34 +293,37 @@ def test_cli_no_store_fails_loud(tmp_path, monkeypatch):
 
 
 def test_cli_board_groups_and_shows_edges(cli, capsys):
-    main(["add", "base", "--kind", "production"])
-    main(["add", "dep", "--kind", "production"])
-    main(["link", "add", "2", "1", "--because", "test"])
-    main(["close", "1"])
+    main(["add", "spec anchor", "--kind", "design"])  # D1
+    main(["add", "base", "--kind", "production", "--dep", "1::realizes the anchor decision"])  # T2
+    main(["add", "dep", "--kind", "production", "--dep", "1::realizes the anchor decision"])  # T3
+    main(["link", "add", "3", "2", "--because", "test"])
+    main(["close", "2"])
     capsys.readouterr()
     assert main(["board"]) == 0
     out = capsys.readouterr().out
     assert "open" in out and "done" in out  # header counts
     assert "IN FLIGHT" in out and "DONE" in out  # both status sections
-    assert "T1" in out and "T2" in out
+    assert "T2" in out and "T3" in out
     assert "links→" in out  # T237: single symmetric links edge list
 
 
 def test_cli_board_stale_filter(cli, capsys):
-    main(["add", "base", "--kind", "production"])
-    main(["add", "dep", "--kind", "production"])
-    main(["link", "add", "2", "1", "--because", "test"])
-    main(["edit", "1", "--desc", "x", "--delta", "test"])  # stales T2
+    main(["add", "spec anchor", "--kind", "design"])  # D1
+    main(["add", "base", "--kind", "production", "--dep", "1::realizes the anchor decision"])  # T2
+    main(["add", "dep", "--kind", "production", "--dep", "1::realizes the anchor decision"])  # T3
+    main(["link", "add", "3", "2", "--because", "test"])
+    main(["edit", "2", "--desc", "x", "--delta", "test"])  # stales T3 (and the anchor D1)
     capsys.readouterr()
     assert main(["board", "--stale"]) == 0
     out = capsys.readouterr().out
-    assert "T2" in out and "STALE" in out and "IN FLIGHT" in out
+    assert "T3" in out and "STALE" in out and "IN FLIGHT" in out
     assert "DONE" not in out  # no closed tasks match -> that section is omitted
 
 
 def test_cli_labels(cli, capsys):
-    main(["add", "thing", "--kind", "production", "--label", "core"])
-    main(["add", "other", "--kind", "production", "--label", "core"])
+    main(["add", "spec anchor", "--kind", "design"])  # D1
+    main(["add", "thing", "--kind", "production", "--label", "core", "--dep", "1::realizes the anchor decision"])  # T2
+    main(["add", "other", "--kind", "production", "--label", "core", "--dep", "1::realizes the anchor decision"])  # T3
     capsys.readouterr()
     assert main(["labels"]) == 0
     out = capsys.readouterr().out
@@ -294,18 +331,23 @@ def test_cli_labels(cli, capsys):
 
 
 def test_cli_stale_lists_nonempty_worklist(cli, capsys):
-    main(["add", "base", "--kind", "production"])
-    main(["add", "dep", "--kind", "production"])
-    main(["link", "add", "2", "1", "--because", "test"])
-    main(["edit", "1", "--desc", "x", "--delta", "test"])  # stales T2
+    main(["add", "spec anchor", "--kind", "design"])  # D1
+    main(["add", "base", "--kind", "production", "--dep", "1::realizes the anchor decision"])  # T2
+    main(["add", "dep", "--kind", "production", "--dep", "1::realizes the anchor decision"])  # T3
+    main(["link", "add", "3", "2", "--because", "test"])
+    main(["edit", "2", "--desc", "x", "--delta", "test"])  # stales T3 (and the anchor D1)
     capsys.readouterr()
     main(["stale"])
     out = capsys.readouterr().out
-    assert "T2" in out and "worklist" in out.lower()
+    assert "T3" in out and "worklist" in out.lower()
 
 
 def test_cli_edit_no_dependents(cli, capsys):
-    main(["add", "solo", "--kind", "production"])
+    # kind=meta: unaffected by the D256 gate, so this stays a genuinely
+    # link-free task -- the point under test is the "no dependents" message,
+    # which a gated production task (always linked to its anchor) could no
+    # longer exercise.
+    main(["add", "solo", "--kind", "meta"])
     capsys.readouterr()
     assert main(["edit", "1", "--desc", "changed", "--delta", "test"]) == 0
     assert "no dependents" in capsys.readouterr().out.lower()
@@ -315,9 +357,10 @@ def test_cli_edit_no_dependents(cli, capsys):
 
 
 def test_cli_edit_append_appends_and_surfaces_stale(cli, capsys):
-    main(["add", "base", "--kind", "production", "--desc", "original"])
-    main(["add", "dep", "--kind", "production"])
-    main(["link", "add", "2", "1", "--because", "T2 reviews T1"])
+    # D255: append is meta-only, so the edit-append fixtures use meta tasks.
+    main(["add", "base", "--kind", "meta", "--desc", "original"])
+    main(["add", "dep", "--kind", "meta"])
+    main(["link", "add", "2", "1", "--because", "M2 reviews M1"])
     capsys.readouterr()
     assert main([
         "edit-append", "1",
@@ -326,7 +369,7 @@ def test_cli_edit_append_appends_and_surfaces_stale(cli, capsys):
     ]) == 0
     out = capsys.readouterr()
     assert "appended to" in out.out
-    assert "STALE" in out.err.upper() and "T2" in out.err
+    assert "STALE" in out.err.upper() and "M2" in out.err
 
     capsys.readouterr()
     main(["show", "1"])
@@ -334,31 +377,39 @@ def test_cli_edit_append_appends_and_surfaces_stale(cli, capsys):
 
 
 def test_cli_edit_append_refused_empty_content_exit_1(cli, capsys):
-    main(["add", "a", "--kind", "production"])
+    main(["add", "a", "--kind", "meta"])  # D255: append is meta-only
     capsys.readouterr()
     rc = main(["edit-append", "1", "--content", "", "--delta", "x"])
     assert rc == 1
 
 
 def test_cli_edit_replace_replaces_substring(cli, capsys):
-    main(["add", "a", "--kind", "production", "--desc", "hello world"])
+    main(["add", "spec anchor", "--kind", "design"])  # D1
+    main([
+        "add", "a", "--kind", "production", "--desc", "hello world",
+        "--dep", "1::realizes the anchor decision",
+    ])  # T2
     capsys.readouterr()
     assert main([
-        "edit-replace", "1",
+        "edit-replace", "2",
         "--old", "world",
         "--new", "universe",
         "--delta", "renamed token",
     ]) == 0
     capsys.readouterr()
-    main(["show", "1"])
+    main(["show", "2"])
     assert "hello universe" in capsys.readouterr().out
 
 
 def test_cli_edit_replace_multi_match_refused_exit_1(cli, capsys):
-    main(["add", "a", "--kind", "production", "--desc", "foo foo foo"])
+    main(["add", "spec anchor", "--kind", "design"])  # D1
+    main([
+        "add", "a", "--kind", "production", "--desc", "foo foo foo",
+        "--dep", "1::realizes the anchor decision",
+    ])  # T2
     capsys.readouterr()
     rc = main([
-        "edit-replace", "1",
+        "edit-replace", "2",
         "--old", "foo",
         "--new", "bar",
         "--delta", "seed",
@@ -384,16 +435,19 @@ def test_cli_search_name_only_flag(cli, capsys):
     """M181 #8d: `tackit search --name-only` scopes the FTS5 match to the
     name column. Two tasks, one with the term in name and one only in
     description -- --name-only returns the name match only."""
+    main(["add", "spec anchor", "--kind", "design"])  # D1
     main(["add", "--kind", "production",
-          "--desc", "this body mentions sirius once", "alpha hub"])
+          "--desc", "this body mentions sirius once",
+          "--dep", "1::realizes the anchor decision", "alpha hub"])  # T2
     main(["add", "--kind", "production",
-          "--desc", "sirius appears here only in description", "beta hub"])
+          "--desc", "sirius appears here only in description",
+          "--dep", "1::realizes the anchor decision", "beta hub"])  # T3
     capsys.readouterr()
 
     # Default: matches both (one via name, one via description).
     main(["search", "sirius"])
     out = capsys.readouterr().out
-    assert "T1" in out and "T2" in out, (
+    assert "T2" in out and "T3" in out, (
         f"Default search must match both rows; got:\n{out!r}"
     )
 
@@ -409,8 +463,8 @@ def test_cli_search_name_only_flag(cli, capsys):
     # Direct name match works via --name-only.
     main(["search", "alpha", "--name-only"])
     out = capsys.readouterr().out
-    assert "T1" in out and "T2" not in out, (
-        f"`search alpha --name-only` should find only T1; got:\n{out!r}"
+    assert "T2" in out and "T3" not in out, (
+        f"`search alpha --name-only` should find only T2; got:\n{out!r}"
     )
 
 
@@ -535,8 +589,10 @@ def test_cli_links_anchor_and_neighborhood(cli, capsys):
     """T204: `tackit links` exposes the D27 discovery op. No ids -> the
     design+schema anchor layer; an id -> its depth-1 neighborhood."""
     main(["add", "decision", "--kind", "design"])   # D1
-    main(["add", "impl", "--kind", "production"])    # T2
-    main(["link", "add", "2", "1", "--because", "T2 realizes D1"])
+    # D256: the production task must link a design/schema slice at creation --
+    # do it via --dep on the same anchor, which is the edge this test then
+    # inspects via `links`, so no separate `link add` call is needed.
+    main(["add", "impl", "--kind", "production", "--dep", "1::T2 realizes D1"])  # T2
     capsys.readouterr()
     assert main(["links", "--json"]) == 0            # anchor layer
     anchors = json.loads(capsys.readouterr().out)
@@ -549,13 +605,14 @@ def test_cli_links_anchor_and_neighborhood(cli, capsys):
 def test_cli_links_add_bulk(cli, tmp_path, capsys):
     """T216: `tackit links-add` bulk-links existing tasks from a file/stdin,
     one edge per line as `<a> <b> :: <because>`."""
-    main(["add", "design slice", "--kind", "design"])    # D1
-    main(["add", "impl a", "--kind", "production"])       # T2
-    main(["add", "impl b", "--kind", "production"])       # T3
+    main(["add", "spec anchor", "--kind", "design"])     # D1: satisfies D256 at creation
+    main(["add", "design slice", "--kind", "design"])    # D2: the bulk-link target below
+    main(["add", "impl a", "--kind", "production", "--dep", "1::realizes the anchor decision"])  # T3
+    main(["add", "impl b", "--kind", "production", "--dep", "1::realizes the anchor decision"])  # T4
     edges = tmp_path / "edges.txt"
     edges.write_text(
-        "T2 D1 :: T2 realizes the D1 decision\n"
-        "T3 D1 :: T3 realizes the D1 decision\n"
+        "T3 D2 :: T3 realizes the D2 decision\n"
+        "T4 D2 :: T4 realizes the D2 decision\n"
     )
     capsys.readouterr()
     assert main(["links-add", str(edges), "--json"]) == 0

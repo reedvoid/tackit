@@ -12,10 +12,24 @@ from tackit.errors import SyncError
 
 
 def _seed(store_path, n=1):
+    """D256 creation-gate: a `production` task must link a design/schema
+    slice at creation. Seed (or reuse) ONE shared design anchor for this
+    store and link every production task to it."""
     c = Core.open(start=store_path)
     try:
+        row = c.conn.execute(
+            "SELECT id FROM tasks WHERE kind = 'design' LIMIT 1"
+        ).fetchone()
+        if row is None:
+            anchor = c.add("spec anchor", kind="design").id
+        else:
+            anchor = row["id"]
         for i in range(n):
-            c.add(f"task {i}", kind="production")
+            c.add(
+                f"task {i}",
+                kind="production",
+                deps={anchor: "realizes the anchor decision"},
+            )
     finally:
         c.close_conn()
 

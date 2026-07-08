@@ -282,6 +282,13 @@ How design/schema slices relate to the lifecycle is the shape worth the few
 minutes — it changes which verb you reach for, and the wrong choice gets refused
 at the boundary. (The full discipline is in `SKILL.md`; this is the orientation.)
 
+**What each kind is for (the ontology).** A spec is *what should be true*; code
+is *what is true*; a production task is *the change between them* (a forecast
+while open, a frozen record once closed); meta is *the thinking* — a notepad
+where a decision gets reached before it's distilled into a spec. When a task
+blurs: is it **deciding** (→ spec), **doing** a settled thing (→ production), or
+**thinking** (→ meta)? Work flows one way — `meta → spec → production → code`.
+
 **The kind/status partition.** Every row is in one of two partitions, by kind:
 
 | kind            | partition (status set)             | terminal verbs        | what it means          |
@@ -407,14 +414,14 @@ point:
   `what:` (enough to recall it) and `did:` (roughly what changed); end with the state
   (N open/done/stale) and any worry up front (stale ids, refused ops). Not prose, not
   a bare id.
-- Fold-back is mandatory and goes in the report. When a code commit fixes a bug or
-  changes behavior the responsible task body doesn't describe, edit that body to
-  record the finding (symptom, root cause, fix, why missed, pinning test) — the
-  commit message is not searchable from the task graph. Every turn with a code
-  change names the fold-backs explicitly, or states "Fold-backs: none — verified."
-  Silence is not reassurance. Implementation discoveries are higher signal than
-  any plan; capturing them in the task body is how the next session inherits the
-  lesson.
+- Fold-back is mandatory and goes in the report. When a code change teaches something
+  the task graph doesn't record, ROUTE it by type: a decision → the design/schema slice
+  it belongs in (never a production body); a correction to the current production task
+  (a wrong forecast of the code) → rewrite its body (append is refused on production);
+  transient progress → git/memory, not tackit. Every turn with a code change names where
+  each fold-back was routed, or states "Fold-backs: none — verified." Silence is not
+  reassurance. Implementation discoveries are higher signal than any plan; routing them
+  to the right layer is how the next session inherits the lesson.
 ```
 
 ### Load the discipline at session start
@@ -485,9 +492,9 @@ hallucinate a flag that doesn't exist). Tool names are the bare verbs — `add`,
 `link_add`, `link_rm`, `links_add`, `label_add`, `label_rm`, `ls`,
 `board`, `stale`, `labels`, `render`, `history`, `load`. (T179: the two `edit_*` ops are diff-shaped
 variants of `edit` — only the snippet or the `(old, new)` pair crosses the
-wire — designed for the "append a Phase N finding" / "fix one phrase"
-patterns that otherwise round-trip a large body. Same cascade, same audit
-row, same delta requirement.) Input schemas are generated
+wire — for appending to a meta notepad or fixing one phrase in place
+without round-tripping a large body. `edit_append` is meta-only (D255);
+same cascade, same audit row, same delta requirement.) Input schemas are generated
 from the Python type hints, so they can't drift from the real interface. Every
 result is wrapped as `{stale_alert, label_nudge, delta, code_check_reminder,
 result}` so the outstanding stale set + per-op nudges ride along on every call;

@@ -11,19 +11,22 @@ test_d7_relaxed_* tests; here we focus on the closed-stale case end-to-end.
 
 import pytest
 
-from tackit.errors import InvariantError
+from tackit.errors import InvariantError, ValidationError
 
 
 def _stale_closed_setup(core):
-    """Two linked production tasks, T2 closed, T1 edited to stale T2."""
-    core.add("upstream", kind="production")  # T1
-    core.add("downstream", kind="production")  # T2
-    core.link_add(2, 1, because="downstream consumes upstream's API")
-    core.close(2)
-    core.edit(1, description="changed", delta="upstream shape shifted")
-    t2 = core.get(2)
-    assert t2.stale is True and t2.status == "closed", (
-        "precondition: cascade staled T2 without force-reopen"
+    """Two linked production tasks, T3 closed, T2 edited to stale T3.
+    T1 is a D256 creation-gate anchor (design) shared by both production
+    tasks -- see D256_FIX_GUIDE. IDs shift +1 vs. the pre-D256 fixture."""
+    core.add("spec anchor", kind="design")  # T1 -- D256 creation-gate anchor
+    core.add("upstream", kind="production", deps={1: "realizes the anchor decision"})  # T2
+    core.add("downstream", kind="production", deps={1: "realizes the anchor decision"})  # T3
+    core.link_add(3, 2, because="downstream consumes upstream's API")
+    core.close(3)
+    core.edit(2, description="changed", delta="upstream shape shifted")
+    t3 = core.get(3)
+    assert t3.stale is True and t3.status == "closed", (
+        "precondition: cascade staled T3 without force-reopen"
     )
     return core
 
@@ -35,30 +38,24 @@ def test_closed_stale_reconcile_refused_under_v04(core):
     meaning. The flag stays as historical signal."""
     _stale_closed_setup(core)
     with pytest.raises(InvariantError, match=r"record-only|archaeology"):
-        core.reconcile(2)
+        core.reconcile(3)
     # The closed-stale state is preserved.
-    t2 = core.get(2)
-    assert t2.stale is True and t2.status == "closed"
+    t3 = core.get(3)
+    assert t3.stale is True and t3.status == "closed"
 
 
-def test_closed_stale_edit_allowed_under_v04(core):
-    """v0.4 / D29 retires T118: edit is allowed on a closed-stale task. The
-    description_revisions audit table preserves the verbatim prior name +
-    description, so updating a closed task's prose no longer destroys
-    history. Status stays 'closed' across the edit."""
+def test_closed_stale_edit_refused_under_d259(core):
+    """D259 reverses the v0.4 edit-on-closed behavior: a closed task is a frozen
+    record, so edit is refused even when it is closed-stale (its stale flag
+    stays record-only archaeology). Reopen to change. No audit row is written."""
     _stale_closed_setup(core)
-    pre_name = core.get(2).name
-    pre_desc = core.get(2).description
-    core.edit(2, description="updated under v0.4", delta="fixing closed-stale prose")
-    t2 = core.get(2)
-    assert t2.description == "updated under v0.4"
-    assert t2.status == "closed"  # edit doesn't change status
-    # Audit row recorded the prior state verbatim.
-    revs = core.history(2).description_revisions
-    assert len(revs) == 1
-    assert revs[0].prev_name == pre_name
-    assert revs[0].prev_description == pre_desc
-    assert revs[0].delta == "fixing closed-stale prose"
+    pre_desc = core.get(3).description
+    with pytest.raises(ValidationError, match="frozen record"):
+        core.edit(3, description="updated under d259", delta="fixing closed-stale prose")
+    t3 = core.get(3)
+    assert t3.description == pre_desc  # unchanged
+    assert t3.status == "closed"
+    assert core.history(3).description_revisions == []  # no audit row written
 
 
 def test_closed_stale_link_add_allowed(core):
@@ -66,20 +63,20 @@ def test_closed_stale_link_add_allowed(core):
     replacement to old's neighbors. Adding a link to a closed-stale task is
     structural, not content, so T118 does not refuse it."""
     _stale_closed_setup(core)
-    core.add("sibling", kind="production")  # T3
-    # Link T3 to T2 (the closed-stale task) — legitimate during migration.
-    s = core.link_add(3, 2, because="T3 inherits T2's relationship to upstream")
+    core.add("sibling", kind="production", deps={1: "realizes the anchor decision"})  # T4
+    # Link T4 to T3 (the closed-stale task) — legitimate during migration.
+    s = core.link_add(4, 3, because="T4 inherits T3's relationship to upstream")
     ids = sorted(n.id for n in s.links)
-    assert 2 in ids
+    assert 3 in ids
 
 
 def test_closed_stale_link_rm_allowed(core):
     """Symmetric: link_rm on an edge touching a closed-stale task is allowed
     (structural; not a T118 content edit)."""
     _stale_closed_setup(core)
-    s = core.link_rm(2, 1)
-    # The pair canonicalizes to (1, 2); the row should be gone.
-    n = core.conn.execute("SELECT COUNT(*) FROM links WHERE task_a = 1 AND task_b = 2").fetchone()[0]
+    s = core.link_rm(3, 2)
+    # The pair canonicalizes to (2, 3); the row should be gone.
+    n = core.conn.execute("SELECT COUNT(*) FROM links WHERE task_a = 2 AND task_b = 3").fetchone()[0]
     assert n == 0
 
 
@@ -87,11 +84,11 @@ def test_cascade_staling_already_stale_closed_is_idempotent(core):
     """A second edit upstream of an already-closed-stale task does not churn
     its row's status or duplicate-log a transition."""
     _stale_closed_setup(core)
-    seq_before = [(h.from_status, h.to_status) for h in core.history(2).status_transitions]
-    core.edit(1, description="changed again", delta="upstream shifted further")
-    t2 = core.get(2)
-    assert t2.stale is True and t2.status == "closed"
-    seq_after = [(h.from_status, h.to_status) for h in core.history(2).status_transitions]
+    seq_before = [(h.from_status, h.to_status) for h in core.history(3).status_transitions]
+    core.edit(2, description="changed again", delta="upstream shifted further")
+    t3 = core.get(3)
+    assert t3.stale is True and t3.status == "closed"
+    seq_after = [(h.from_status, h.to_status) for h in core.history(3).status_transitions]
     assert seq_before == seq_after  # no new transitions on the closed-stale row
 
 
@@ -99,17 +96,25 @@ def test_close_gate_does_not_trip_on_closed_stale_under_v04(core):
     """v0.4 (D28): the close-gate's 'transitively linked to stale' walk
     filters to obligation-bearing stale tasks (open OR design/schema kind).
     A closed-stale production neighbor is record-only and does NOT pressure
-    the close-gate -- T3 can close even though T2 is closed+stale."""
-    core.add("a", kind="production")  # T1
-    core.add("b", kind="production")  # T2
-    core.add("c", kind="production")  # T3
-    core.link_add(2, 1, because="b consumes a")
-    core.link_add(3, 2, because="c consumes b")
-    core.close(2)  # T2 closed
-    core.edit(1, description="x", delta="a shifted")  # T2 -> closed-stale via cascade
-    assert core.get(2).status == "closed" and core.get(2).stale is True
-    # T3 can close: T2 is closed-stale (record-only), not on the worklist.
-    result = core.close(3)
+    the close-gate -- T4 can close even though T3 is closed+stale."""
+    core.add("anchor", kind="design")  # T1 -- D256 creation-gate anchor
+    core.add("a", kind="production", deps={1: "a realizes anchor"})  # T2
+    core.add("b", kind="production", deps={1: "b realizes anchor"})  # T3
+    core.add("c", kind="production", deps={1: "c realizes anchor"})  # T4
+    core.link_add(3, 2, because="b consumes a")
+    core.link_add(4, 3, because="c consumes b")
+    core.close(3)  # T3 (b) closed
+    core.edit(2, description="x", delta="a shifted")  # T3 -> closed-stale via cascade
+    assert core.get(3).status == "closed" and core.get(3).stale is True
+    # a's edit ALSO cascade-stales the anchor (T1, direct neighbor via the
+    # D256 dep link) -- T1 is spec+stale, which IS obligation-bearing, so it
+    # would otherwise pressure the close-gate on T4 through the shared graph.
+    # Reconcile it: it's incidental to this test (which is about the
+    # closed-stale *production* neighbor being record-only), not itself
+    # under test here.
+    core.reconcile(1)
+    # T4 can close: T3 is closed-stale (record-only), not on the worklist.
+    result = core.close(4)
     assert result.task.status == "closed"
 
 
@@ -118,8 +123,10 @@ def test_close_gate_does_not_trip_on_retired_stale_neighbor(core):
     close-gate's obligation filter excludes them under the new predicate
     status IN ('open','spec'). Closing T2 succeeds even when T1 is retired+stale."""
     core.add("d1", kind="design")  # T1 -- spec
-    core.add("p1", kind="production")  # T2
-    core.link_add(2, 1, because="prod realizes design")
+    # T2's D256 creation-gate link IS the "prod realizes design" edge under
+    # test here, so it's declared at creation via deps rather than a
+    # separate link_add call.
+    core.add("p1", kind="production", deps={1: "prod realizes design"})  # T2
     # Seed T1 as retired+stale (retire() verb arrives Phase 2b).
     core.conn.execute(
         "UPDATE tasks SET status = 'retired', stale = 1 WHERE id = 1;"

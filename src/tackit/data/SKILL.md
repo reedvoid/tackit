@@ -45,6 +45,27 @@ not retold here.
 
 ## Kinds — every task is classified by what it touches
 
+**What each kind is *for* (D254 — the ontology).** Three tenses of one system: a
+spec is *what should be true*; code is *what is true*; a production task is *the
+change between them*; meta is *the thinking that hasn't become any of those yet*.
+
+- **spec** (design D# / schema S#) — **the decisions.** What should be true,
+  durably. It never "completes" — you `edit` to refine, `retire` only when 100%
+  abandoned. Not a checklist, not a task.
+- **production** (T#) — **the doing.** One unit of change that realizes an
+  *already-made* decision in code. A forecast while open; a frozen record once
+  closed. Must link the spec it realizes. Not for deciding (→ spec), not for
+  progress (git + status carry it), not a notepad (→ meta), not broadenable
+  (spawn a new task).
+- **meta** (M#) — **the thinking.** A notepad: experiments, investigations,
+  brainstorming, release bookkeeping — where a decision gets *reached* before
+  it's distilled into a spec. Anything goes.
+
+**When a task blurs, ask: is it deciding, doing, or thinking?** Deciding → spec;
+doing (a settled thing) → production; thinking / not-yet-settled → meta. The
+workflow only ever flows one way, never a shortcut: **meta → spec → production →
+code.**
+
 **Reference.** Every task carries a required `kind` (set at create, T94); kind is
 coupled to status by partition, enforced both typed (`Core.add` / `load` /
 `reclassify` default the partition-correct status) and by a DB CHECK on S1:
@@ -73,10 +94,10 @@ The partition invariant: `kind ∈ {production,meta} ⟹ status ∈ {open,closed
 - do: run the classifier on **this task's own** scope at `add()` time.
 - don't-do: infer kind from the parent epic or the thread it was discussed in.
 
-### Meta-island constraint
-- why: it bounds the cascade — meta work (release tracking, experiments) must not drag spec/production tasks into stale review, or vice versa.
-- do: link meta tasks only to other meta tasks.
-- don't-do: `link_add` between a meta and a non-meta task (refused); attach a kind name (`design`/`schema`/`production`/`meta`) as a label (refused — kind already encodes it).
+### Meta is a notepad; the island bounds the cascade (D257)
+- why: meta is the THINKING layer — experiments, investigations, brainstorming, release bookkeeping. The island keeps that churn out of the spec/production graph: meta work must not drag spec/production tasks into stale review, or vice versa.
+- do: link meta tasks only to other meta tasks (meta↔meta is fine — a multi-part note may cross-reference itself). Reach a decision in the notepad, then distill it OUT: author a design/schema slice, then a production task that links the slice.
+- don't-do: `link_add` between a meta and a non-meta task (refused); attach a kind name (`design`/`schema`/`production`/`meta`) as a label (refused — kind already encodes it). **Never ship code straight from a meta task** — code flows `meta → spec → production → code`, never a shortcut. Meta is where you decide, not where you build.
 
 ## The verb taxonomy — which verb changes state
 
@@ -88,15 +109,15 @@ lives in its MCP docstring**.
 
 | Verb                     | When                                   | Partition    | Cascade? | Reversible?      |
 |--------------------------|----------------------------------------|--------------|----------|------------------|
-| `edit` (+ append / replace_substring) | content change on any task    | any          | **yes**  | n/a              |
+| `edit` (+ append / replace_substring) | content change (NOT on closed/wont_do — D259; append is meta-only — D255) | any spec/open | **yes**  | n/a              |
 | `close`                  | production/meta work shipped           | open/etc.    | no       | `reopen`         |
 | `wont_do`                | production/meta work dropped           | open/etc.    | no       | terminal forever |
 | `retire`                 | design/schema spec 100% abandoned      | spec/retired | no       | terminal forever |
 
 The three edit variants are operationally equivalent (same cascade, same S7 audit row, same `delta` requirement); they differ only in how the new description is computed:
 - `edit(description=…)` — full new body; for sweeping rewrites or small bodies.
-- `edit_append(content, delta)` — append; only the snippet crosses the wire.
-- `edit_replace_substring(old, new, delta)` — replace an exact UNIQUE substring (non-unique refused with the count; empty `new` = deletion; `old == new` = no-op).
+- `edit_append(content, delta)` — append; **META-ONLY (D255)**: refused on design/schema (a coherent current-state body, D250) and on production (a forecast-then-record that must not accrete) — only meta, the notepad, appends. Only the snippet crosses the wire.
+- `edit_replace_substring(old, new, delta)` — replace an exact UNIQUE substring (non-unique refused with the count; empty `new` = deletion; `old == new` = no-op). Allowed on production (a rewrite, for correction / scope-shrink).
 - do: prefer the diff ops for large bodies — the transmission cost compounds over a session (see T179). They cut transmission, not cascade.
 - return is lean by default (T242): all three echo back the now-stale neighbor set (your reconcile obligation) but NOT the focal body you just wrote — pass `include_description=True` only when you need to re-read the reconstructed body to verify the edit landed.
 
@@ -107,8 +128,8 @@ The three edit variants are operationally equivalent (same cascade, same S7 audi
 
 ### edit — change content
 - why: keeps the task the source of truth; the D29/S7 audit preserves prior verbatim, so editing in place is safe and recoverable.
-- do: edit for any content change on any status (open/spec/closed/wont_do/retired) with a `delta` naming the real semantic shift. Edits on design/schema fire the D31 code-check reminder — grep the slice id and verify the code.
-- don't-do: try to edit the frozen `wont_do`/`retire` reason (no API). Before any cosmetic edit, see *Edits aren't free*.
+- do: edit an OPEN production/meta task, a spec design/schema slice, or a RETIRED slice, with a `delta` naming the real semantic shift. On production, edit is for **correction / scope-shrink only** — a wrong forecast of the code path is a legitimate correction (D255); to ADD scope, spawn a new production task; to record a decision, edit the spec slice. Edits on design/schema fire the D31 code-check reminder — grep the slice id and verify the code.
+- don't-do: edit a **closed or wont_do** task — they are frozen records (D259, refused). To change a closed task, `reopen` it first, edit while open, then close again; a wont_do task is terminal forever (create a new task). Never edit the frozen `wont_do`/`retire` reason (no API). Before any cosmetic edit, see *Edits aren't free*.
 
 ### close — production/meta work shipped
 - why: close means "we did this" (distinct from wont_do = "we decided not to").
@@ -190,19 +211,20 @@ tool telling you the plan is currently inconsistent.
 - do: name + describe every task with specific, distinctive terms (the component / function / table / feature), and mirror that exact vocabulary in file names, function names, and comments, so a search for one finds the other. When code and task disagree, edit the task — it's the source of truth.
 - don't-do: vague titles (`"fix bug"`, `"update logic"`) — unsearchable, intent unrecoverable; let code↔task vocabulary drift (treat a mismatch as a defect, not a style nit).
 
-## Fold-backs — implementation teaches planning
-- why: no plan is complete — implementation reveals the missed call site, the unsimulated CHECK, the wording that reads wrong only in practice. That gap is the highest-value feedback the work produces; the commit captures the bug, but only the task body survives to the next agent. (The v0.5 `reopen()`/`load()` partition bugs were exactly this — see T168.)
-- do: when a commit fixes a bug or changes behavior the responsible task body doesn't describe, edit that body the SAME turn — append a "Phase N finding" (symptom / root cause / fix / why-missed / pinning test). Trace which task's enumeration should have caught it: edit the D# if the design was wrong, the impl task if it was under-enumerated. At an enumeration sweep's end, grep for the pattern family (`status =`, `INSERT…status`), not the verb names.
-- don't-do: leave the fix only in the commit message (not searchable from the task graph); ship a fix without its fold-back.
+## Fold-backs — route each learning to its home (D258)
+- why: no plan is complete — implementation reveals the missed call site, the unsimulated CHECK, the wording that reads wrong only in practice. That gap is the highest-value feedback the work produces. But "fold it into the task I'm in" is exactly how decisions strand: during build the active task is `production`, so a decision lands in the wrong layer (D245). Fold-back is a **routing** discipline, not an append-to-the-current-body reflex.
+- do: classify each learning and send it to its home —
+  - **a decision** (design/schema-grade — alters what's decided or the store's shape) → the spec slice: `edit` the governing D#/S#, or `add kind=design`/`schema` + link. NEVER the production body.
+  - **transient progress** (built X, verified Y, committed `<hash>`) → NOT tackit at all — git + `close`/status already carry it. (An actionless learning worth keeping → memory.)
+  - **a correction or scope-shrink** to the CURRENT production task (e.g. a wrong forecast of the code path) → rewrite its body with `edit` / `edit_replace_substring` (append is refused on production — D255). This is the only fold-back that touches a production body, and it corrects, never adds. When a correction reveals a systematic miss, grep for the pattern family (`status =`, `INSERT…status`), not the verb names.
+- don't-do: append a "Phase N finding" to the production task you're in (the strand vector — D255/D258 refuse it); leave a fix only in the commit message when it settled a decision that belongs in a slice.
 
-**Mandatory end-of-turn fold-back report.** Every turn with a code commit or behavior change states which task bodies absorbed discoveries — or "none — verified no scope gap." Tag each discovery **decision** (name the spec slice it landed in) or **impl** (production body); a decision recorded in a production body is a defect to fix, not a satisfied fold-back (D245). Silence is an incomplete turn.
+**Mandatory end-of-turn fold-back report.** Every turn with a code commit or behavior change states where each discovery was routed — or "none — verified no scope gap." Tag each: **decision** (name the spec slice it landed in), **correction** (the production body it fixed), or **progress** (git/memory — not tackit). A decision recorded in a production body is a defect (D245); an *additive* fold-back into a production body is a defect (D255/D258). Silence is an incomplete turn.
 
-### When findings outgrow the body — fold them out to a sibling
-- why: cumulative Phase N findings can dwarf the original scope and make every edit expensive (T168 hit 57k chars unsplit).
-- do: when about to add the 3rd substantial finding (or findings exceed the original body), file a sibling `<source-task> — findings` task, link it (`because: "absorbs Phase N+ findings from <source-task>"`), and put further findings there.
-- don't-do: retroactively split a body that already grew (the cost usually exceeds continuing).
-
-**Per-discovery format (reference):** `### Phase N finding — <label>` then **Symptom / Root cause / Fix / Why missed / Pinning test / Status (fixed in <hash>)**.
+### When findings outgrow the body — split at the boundary
+- why: a meta notepad accreting findings, or a spec slice accreting decisions, can dwarf its scope and make every edit expensive (T168 hit 57k chars unsplit). (Production bodies don't accrete at all now — correction-rewrite only, per D258.)
+- do: when findings outgrow the body — about the 3rd substantial finding — split at the logical boundary: for a meta notepad, file a sibling `<source> — findings` note and link it (meta↔meta); for a spec slice, carve finer slices. Rewrite a spec slice coherently (D250), never stack dated blocks.
+- don't-do: retroactively split a body that already grew when continuing costs less.
 
 ## A decision homes in a spec slice, not a production body (D245)
 - why: a design/schema-grade decision folded into the production/meta task that surfaced it strands there — the governing spec slice silently goes stale, the decision isn't discoverable from the spec layer, and the link + a routine `reconcile` make the graph *look* maintained. Fold-back is what routes it wrong: during build work the active task is `production`, so "fold it into the task I'm in" lands a decision in the wrong layer.

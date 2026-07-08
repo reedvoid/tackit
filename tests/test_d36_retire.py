@@ -65,8 +65,10 @@ def test_retire_does_not_stale_neighbors(core):
     """retire() does NOT fire the cascade (status change, not content edit;
     symmetric with close + wont_do)."""
     core.add("d1", kind="design")
-    core.add("p1", kind="production")
-    core.link_add(1, 2, because="prod realizes design")
+    # T2's D256 creation-gate link IS the "prod realizes design" edge under
+    # test, so it's declared at creation via deps rather than a separate
+    # link_add call.
+    core.add("p1", kind="production", deps={1: "prod realizes design"})
     core.close(2)  # close prod so it isn't an open neighbor
     core.retire(1, reason="premise replaced", delta="retiring")
     assert core.get(2).stale is False
@@ -110,10 +112,11 @@ def test_retire_allowed_on_only_spec_neighbors(core):
 def test_retire_allowed_on_only_terminal_neighbors(core):
     """Neighbors that are closed/wont_do/retired don't block retire."""
     core.add("d1", kind="design")
-    core.add("p1", kind="production")
-    core.add("p2", kind="production")
-    core.link_add(1, 2, because="prod realizes design")
-    core.link_add(1, 3, because="prod realizes design")
+    # T2/T3's D256 creation-gate links ARE the "prod realizes design" edges
+    # under test, so they're declared at creation via deps rather than
+    # separate link_add calls.
+    core.add("p1", kind="production", deps={1: "prod realizes design"})
+    core.add("p2", kind="production", deps={1: "prod realizes design"})
     core.close(2)
     core.wont_do(3, reason="dropped", delta="dropped")
     core.retire(1, reason="legit", delta="retiring")
@@ -137,19 +140,26 @@ def test_retire_allowed_on_only_terminal_neighbors(core):
 def test_retire_refused_on_non_spec_status(core, status, kind):
     """retire() refused unless status='spec'. Parametrize covers each non-
     spec status with a partition-valid kind."""
-    core.add("x", kind=kind)
+    if kind == "production":
+        core.add("anchor", kind="design")  # T1 -- D256 creation-gate anchor
+        core.add("x", kind=kind, deps={1: "x realizes anchor"})  # T2
+        target = 2
+    else:
+        core.add("x", kind=kind)  # T1
+        target = 1
     if status != "open":
-        _force_status(core, 1, status)
+        _force_status(core, target, status)
     with pytest.raises(InvariantError, match=r"status=|spec"):
-        core.retire(1, reason="legit", delta="trying to retire non-spec")
+        core.retire(target, reason="legit", delta="trying to retire non-spec")
 
 
 def test_retire_refused_on_production_kind(core):
     """retire() on a production task is refused (status check fires first --
     production can't have status='spec')."""
-    core.add("p1", kind="production")
+    core.add("anchor", kind="design")  # T1 -- D256 creation-gate anchor
+    core.add("p1", kind="production", deps={1: "p1 realizes anchor"})  # T2
     with pytest.raises(InvariantError, match=r"spec|status"):
-        core.retire(1, reason="legit", delta="trying")
+        core.retire(2, reason="legit", delta="trying")
 
 
 def test_retire_refused_on_meta_kind(core):
@@ -172,14 +182,21 @@ def test_retire_refused_on_stale_target(core):
 
 def test_retire_refused_on_linked_stale_neighbor(core):
     """A spec target whose linked neighbor is open+stale (obligation-bearing)
-    is refused by the close-gate logic."""
-    core.add("d1", kind="design")
-    core.add("p1", kind="production")
-    core.add("p2", kind="production")
-    core.link_add(1, 2, because="prod realizes design")
-    core.link_add(2, 3, because="p1 consumes p2")
-    core.edit(3, description="x", delta="p2 shifted")  # stales p1 (T2)
-    assert core.get(2).stale is True and core.get(2).status == "open"
+    is refused by the close-gate logic.
+
+    p2's D256 creation-gate anchor is a SEPARATE schema slice (T2), not d1
+    (T1) itself: if p2 depended on d1 directly, editing p2 would cascade-
+    stale d1 too (as p2's own direct neighbor) and the retire(d1) refusal
+    would fire on d1's OWN stale flag (check 4) instead of the linked-stale-
+    neighbor check (check 5) this test targets. Keeping p2's anchor separate
+    keeps d1 clean so only p1's staleness trips the linked-stale gate."""
+    core.add("d1", kind="design")  # T1 -- the retire target
+    core.add("gate_anchor", kind="schema")  # T2 -- p2's D256 anchor only
+    core.add("p1", kind="production", deps={1: "prod realizes design"})  # T3
+    core.add("p2", kind="production", deps={2: "p2 realizes gate_anchor"})  # T4
+    core.link_add(3, 4, because="p1 consumes p2")
+    core.edit(4, description="x", delta="p2 shifted")  # stales p1 (T3)
+    assert core.get(3).stale is True and core.get(3).status == "open"
     with pytest.raises(InvariantError, match=r"unreconciled|stale"):
         core.retire(1, reason="legit", delta="trying")
 
@@ -191,12 +208,14 @@ def test_retire_refused_on_linked_stale_neighbor(core):
 
 def test_retire_refused_on_open_neighbor_lists_each_with_because(core):
     """retire() refusal when a linked neighbor is status='open' lists each
-    such neighbor with its `because` rationale."""
+    such neighbor with its `because` rationale.
+
+    p1/p2's D256 creation-gate link to d1 IS the exact edge under test, so
+    it's declared at creation via deps (the `because` moves there too)
+    rather than via a separate link_add call."""
     core.add("d1", kind="design")
-    core.add("p1", kind="production")
-    core.add("p2", kind="production")
-    core.link_add(1, 2, because="p1 realizes d1 contract")
-    core.link_add(1, 3, because="p2 realizes d1 sub-contract")
+    core.add("p1", kind="production", deps={1: "p1 realizes d1 contract"})
+    core.add("p2", kind="production", deps={1: "p2 realizes d1 sub-contract"})
     with pytest.raises(InvariantError) as excinfo:
         core.retire(1, reason="legit", delta="trying")
     msg = str(excinfo.value)
@@ -207,10 +226,12 @@ def test_retire_refused_on_open_neighbor_lists_each_with_because(core):
 
 def test_retire_open_neighbor_refusal_contains_decision_tree(core):
     """The refusal message presents the (i)/(ii) decision tree (link_rm +
-    wont_do vs link_rm alone) so the agent has the workflow inline."""
+    wont_do vs link_rm alone) so the agent has the workflow inline.
+
+    p1's D256 creation-gate link to d1 IS the edge under test, so it's
+    declared at creation via deps rather than a separate link_add call."""
     core.add("d1", kind="design")
-    core.add("p1", kind="production")
-    core.link_add(1, 2, because="setup")
+    core.add("p1", kind="production", deps={1: "setup"})
     with pytest.raises(InvariantError) as excinfo:
         core.retire(1, reason="legit", delta="trying")
     msg = str(excinfo.value)
@@ -318,19 +339,26 @@ def test_reopen_refused_on_retired_with_fresh_D_message(core):
 
 
 def test_link_add_refused_when_a_is_retired(core):
-    core.add("d1", kind="design")
-    core.add("p1", kind="production")
-    core.retire(1, reason="legit", delta="retiring")
+    # p1 must NOT be pre-linked to d1 (the retired endpoint under test) --
+    # its D256 creation-gate anchor is a separate design slice, so the
+    # link_add(d1, p1) call below is genuinely the first edge between them
+    # and actually exercises the retired-endpoint check instead of no-op'ing
+    # on an already-existing edge.
+    core.add("anchor", kind="design")  # T1 -- p1's D256 anchor only
+    core.add("d1", kind="design")  # T2 -- the retired endpoint under test
+    core.add("p1", kind="production", deps={1: "p1 realizes anchor"})  # T3
+    core.retire(2, reason="legit", delta="retiring")
     with pytest.raises(InvariantError, match=r"retired"):
-        core.link_add(1, 2, because="trying to link")
+        core.link_add(2, 3, because="trying to link")
 
 
 def test_link_add_refused_when_b_is_retired(core):
-    core.add("p1", kind="production")
-    core.add("d1", kind="design")
-    core.retire(2, reason="legit", delta="retiring")
+    core.add("anchor", kind="design")  # T1 -- p1's D256 anchor only
+    core.add("p1", kind="production", deps={1: "p1 realizes anchor"})  # T2
+    core.add("d1", kind="design")  # T3 -- the retired endpoint under test
+    core.retire(3, reason="legit", delta="retiring")
     with pytest.raises(InvariantError, match=r"retired"):
-        core.link_add(1, 2, because="trying to link")
+        core.link_add(2, 3, because="trying to link")
 
 
 def test_link_add_refused_when_both_retired(core):
@@ -344,14 +372,19 @@ def test_link_add_refused_when_both_retired(core):
 
 def test_link_add_retired_refusal_message_format(core):
     """The refusal message names the retired endpoint with its kind-letter
-    prefix and explains that retired specs accept no new edges."""
-    core.add("d1", kind="design")
-    core.add("p1", kind="production")
-    core.retire(1, reason="legit", delta="retiring")
+    prefix and explains that retired specs accept no new edges.
+
+    Same pre-link-independence rationale as test_link_add_refused_when_a_is_retired
+    -- p1's D256 anchor must be a separate design slice so the link_add call
+    below is genuinely the first edge and exercises the retired check."""
+    core.add("anchor", kind="design")  # T1 -- p1's D256 anchor only
+    core.add("d1", kind="design")  # T2 -- the retired endpoint under test
+    core.add("p1", kind="production", deps={1: "p1 realizes anchor"})  # T3
+    core.retire(2, reason="legit", delta="retiring")
     with pytest.raises(InvariantError) as excinfo:
-        core.link_add(1, 2, because="trying to link")
+        core.link_add(2, 3, because="trying to link")
     msg = str(excinfo.value)
-    assert "D1" in msg
+    assert "D2" in msg
     assert "retired" in msg
 
 
@@ -373,10 +406,13 @@ def test_edit_on_retired_allowed(core):
 
 def test_edit_on_retired_fires_cascade_record_only(core):
     """Edit on retired fires the cascade depth-1; closed neighbors get
-    flagged stale (record-only per D28)."""
+    flagged stale (record-only per D28).
+
+    p1's D256 creation-gate link to d1 IS the "prod realizes design" edge
+    under test, so it's declared at creation via deps rather than a
+    separate link_add call."""
     core.add("d1", kind="design")
-    core.add("p1", kind="production")
-    core.link_add(1, 2, because="prod realizes design")
+    core.add("p1", kind="production", deps={1: "prod realizes design"})
     core.close(2)  # close so retire isn't blocked by open neighbor
     core.retire(1, reason="legit", delta="retiring")
     core.edit(1, description="updated", delta="post-retire prose fix")

@@ -29,7 +29,18 @@ def _drive(tmp_path, monkeypatch, scenario):
     async def runner():
         srv = mcp_server.build_server()
         async with connect(srv._mcp_server) as session:
-            await session.call_tool("add", {"name": "a task", "kind": "production"})
+            # D256 creation-gate: a production task must link a design/schema
+            # slice at creation, so seed a spec anchor (id 1) first and link
+            # the production task (id 2) to it.
+            await session.call_tool("add", {"name": "spec anchor", "kind": "design"})
+            await session.call_tool(
+                "add",
+                {
+                    "name": "a task",
+                    "kind": "production",
+                    "deps": {"1": "realizes the anchor"},
+                },
+            )
             return await scenario(session)
 
     return asyncio.run(runner())

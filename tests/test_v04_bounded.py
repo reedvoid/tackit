@@ -20,34 +20,35 @@ from tackit.errors import InvariantError
 def test_stale_worklist_excludes_closed_production(core):
     """Closed production task carrying stale=1 (cascade record) is NOT on the
     worklist. The flag stays as record but doesn't pressure the agent."""
-    core.add("upstream", kind="production")  # T1
-    core.add("downstream", kind="production")  # T2
-    core.link_add(2, 1, because="setup")
-    core.close(2)  # T2 closed
-    core.edit(1, description="x", delta="upstream shifted")  # cascade stales T2
-    # T2 is closed + stale=1 (record), but worklist excludes it.
-    t2 = core.get(2)
-    assert t2.status == "closed" and t2.stale is True
+    core.add("anchor", kind="design")  # T1 -- D256 creation-gate anchor
+    core.add("upstream", kind="production", deps={1: "realizes anchor"})  # T2
+    core.add("downstream", kind="production", deps={1: "realizes anchor"})  # T3
+    core.link_add(3, 2, because="setup")
+    core.close(3)  # T3 closed
+    core.edit(2, description="x", delta="upstream shifted")  # cascade stales T3
+    # T3 is closed + stale=1 (record), but worklist excludes it.
+    t3 = core.get(3)
+    assert t3.status == "closed" and t3.stale is True
     worklist_ids = {t.id for t in core.stale_worklist()}
-    assert 2 not in worklist_ids
+    assert 3 not in worklist_ids
 
 
 def test_stale_worklist_includes_open_stale(core):
     """Open stale tasks remain on the worklist (the obligation case)."""
-    core.add("upstream", kind="production")  # T1
-    core.add("downstream", kind="production")  # T2
-    core.link_add(2, 1, because="setup")
-    core.edit(1, description="x", delta="upstream shifted")
+    core.add("anchor", kind="design")  # T1 -- D256 creation-gate anchor
+    core.add("upstream", kind="production", deps={1: "realizes anchor"})  # T2
+    core.add("downstream", kind="production", deps={1: "realizes anchor"})  # T3
+    core.link_add(3, 2, because="setup")
+    core.edit(2, description="x", delta="upstream shifted")
     worklist_ids = {t.id for t in core.stale_worklist()}
-    assert 2 in worklist_ids
+    assert 3 in worklist_ids
 
 
 def test_stale_worklist_includes_spec_stale(core):
     """v0.5 D36: spec is the open-equivalent for design/schema. A stale spec
     row carries obligation -- it's on the worklist."""
     core.add("d1", kind="design")  # status='spec' default
-    core.add("p1", kind="production")
-    core.link_add(2, 1, because="prod realizes design")
+    core.add("p1", kind="production", deps={1: "prod realizes design"})
     core.edit(2, description="x", delta="prod shifted")  # cascade stales d1
     assert core.get(1).stale is True and core.get(1).status == "spec"
     worklist_ids = {t.id for t in core.stale_worklist()}
@@ -73,8 +74,7 @@ def test_stale_worklist_includes_spec_design_when_stale(core):
     worklist surfaces it under the new status-derived filter
     (status IN ('open','spec'))."""
     core.add("d_slice", kind="design")  # T1, spec by default
-    core.add("p_slice", kind="production")  # T2
-    core.link_add(2, 1, because="impl realizes design")
+    core.add("p_slice", kind="production", deps={1: "impl realizes design"})  # T2
     # Editing T2 stales its neighbor T1 (cascade).
     core.edit(2, description="x", delta="prod shifted")
     t1 = core.get(1)
@@ -89,31 +89,38 @@ def test_stale_worklist_includes_spec_design_when_stale(core):
 
 
 def test_close_gate_ignores_closed_stale_production_neighbors(core):
-    """T3 can close even when T2 (linked, closed, stale) sits in the
+    """T4 can close even when T3 (linked, closed, stale) sits in the
     neighborhood. Closed-stale production is record-only per D28."""
-    core.add("a", kind="production")  # T1
-    core.add("b", kind="production")  # T2
-    core.add("c", kind="production")  # T3
-    core.link_add(2, 1, because="setup")
+    core.add("anchor", kind="design")  # T1 -- D256 creation-gate anchor
+    core.add("a", kind="production", deps={1: "realizes anchor"})  # T2
+    core.add("b", kind="production", deps={1: "realizes anchor"})  # T3
+    core.add("c", kind="production", deps={1: "realizes anchor"})  # T4
     core.link_add(3, 2, because="setup")
-    core.close(2)
-    core.edit(1, description="x", delta="upstream shifted")  # T2 -> closed-stale
-    # Close T3 succeeds; closed-stale T2 doesn't pressure the gate.
-    result = core.close(3)
+    core.link_add(4, 3, because="setup")
+    core.close(3)
+    core.edit(2, description="x", delta="upstream shifted")  # T3 -> closed-stale
+    # The edit also stales the anchor (T1, a direct neighbor of T2 via
+    # deps) -- reconcile it so its spec-stale status (an obligation, per
+    # D28/D36) doesn't incidentally pressure the close-gate below. This is
+    # bookkeeping for the gate anchor, not part of what this test verifies.
+    core.reconcile(1)
+    # Close T4 succeeds; closed-stale T3 doesn't pressure the gate.
+    result = core.close(4)
     assert result.task.status == "closed"
 
 
 def test_close_gate_still_refuses_when_open_stale_in_neighborhood(core):
     """The bounded filter doesn't lift the gate -- it just filters which stale
     neighbors count. An OPEN stale neighbor still blocks close."""
-    core.add("a", kind="production")  # T1
-    core.add("b", kind="production")  # T2
-    core.add("c", kind="production")  # T3
-    core.link_add(2, 1, because="setup")
+    core.add("anchor", kind="design")  # T1 -- D256 creation-gate anchor
+    core.add("a", kind="production", deps={1: "realizes anchor"})  # T2
+    core.add("b", kind="production", deps={1: "realizes anchor"})  # T3
+    core.add("c", kind="production", deps={1: "realizes anchor"})  # T4
     core.link_add(3, 2, because="setup")
-    core.edit(1, description="x", delta="upstream shifted")  # T2 -> open-stale
+    core.link_add(4, 3, because="setup")
+    core.edit(2, description="x", delta="upstream shifted")  # T3 -> open-stale
     with pytest.raises(InvariantError, match="stale"):
-        core.close(3)
+        core.close(4)
 
 
 # ----------------------------------------------------------------------------
@@ -126,10 +133,8 @@ def test_links_expansion_excludes_closed_production(core):
     closed/wont_do production neighbors. The anchor layer (no input) is
     already design+schema-only and unchanged."""
     core.add("anchor", kind="design")  # T1
-    core.add("live_neighbor", kind="production")  # T2 (linked, open)
-    core.add("closed_neighbor", kind="production")  # T3 (linked, closed)
-    core.link_add(2, 1, because="setup")
-    core.link_add(3, 1, because="setup")
+    core.add("live_neighbor", kind="production", deps={1: "setup"})  # T2 (linked, open)
+    core.add("closed_neighbor", kind="production", deps={1: "setup"})  # T3 (linked, closed)
     core.close(3)
     out = core.links(ids=[1])
     ids = {n.id for n in out}
@@ -141,26 +146,28 @@ def test_links_expansion_excludes_retired_design(core):
     """v0.5 D36: retired design/schema slices are excluded from the links
     candidate filter -- they're no-longer-live spec, not viable link targets.
     The new predicate status IN ('open','spec') excludes 'retired'."""
-    core.add("anchor", kind="production")  # T1
-    core.add("retired_design", kind="design")  # T2 -- spec status by default
-    core.link_add(2, 1, because="design realized by prod")
+    core.add("gate_anchor", kind="design")  # T1 -- D256 creation-gate anchor
+    core.add("anchor", kind="production", deps={1: "realizes gate_anchor"})  # T2
+    core.add("retired_design", kind="design")  # T3 -- spec status by default
+    core.link_add(3, 2, because="design realized by prod")
     # Seed retired status (retire() verb arrives Phase 2b).
-    core.conn.execute("UPDATE tasks SET status = 'retired' WHERE id = 2;")
-    out = core.links(ids=[1])
+    core.conn.execute("UPDATE tasks SET status = 'retired' WHERE id = 3;")
+    out = core.links(ids=[2])
     ids = {n.id for n in out}
-    assert 2 not in ids  # retired design -> excluded by status filter
+    assert 3 not in ids  # retired design -> excluded by status filter
 
 
 def test_links_expansion_includes_spec_design(core):
     """v0.5 D36: spec design/schema slices ARE viable link targets (the
     open-equivalent for the spec partition). New predicate status IN
     ('open','spec') keeps them visible."""
-    core.add("anchor", kind="production")  # T1
-    core.add("live_design", kind="design")  # T2 -- spec status by default
-    core.link_add(2, 1, because="design realized by prod")
-    out = core.links(ids=[1])
+    core.add("gate_anchor", kind="design")  # T1 -- D256 creation-gate anchor
+    core.add("anchor", kind="production", deps={1: "realizes gate_anchor"})  # T2
+    core.add("live_design", kind="design")  # T3 -- spec status by default
+    core.link_add(3, 2, because="design realized by prod")
+    out = core.links(ids=[2])
     ids = {n.id for n in out}
-    assert 2 in ids  # spec design -> included
+    assert 3 in ids  # spec design -> included
 
 
 def test_links_expansion_keeps_spec_design_excludes_retired(core):
@@ -168,17 +175,18 @@ def test_links_expansion_keeps_spec_design_excludes_retired(core):
     (status IN ('open','spec')) keeps SPEC design slices visible (the
     live spec layer) and excludes RETIRED design slices (dead specs --
     not viable link targets)."""
-    core.add("anchor", kind="production")  # T1
-    core.add("spec_design", kind="design")  # T2 (spec)
-    core.add("retired_design", kind="design")  # T3 (will be retired)
-    core.link_add(2, 1, because="prod realizes spec design")
-    core.link_add(3, 1, because="prod once realized retired design")
-    # Force T3 retired via raw UPDATE (mirroring mig 009's destination).
-    core.conn.execute("UPDATE tasks SET status = 'retired' WHERE id = 3;")
-    out = core.links(ids=[1])
+    core.add("gate_anchor", kind="design")  # T1 -- D256 creation-gate anchor
+    core.add("anchor", kind="production", deps={1: "realizes gate_anchor"})  # T2
+    core.add("spec_design", kind="design")  # T3 (spec)
+    core.add("retired_design", kind="design")  # T4 (will be retired)
+    core.link_add(3, 2, because="prod realizes spec design")
+    core.link_add(4, 2, because="prod once realized retired design")
+    # Force T4 retired via raw UPDATE (mirroring mig 009's destination).
+    core.conn.execute("UPDATE tasks SET status = 'retired' WHERE id = 4;")
+    out = core.links(ids=[2])
     ids = {n.id for n in out}
-    assert 2 in ids  # spec design -> viable
-    assert 3 not in ids  # retired design -> excluded
+    assert 3 in ids  # spec design -> viable
+    assert 4 not in ids  # retired design -> excluded
 
 
 # ----------------------------------------------------------------------------
@@ -230,18 +238,20 @@ def test_mcp_tool_surface_has_no_supersede():
 def test_reconcile_refused_on_closed_production(core):
     """Reconcile on a closed production task is refused. Stale flag is
     record-only archaeology; clearing it would erase the signal."""
-    core.add("a", kind="production")
-    core.close(1)
+    core.add("anchor", kind="design")  # T1 -- D256 creation-gate anchor
+    core.add("a", kind="production", deps={1: "realizes anchor"})  # T2
+    core.close(2)
     with pytest.raises(InvariantError, match=r"record-only|archaeology"):
-        core.reconcile(1)
+        core.reconcile(2)
 
 
 def test_reconcile_refused_on_wont_do_production(core):
     """Same as closed-production -- wont_do production rows are record-only."""
-    core.add("a", kind="production")
-    core.wont_do(1, reason="not pursuing", delta="dropped")
+    core.add("anchor", kind="design")  # T1 -- D256 creation-gate anchor
+    core.add("a", kind="production", deps={1: "realizes anchor"})  # T2
+    core.wont_do(2, reason="not pursuing", delta="dropped")
     with pytest.raises(InvariantError, match=r"record-only|archaeology"):
-        core.reconcile(1)
+        core.reconcile(2)
 
 
 def test_reconcile_refused_on_closed_meta(core):
@@ -396,12 +406,13 @@ def test_wont_do_refused_on_spec_status_schema(core):
 def test_close_allowed_on_production_and_meta(core):
     """The kind gate is design/schema-only. Production and meta close
     normally."""
-    core.add("p1", kind="production")
-    core.add("m1", kind="meta")
-    core.close(1)
+    core.add("anchor", kind="design")  # T1 -- D256 creation-gate anchor
+    core.add("p1", kind="production", deps={1: "realizes anchor"})  # T2
+    core.add("m1", kind="meta")  # T3
     core.close(2)
-    assert core.get(1).status == "closed"
+    core.close(3)
     assert core.get(2).status == "closed"
+    assert core.get(3).status == "closed"
 
 
 # ----------------------------------------------------------------------------
@@ -435,8 +446,11 @@ def test_edit_schema_sets_code_check_reminder(core):
 def test_edit_production_does_not_set_code_check_reminder(core):
     """Production edits don't trigger the D31 nudge -- it's specifically for
     living spec edits where the agent might forget to grep the slice id."""
-    core.add("p1", kind="production", description="initial")
-    core.edit(1, description="updated", delta="refining")
+    core.add("anchor", kind="design")  # T1 -- D256 creation-gate anchor
+    core.add(
+        "p1", kind="production", description="initial", deps={1: "realizes anchor"}
+    )  # T2
+    core.edit(2, description="updated", delta="refining")
     assert core.last_code_check_reminder is None
 
 
@@ -448,11 +462,11 @@ def test_edit_meta_does_not_set_code_check_reminder(core):
 
 def test_code_check_reminder_resets_between_ops(core):
     """Like label_nudge / delta, the reminder reflects only the current op."""
-    core.add("d1", kind="design")
+    core.add("d1", kind="design")  # T1
     core.edit(1, description="updated", delta="refining")
     assert core.last_code_check_reminder is not None
     # A subsequent non-design op clears the reminder.
-    core.add("p1", kind="production")  # not an edit, but next op
+    core.add("p1", kind="production", deps={1: "realizes d1"})  # T2, not an edit, but next op
     # The next edit on a non-design task should clear and not re-set.
     core.edit(2, description="updated", delta="refining")
     assert core.last_code_check_reminder is None
@@ -466,20 +480,22 @@ def test_code_check_reminder_resets_between_ops(core):
 def test_search_hit_carries_status(core):
     """SearchHit includes the task's status so adapters can visually
     distinguish live work from historical record without opening each hit."""
-    core.add("alpha target", kind="production")
-    core.add("beta target", kind="production")
-    core.close(2)
+    core.add("anchor", kind="design")  # T1 -- D256 creation-gate anchor
+    core.add("alpha target", kind="production", deps={1: "realizes anchor"})  # T2
+    core.add("beta target", kind="production", deps={1: "realizes anchor"})  # T3
+    core.close(3)
     hits = core.search("target")
     by_id = {h.id: h for h in hits}
-    assert by_id[1].status == "open"
-    assert by_id[2].status == "closed"
+    assert by_id[2].status == "open"
+    assert by_id[3].status == "closed"
 
 
 def test_search_hit_includes_wont_do_reason(core):
     """A wont_do hit carries its durable reason inline so search results
     show why the scope was dropped without an extra fetch."""
-    core.add("dropped target", kind="production")
-    core.wont_do(1, reason="redundant with X", delta="dropping")
+    core.add("anchor", kind="design")  # T1 -- D256 creation-gate anchor
+    core.add("dropped target", kind="production", deps={1: "realizes anchor"})  # T2
+    core.wont_do(2, reason="redundant with X", delta="dropping")
     hits = core.search("dropped target")
     assert len(hits) == 1
     assert hits[0].status == "wont_do"
@@ -488,7 +504,8 @@ def test_search_hit_includes_wont_do_reason(core):
 
 def test_search_hit_wont_do_reason_null_on_non_wont_do(core):
     """wont_do_reason is only populated for wont_do hits."""
-    core.add("live target", kind="production")
+    core.add("anchor", kind="design")  # T1 -- D256 creation-gate anchor
+    core.add("live target", kind="production", deps={1: "realizes anchor"})  # T2
     hits = core.search("live target")
     assert hits[0].status == "open"
     assert hits[0].wont_do_reason is None
@@ -506,10 +523,10 @@ def test_stale_alert_uses_kind_letter_prefix_per_task(core):
     `S<id>`, production `T<id>`, meta `M<id>`."""
     from tackit.core import stale_alert_text
 
-    core.add("d", kind="design")
-    core.add("s", kind="schema")
-    core.add("p", kind="production")
-    core.add("m", kind="meta")
+    core.add("d", kind="design")  # T1
+    core.add("s", kind="schema")  # T2
+    core.add("p", kind="production", deps={1: "realizes d"})  # T3
+    core.add("m", kind="meta")  # T4
     msg = stale_alert_text(
         [core.get(1), core.get(2), core.get(3), core.get(4)]
     )
@@ -527,12 +544,11 @@ def test_close_gate_offender_list_uses_kind_letter_prefix(core):
     """T162: when close() refuses on a linked-stale neighborhood, the
     offender list names each offending neighbor with its own kind-letter
     prefix, not a blanket `T<id>`."""
-    core.add("anchor design", kind="design")
-    core.add("downstream prod", kind="production")
-    core.link_add(
-        a=1, b=2,
-        because="anchor's invariant decides whether prod is correct",
-    )
+    core.add("anchor design", kind="design")  # T1
+    core.add(
+        "downstream prod", kind="production",
+        deps={1: "anchor's invariant decides whether prod is correct"},
+    )  # T2
     # Stale the design by editing it; the production downstream gets staled
     # via the cascade (open production: stays on worklist per D28).
     core.edit(1, description="updated", delta="shift")
@@ -553,19 +569,21 @@ def test_reclassify_refusal_uses_kind_letter_prefix(core):
     and the reclassifying task with kind-letter prefixes, replacing the
     pre-T162 `T<id> (kind=...)` form whose parenthetical was redundant
     with the new prefix."""
-    core.add("prod1", kind="production")
-    core.add("prod2", kind="production")
-    core.link_add(a=1, b=2, because="same-kind coupling")
-    # Reclassifying T1 to meta would create a cross-kind link with T2.
+    core.add("anchor", kind="design")  # T1 -- D256 creation-gate anchor
+    core.add("prod1", kind="production", deps={1: "realizes anchor"})  # T2
+    core.add("prod2", kind="production", deps={1: "realizes anchor"})  # T3
+    core.link_add(a=2, b=3, because="same-kind coupling")
+    # Reclassifying T2 to meta would create a cross-kind link with T3 (and
+    # with the anchor T1).
     with pytest.raises(InvariantError) as excinfo:
-        core.reclassify(1, new_kind="meta", delta="experiment")
+        core.reclassify(2, new_kind="meta", delta="experiment")
     msg = str(excinfo.value)
     # The reclassifying task currently has kind=production, so its prefix
-    # in the refusal message is T1; the offender T2 (still production) is
-    # also T2. The OLD format would have included `T2 (kind=production)`
+    # in the refusal message is T2; the offender T3 (still production) is
+    # also T3. The OLD format would have included `T3 (kind=production)`
     # — T162 drops the redundant parenthetical in favor of the letter.
-    assert "T1" in msg
     assert "T2" in msg
+    assert "T3" in msg
     # The pre-T162 `(kind=production)` parenthetical for offenders is gone:
     assert "(kind=production)" not in msg
 
@@ -610,7 +628,11 @@ def test_add_deps_empty_because_refused(core):
     mode (zero signal for the cascade-ergonomics filter)."""
     from tackit.errors import ValidationError
 
-    core.add("base", kind="production")
+    # D256 doesn't gate design/schema creates -- "base" being design (rather
+    # than production) is orthogonal to what this test verifies (the
+    # deps={id: because} empty-rationale refusal), so it needs no D256
+    # creation-gate anchor of its own.
+    core.add("base", kind="design")
     with pytest.raises(ValidationError, match="because"):
         core.add("dependent", kind="production", deps={1: ""})
     with pytest.raises(ValidationError, match="because"):
@@ -622,11 +644,14 @@ def test_add_deps_empty_because_refused(core):
 def test_add_deps_real_because_stored_verbatim(core):
     """D33 / T164: add(deps={dep: '<real>'}) succeeds and stores the rationale
     on the link verbatim (no trimming beyond strip)."""
-    core.add("base", kind="production")
+    core.add("anchor", kind="design")  # T1 -- D256 creation-gate anchor
+    core.add("base", kind="production", deps={1: "realizes anchor"})  # T2
     rationale = "dep extends base's contract; changes here propagate"
-    core.add("dep", kind="production", deps={1: rationale})
+    # `dep` needs its own D256 spec link (to the anchor) in addition to the
+    # base-coupling edge under test.
+    core.add("dep", kind="production", deps={1: "realizes anchor", 2: rationale})  # T3
     row = core.conn.execute(
-        "SELECT because FROM links WHERE task_a=1 AND task_b=2"
+        "SELECT because FROM links WHERE task_a=2 AND task_b=3"
     ).fetchone()
     assert row["because"] == rationale
 
@@ -683,10 +708,16 @@ def test_load_plan_with_real_rationales_succeeds(core):
     and the rationales land on the links verbatim."""
     from tackit.plan import parse_plan
 
+    # D256 creation-gate: every production spec (`a`, `b`) must carry a
+    # depends_on edge to a design/schema batch-key -- `anchor` here.
     plan = (
+        "[anchor] governing decision\n  kind: design\n"
         "[a] alpha\n  kind: production\n"
+        "  depends_on:\n    anchor :: alpha realizes the governing decision\n"
         "[b] beta\n  kind: production\n"
-        "  depends_on:\n    a :: beta builds on alpha's published interface\n"
+        "  depends_on:\n"
+        "    anchor :: beta realizes the governing decision\n"
+        "    a :: beta builds on alpha's published interface\n"
     )
     keymap = core.load(parse_plan(plan))
     row = core.conn.execute(
@@ -702,8 +733,11 @@ def test_internal_add_link_still_refuses_empty_because(core):
     shortcut removal hasn't loosened the canonical path."""
     from tackit.errors import ValidationError
 
-    core.add("a", kind="production")
-    core.add("b", kind="production")
+    # D256 doesn't gate design creates -- `a`/`b` being design (rather than
+    # production) is orthogonal to what this test verifies (link_add's
+    # empty-because refusal), so it needs no D256 creation-gate anchor.
+    core.add("a", kind="design")
+    core.add("b", kind="design")
     with pytest.raises(ValidationError, match="because"):
         core.link_add(a=1, b=2, because="")
     with pytest.raises(ValidationError, match="because"):
@@ -719,11 +753,13 @@ def test_internal_add_link_still_refuses_empty_because(core):
 def test_show_dep_entries_carry_link_because(core):
     """D34 / T166: each dep entry in the slice envelope carries the link's
     `because` rationale (T116 stored, now surfaced)."""
-    core.add("a", kind="production")
-    core.add("b", kind="production")
+    # `b` doubles as the D256 creation-gate anchor for `a` (a design task
+    # that `a` links to at creation) -- this keeps `a`'s link count at
+    # exactly 1 (the assertion below) instead of adding a separate anchor.
+    core.add("b", kind="design")  # T1
     rationale = "b extends a's contract; changes to a require b's review"
-    core.link_add(a=1, b=2, because=rationale)
-    slice_ = core.show(1)
+    core.add("a", kind="production", deps={1: rationale})  # T2
+    slice_ = core.show(2)
     assert len(slice_.links) == 1
     assert slice_.links[0].because == rationale
 
@@ -731,22 +767,23 @@ def test_show_dep_entries_carry_link_because(core):
 def test_show_dep_entries_carry_last_edit_delta(core):
     """D34 / T166: each dep entry carries the neighbor's most-recent edit
     delta from S7 (D29) so the FAST filter can compare delta x because."""
-    core.add("a", kind="production")
-    core.add("b", kind="production")
-    core.link_add(a=1, b=2, because="b couples to a's behavior")
+    # `b` doubles as the D256 creation-gate anchor for `a` (see the sibling
+    # test above for the same pattern).
+    core.add("b", kind="design")  # T1
+    core.add("a", kind="production", deps={1: "b couples to a's behavior"})  # T2
     # Edit B; its last delta should surface on A's dep entry for B.
-    core.edit(2, description="new shape", delta="changed b's serialization")
-    slice_ = core.show(1)
+    core.edit(1, description="new shape", delta="changed b's serialization")
+    slice_ = core.show(2)
     assert slice_.links[0].last_edit_delta == "changed b's serialization"
 
 
 def test_show_last_edit_delta_none_if_neighbor_never_edited(core):
     """D34 / T166: `last_edit_delta` is None when the neighbor has no S7
     history."""
-    core.add("a", kind="production")
-    core.add("b", kind="production")
-    core.link_add(a=1, b=2, because="coupling")
-    slice_ = core.show(1)
+    # `b` doubles as the D256 creation-gate anchor for `a`.
+    core.add("b", kind="design")  # T1
+    core.add("a", kind="production", deps={1: "coupling"})  # T2
+    slice_ = core.show(2)
     assert slice_.links[0].last_edit_delta is None
 
 
@@ -755,17 +792,17 @@ def test_show_because_reminder_fires_iff_a_dep_is_stale(core):
     stale. It's the single DRY-sourced LINK_BECAUSE_REMINDER constant."""
     from tackit.core import LINK_BECAUSE_REMINDER
 
-    core.add("a", kind="production")
-    core.add("b", kind="production")
-    core.link_add(a=1, b=2, because="coupling")
+    # `b` doubles as the D256 creation-gate anchor for `a`.
+    core.add("b", kind="design")  # T1
+    core.add("a", kind="production", deps={1: "coupling"})  # T2
     # Neither is stale -> no reminder.
-    assert core.show(1).because_reminder is None
+    assert core.show(2).because_reminder is None
     # Edit b: a is now stale via the cascade.
-    core.edit(2, description="updated", delta="b's prose changed")
-    a_view = core.show(1)
+    core.edit(1, description="updated", delta="b's prose changed")
+    a_view = core.show(2)
     assert a_view.task.stale is True
     # When viewing b, its dep `a` is stale -> reminder fires.
-    b_view = core.show(2)
+    b_view = core.show(1)
     # a (its neighbor) carries stale=True via cascade.
     assert any(n.stale for n in b_view.links)
     assert b_view.because_reminder == LINK_BECAUSE_REMINDER
@@ -807,11 +844,14 @@ def test_search_name_only_excludes_description_hits(core):
     so a term that appears only in description does NOT surface. Default
     (name_only=False) still matches name+description per D17.
     """
+    core.add("anchor", kind="design")  # T1 -- D256 creation-gate anchor
     # Term "auriga" appears only in DESCRIPTION; "aldebaran" only in NAME.
     core.add("aldebaran lookup", kind="production",
-             description="this body mentions auriga only")
+             description="this body mentions auriga only",
+             deps={1: "realizes anchor"})  # T2
     core.add("vega lookup", kind="production",
-             description="aldebaran appears here in description only")
+             description="aldebaran appears here in description only",
+             deps={1: "realizes anchor"})  # T3
 
     # Default search: matches both (one via name, one via description).
     default_hits = core.search("aldebaran")
@@ -820,7 +860,7 @@ def test_search_name_only_excludes_description_hits(core):
     # name_only: only the row whose NAME contains 'aldebaran'.
     name_hits = core.search("aldebaran", name_only=True)
     assert len(name_hits) == 1
-    assert name_hits[0].id == 1
+    assert name_hits[0].id == 2
 
     # name_only excludes description-only matches entirely.
     auriga_name_hits = core.search("auriga", name_only=True)
@@ -828,4 +868,4 @@ def test_search_name_only_excludes_description_hits(core):
     # And the description-default version finds it.
     auriga_default_hits = core.search("auriga")
     assert len(auriga_default_hits) == 1
-    assert auriga_default_hits[0].id == 1
+    assert auriga_default_hits[0].id == 2

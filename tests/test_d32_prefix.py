@@ -125,55 +125,67 @@ def test_searchhit_prefixed_name():
 
 
 def test_search_by_synthesized_prefix_finds_row(core: Core):
+    core.add("spec anchor", kind="design")  # D1
     # Create a production task. Its name has NO "T" string in it.
-    core.add("frobnitz the gizmo", kind="production")  # id should be 1
+    core.add(
+        "frobnitz the gizmo", kind="production", deps={1: "realizes the anchor"}
+    )  # id should be 2
     # Search for the synthesized prefix.
-    hits = core.search("T1")
+    hits = core.search("T2")
     assert len(hits) == 1
-    assert hits[0].id == 1
+    assert hits[0].id == 2
     assert hits[0].name == "frobnitz the gizmo"
     # prefixed_name on the hit is the synthesized form.
-    assert hits[0].prefixed_name == "T1 — frobnitz the gizmo"
+    assert hits[0].prefixed_name == "T2 — frobnitz the gizmo"
 
 
 def test_search_prefix_distinguishes_kinds(core: Core):
+    core.add("spec anchor", kind="design")  # D1
     # Two tasks at adjacent ids; different kinds.
-    core.add("alpha bravo", kind="production")  # T1
-    core.add("charlie delta", kind="design")  # D2
+    core.add("alpha bravo", kind="production", deps={1: "realizes the anchor"})  # T2
+    core.add("charlie delta", kind="design")  # D3
     # v0.5 D36 / T176: kind/status partition defaults apply at create time
     # -- production lands at status='open', design lands at status='spec'.
-    assert core.get(1).status == "open"
-    assert core.get(2).status == "spec"
-    # T1 finds only the production task.
-    t_hits = core.search("T1")
-    assert [h.id for h in t_hits] == [1]
-    # D2 finds only the design task.
-    d_hits = core.search("D2")
-    assert [h.id for h in d_hits] == [2]
+    assert core.get(2).status == "open"
+    assert core.get(3).status == "spec"
+    # T2 finds only the production task.
+    t_hits = core.search("T2")
+    assert [h.id for h in t_hits] == [2]
+    # D3 finds only the second design task.
+    d_hits = core.search("D3")
+    assert [h.id for h in d_hits] == [3]
 
 
 def test_search_by_bare_name_still_works(core: Core):
     """The literal user-supplied name is still in the indexed text (it's
     appended after the prefix), so existing search-by-keyword behavior is
     preserved alongside the new search-by-prefix capability."""
-    core.add("rotate the JWT signing keys", kind="production")
+    core.add("spec anchor", kind="design")  # D1
+    core.add(
+        "rotate the JWT signing keys",
+        kind="production",
+        deps={1: "realizes the anchor"},
+    )  # T2
     hits = core.search("JWT")
     assert len(hits) == 1
-    assert hits[0].id == 1
+    assert hits[0].id == 2
 
 
 def test_search_updated_name_reindexes_with_prefix(core: Core):
     """After edit() changes a task's name, the FTS row is replaced (the AU
     trigger fires delete-then-insert with the new prefixed name)."""
-    core.add("old phrasing", kind="production")  # T1
-    core.edit(1, name="new phrasing", delta="renamed for clarity")
+    core.add("spec anchor", kind="design")  # D1
+    core.add(
+        "old phrasing", kind="production", deps={1: "realizes the anchor"}
+    )  # T2
+    core.edit(2, name="new phrasing", delta="renamed for clarity")
     # Old name no longer indexed.
     assert core.search("old") == []
     # New name indexed.
     new_hits = core.search("new")
     assert len(new_hits) == 1
     # And prefix lookup still works.
-    prefix_hits = core.search("T1")
+    prefix_hits = core.search("T2")
     assert len(prefix_hits) == 1
     assert prefix_hits[0].name == "new phrasing"
 

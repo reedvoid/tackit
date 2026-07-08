@@ -18,13 +18,14 @@ from tackit.core import Core
 # --- Pass 1: each neighbour once; the dual keys are gone ---------------------
 
 def test_slice_has_single_links_list_no_dual_keys(core):
-    core.add("focal", kind="production")          # 1
-    core.add("n-a", kind="production")            # 2
-    core.add("n-b", kind="production")            # 3
-    core.link_add(1, 2, because="1 couples to 2's contract")
-    core.link_add(1, 3, because="1 couples to 3's contract")
-    s = core.show(1)
-    assert [n.id for n in s.links] == [2, 3]      # each exactly once, id-ordered
+    core.add("spec anchor", kind="design")        # D1
+    core.add("focal", kind="production", deps={1: "realizes the anchor decision"})  # 2
+    core.add("n-a", kind="production", deps={1: "realizes the anchor decision"})    # 3
+    core.add("n-b", kind="production", deps={1: "realizes the anchor decision"})    # 4
+    core.link_add(2, 3, because="focal couples to n-a's contract")
+    core.link_add(2, 4, because="focal couples to n-b's contract")
+    s = core.show(2)
+    assert [n.id for n in s.links] == [1, 3, 4]   # anchor + each neighbour exactly once, id-ordered
     dumped = s.model_dump()
     assert "links" in dumped
     assert "dependencies" not in dumped and "dependents" not in dumped
@@ -33,43 +34,50 @@ def test_slice_has_single_links_list_no_dual_keys(core):
 # --- Pass 1: symmetry -- a links b  <=>  b links a, each once ----------------
 
 def test_links_are_symmetric_and_unduplicated(core):
-    core.add("a", kind="production")              # 1
-    core.add("b", kind="production")              # 2
-    core.link_add(1, 2, because="a couples to b")
-    assert [n.id for n in core.show(1).links] == [2]
-    assert [n.id for n in core.show(2).links] == [1]
+    core.add("spec anchor", kind="design")        # D1
+    core.add("a", kind="production", deps={1: "realizes the anchor decision"})  # 2
+    core.add("b", kind="production", deps={1: "realizes the anchor decision"})  # 3
+    core.link_add(2, 3, because="a couples to b")
+    assert [n.id for n in core.show(2).links] == [1, 3]
+    assert [n.id for n in core.show(3).links] == [1, 2]
 
 
 # --- Pass 2: degenerate -- 0 and 1 links ------------------------------------
 
 def test_zero_links_is_empty_list_key_present(core):
-    core.add("lonely", kind="production")
+    # design creation is unaffected by the D256 gate, so a genuinely
+    # zero-link task is still directly constructible.
+    core.add("lonely", kind="design")
     s = core.show(1)
     assert s.links == []
     assert "links" in s.model_dump()
 
 
 def test_one_link(core):
-    core.add("a", kind="production")
-    core.add("b", kind="production")
-    core.link_add(1, 2, because="a couples to b")
-    assert len(core.show(1).links) == 1
+    # a's single link is the anchor it was linked to at creation (D256
+    # gate) -- a clean, direct way to get a task with exactly one neighbour.
+    core.add("spec anchor", kind="design")  # D1
+    core.add("a", kind="production", deps={1: "realizes the anchor decision"})  # 2
+    assert len(core.show(2).links) == 1
 
 
 # --- Pass 1 non-regression: D34 because + delta + reminder on the one list ---
 
 def test_d34_because_and_reminder_survive_on_links(core):
-    core.add("a", kind="production")              # 1
-    core.add("b", kind="production")              # 2
-    core.link_add(1, 2, because="b extends a's contract")
-    # edit b -> a (its neighbour) goes stale, and b gains a last_edit_delta.
-    core.edit(2, description="changed", delta="reworked b's output shape")
-    # viewing a: its single link entry for b carries because + b's delta.
-    a_link = core.show(1).links[0]
+    core.add("spec anchor", kind="design")        # D1
+    core.add("a", kind="production", deps={1: "realizes the anchor decision"})  # 2
+    core.add("b", kind="production", deps={1: "realizes the anchor decision"})  # 3
+    core.link_add(2, 3, because="b extends a's contract")
+    # edit b -> its neighbours (a AND the anchor) go stale, and b gains a
+    # last_edit_delta.
+    core.edit(3, description="changed", delta="reworked b's output shape")
+    # viewing a: among its links (anchor + b), b's entry carries because + delta.
+    a_link = next(n for n in core.show(2).links if n.id == 3)
     assert a_link.because == "b extends a's contract"
     assert a_link.last_edit_delta == "reworked b's output shape"
-    # viewing b: its link entry a is stale -> the FAST-filter reminder fires,
-    # now keyed off the single `links` list (not the old dual lists).
-    b_view = core.show(2)
+    # viewing b: its link entry a (and the anchor) is stale -> the FAST-filter
+    # reminder fires, now keyed off the single `links` list (not the old dual
+    # lists).
+    b_view = core.show(3)
     assert any(n.stale for n in b_view.links)
     assert b_view.because_reminder is not None

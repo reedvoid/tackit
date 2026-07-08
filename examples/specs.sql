@@ -431,8 +431,8 @@ every randomized op so a future regression on the filter shape gets caught
 in CI.
 
 Backs (v0.5 additions): D35 (T167), D36 (T171), T173 (Phase 2a sweep),
-T180 (anchor-query residual), T176 Phase 4 (property invariant).', 'spec', 0, '2026-06-01T22:22:03.373143+00:00', '2026-07-07T18:45:04.413510+00:00', 'design', NULL);
-INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (138, 'D29 — Description revisions audit table', 'Append-only audit table capturing every successful edit''s prior name and description plus the delta rationale. Backstop for the ''edit on closed/wont_do is allowed'' decision: descriptions can be updated in place but verbatim prior state is recoverable for archaeology. Replaces the v0.3.0 supersede marker (D25) — the marker addressed ''don''t get misled by old prose'' via inline-tagging hits with a superseder id; the audit table addresses it by preserving the prior verbatim version under the SAME task id. Simpler model, same archaeology capability. history() op extends to return description_revisions alongside status_transitions.
+T180 (anchor-query residual), T176 Phase 4 (property invariant).', 'spec', 0, '2026-06-01T22:22:03.373143+00:00', '2026-07-08T02:29:51.507579+00:00', 'design', NULL);
+INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (138, 'D29 — Description revisions audit table', 'Append-only audit table capturing every successful edit''s prior name and description plus the delta rationale. Backstop for edit archaeology: while a task is OPEN its description can be updated in place with the verbatim prior state recoverable. (D259 REVERSES D29''s original v0.4 stance that also permitted editing CLOSED and wont_do tasks in place — the three edit ops now refuse on status IN (''closed'', ''wont_do''); reopen to change. The audit table therefore backstops open-edits and retired-slice edits, not closed tasks.) Replaces the v0.3.0 supersede marker (D25) — the marker addressed ''don''t get misled by old prose'' via inline-tagging hits with a superseder id; the audit table addresses it by preserving the prior verbatim version under the SAME task id. Simpler model, same archaeology capability. history() op extends to return description_revisions alongside status_transitions.
 
 ## v0.5 update (D35+D36 — retire interaction with audit table)
 
@@ -464,7 +464,7 @@ v0.5):
 
 Backs (v0.5 additions): D36 (T171 — retire verb shape), T174 (Phase 2b
 retire impl writes wont_do_reason without touching description_revisions),
-S1 (T37 v0.5 — wont_do_reason dual-role partition semantics).', 'spec', 0, '2026-06-01T22:22:03.373244+00:00', '2026-06-03T02:49:05.773391+00:00', 'design', NULL);
+S1 (T37 v0.5 — wont_do_reason dual-role partition semantics).', 'spec', 0, '2026-06-01T22:22:03.373244+00:00', '2026-07-08T02:29:51.507579+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (139, 'D30 — Design/schema as perma-open: kind-based close + wont_do refusal', 'close() and wont_do() refuse on any task with kind in {design, schema}, structured error directing the user to edit() (audit table preserves prior state). Design and schema slices are LIVING SPEC — they represent decisions in effect; updating a decision is edit, not close. Retiring a decision means editing the slice to reflect ''no longer in effect''; the audit table preserves the prior version. Belt-and-suspenders: the worklist filter (D28) is robust to any design/schema task that somehow ends up closed (via tests or migration shim) — the kind clause keeps them visible regardless of status.
 
 ## v0.5 update (D35+D36 — redirect to canonical framing)
@@ -532,7 +532,7 @@ logic.
 Backs (v0.5 additions): D35 (T167), D36 (T171), D29 (edit-on-retired
 allowed), T173 (Phase 2a — D31 predicate unchanged, noted in T173''s
 6-call-site table as "No change needed").', 'spec', 0, '2026-06-01T22:22:03.373374+00:00', '2026-06-03T02:49:05.801742+00:00', 'design', NULL);
-INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (141, 'S7 — description_revisions', 'Append-only audit table backing D29. Columns: id (INTEGER, PK); task_id (INTEGER, FK -> tasks.id); prev_name (TEXT, NULL — pre-edit name, NULL if unchanged); prev_description (TEXT, NULL — pre-edit description, NULL if unchanged); delta (TEXT, NOT NULL — rationale from the edit op); edited_at (TIMESTAMP, NOT NULL); rows never updated or deleted. Written by core.edit() on every edit that actually changes name or description (no-op edits skipped per D20). Read by core.history(). Migration 007 adds this table.', 'spec', 0, '2026-06-01T22:22:03.373434+00:00', '2026-06-03T02:49:05.816435+00:00', 'schema', NULL);
+INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (141, 'S7 — description_revisions', 'Append-only audit table backing D29. Columns: id (INTEGER, PK); task_id (INTEGER, FK -> tasks.id); prev_name (TEXT, NULL — pre-edit name, NULL if unchanged); prev_description (TEXT, NULL — pre-edit description, NULL if unchanged); delta (TEXT, NOT NULL — rationale from the edit op); edited_at (TIMESTAMP, NOT NULL); rows never updated or deleted. Written by core.edit() on every edit that actually changes name or description (no-op edits skipped per D20). Read by core.history(). Migration 007 adds this table.', 'spec', 0, '2026-06-01T22:22:03.373434+00:00', '2026-07-08T01:57:32.186539+00:00', 'schema', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (156, 'v0.4 gap: legacy closed/wont_do design/schema slices stuck on worklist (no reconcile path)', '**RESOLVED** by reconcile()-mirrors-worklist refinement (v0.4 cluster commit 583df90, code lives at core.py:820-852).
 
 **Gap** (surfaced 2026-06-01): D28''s worklist filter admitted a stale task as obligation-bearing when `status=''open'' OR kind in {design, schema}`, which pulled closed/wont_do design/schema slices onto the worklist. But reconcile() refused unconditionally on all closed/wont_do tasks. The refusal message claimed "(not on the worklist)" while the worklist explicitly listed them. The two rules contradicted, leaving 5 legacy rows pinned on the worklist with no exit path (T37, T44, T49, T59, T109 in the dogfood DB at the time).
@@ -1154,7 +1154,7 @@ ENFORCED AT FOUR SKILL.md SURFACES (each one-purpose, each cites this slice):
 
 DETECTION of an ALREADY-stranded decision is semantic (agent judgment), not deterministically computable; its fallback net is the stranded-decision audit (linked, provisional).
 
-ANTI-PATTERN: appending a decision to the nearest production task because that is where you are working; clearing a spec''s stale flag via reconcile when a decision still needs porting into it.', 'spec', 0, '2026-07-07T05:08:16.215200+00:00', '2026-07-07T18:45:04.413510+00:00', 'design', NULL);
+ANTI-PATTERN: appending a decision to the nearest production task because that is where you are working; clearing a spec''s stale flag via reconcile when a decision still needs porting into it.', 'spec', 0, '2026-07-07T05:08:16.215200+00:00', '2026-07-08T05:17:18.511163+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (247, 'stranded-decision audit — surface production/meta tasks harboring spec-grade decisions', 'PROVISIONAL (label: provisional) — design NOT settled; do not implement (see the linked provisional impl task). Fallback net for D245 (the decision-homing invariant): an after-the-fact, human-or-agent-triggered audit that surfaces production/meta tasks possibly harboring a design/schema-grade decision that belongs in — and is missing from — a spec slice.
 
 DIVISION OF LABOR: the tool NARROWS deterministically; the agent JUDGES. The tool never classifies prose or emits a verdict — "is there a stranded decision here?" is semantic. No accurate deterministic locator exists (tested: phrasing-grep is brittle and domain-polluted — "locked"/"canonical" are ordinary domain words; edit-graph churn has poor precision AND recall).
@@ -1174,7 +1174,7 @@ GROUNDING MESSAGE (returned WITH the candidate list so the deterministic output 
 
 OUT OF SCOPE v1: detecting a spec slice whose CONTENT is stale (describes superseded design) — needs to know the architecture changed, not deterministically computable; possible later facet.
 
-OPEN (why provisional): exact axis thresholds; new MCP tool vs an extension of ls/board; whether the grounding message lives in the return payload or a cited skill.', 'spec', 0, '2026-07-07T05:09:02.038867+00:00', '2026-07-07T18:45:04.413510+00:00', 'design', NULL);
+OPEN (why provisional): exact axis thresholds; new MCP tool vs an extension of ls/board; whether the grounding message lives in the return payload or a cited skill.', 'spec', 0, '2026-07-07T05:09:02.038867+00:00', '2026-07-08T05:17:18.511163+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (249, 'dead-reference soft-suggest on retire / rename / reclassify', 'DECISION: when a task''s identifier stops naming a live referent, tackit searches for references to it in its LINKED neighbors and EMITS A SOFT SUGGESTION on any that still cite it. Detection-and-suggest only — no hard gate.
 
 TRIGGERS — the only three events that kill a reference target:
@@ -1206,6 +1206,65 @@ ENFORCEMENT — three surfaces:
 CHARACTER: non-destructive and PREVENTIVE — the inline half of the response. It prevents the anti-pattern at write-time without forcing any risky action (unlike a hard gate). Existing appended slices (the ~28% backlog) are remediated by the agent-driven audit sweep, not by this.
 
 BUILD ORDER: FIRST. It is the coherence quality-bar the dead-ref work (D249) depends on — a dead-ref suggestion resolved by a lazy deletion is a coherence failure this catches.', 'spec', 0, '2026-07-07T18:08:39.247451+00:00', '2026-07-07T18:45:04.413510+00:00', 'design', NULL);
+INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (254, 'The kind ontology — spec / production / meta as deciding / doing / thinking', 'Three tenses of one system: a SPEC is what should be true; CODE is what is true; a PRODUCTION task is the change between them; META is thinking that has not become any of those yet.
+
+- spec (design D# / schema S#) — THE DECISIONS. What should be true, durably: design = a decision, schema = the store-shape contract. The system of record for every design-grade decision. Never "completes" — edit to refine, retire only when 100% abandoned. Not a checklist, not a task.
+- production (T#) — THE DOING. A single unit of change that realizes an ALREADY-MADE decision in code ("to realize D-x, do these things"). A forecast while open (rewrite to correct/shrink as code clarifies it); a record once closed. Must link the spec it realizes. Not for deciding (→ spec), not for progress (git + status carry it), not a notepad (→ meta), not broadenable (spawn a new task).
+- meta (M#) — THE THINKING. A notepad: experiments, investigations, brainstorming, release bookkeeping — where a decision gets REACHED before it is distilled into a spec. Links nothing outside the island (the meta-island constraint, D110); anything goes.
+
+DISCRIMINATOR when a task blurs: is it DECIDING, DOING, or THINKING? Deciding → spec; doing (settled) → production; thinking / not-yet-settled → meta.
+
+WORKFLOW DIRECTION, never a shortcut: meta → spec → production → code.
+
+Grounding: a sweep of the dogfood store found "production" actually fused three species — pure build/checklist (the clean case), reconciliation/decision tasks (pose a spec↔code gap and adjudicate it — design-nature), and investigations (meta-nature). Only the first is truly production; this ontology draws the line so the other two route to spec/meta. Realized in SKILL.md as the conceptual anchor above the existing status-partition reference table.', 'spec', 0, '2026-07-08T01:32:03.124580+00:00', '2026-07-08T05:17:18.511163+00:00', 'design', NULL);
+INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (255, 'Production editing contract — no edit_append; rewrite only, for correction or scope-shrink', 'A production task is a forecast while open and a record once closed (see the kind ontology). Its body must not ACCRETE — accretion is how design decisions and progress-noise strand into production bodies (dogfood sweep: decisions ride in on progress appends; ~91% of production fold-backs are additive, ~47% of those are design decisions).
+
+DECIDED: edit_append is REFUSED on kind=production, extending the D250 / T251 refusal that already covers design/schema. Append becomes a META-ONLY operation — meta is the notepad; specs and production are rewrite-only.
+
+edit() full-rewrite REMAINS allowed on production, for exactly two purposes:
+- CORRECT — fix an error in the task''s own transcription of its spec, INCLUDING a wrong prediction of how the code would actually go. A production task is a forecast; code + tests falsify forecasts; correcting the forecast is the task doing its job, not misuse. There is wide latitude in a task''s granularity, so "I mis-predicted the implementation" is a legitimate correction, not a smuggled decision.
+- SHRINK — narrow or remove scope.
+
+NOT allowed via edit: adding scope/features (spawn a NEW production task), recording progress (git + status carry it — it does not belong in tackit at all), or recording a design decision (→ a design/schema slice).
+
+BOUNDARY: a correction fixes the task''s COPY of a decision; it never ORIGINATES one. If the spec itself turns out wrong, that is a slice edit + reconcile, not a production correction.
+
+Realized by (production tasks, later): extend the edit_append kind-guard in core.py to include ''production''; update SKILL surfaces + the fold-back discipline to route additive learnings away from production.', 'spec', 0, '2026-07-08T01:32:03.125626+00:00', '2026-07-08T02:29:51.507579+00:00', 'design', NULL);
+INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (256, 'Production creation gate — a production task must link a design/schema slice at creation', 'A production task realizes an ALREADY-MADE decision (see the kind ontology). DECIDED: add() and load() REFUSE creating a kind=production task with zero design/schema links — a hard gate, no escape flag.
+
+WHY: it removes the "no slice to promote into" excuse that lets a fully-formed decision strand at creation. Dogfood sweep: ~40% of confirmed strands had ZERO edits — the decision was dumped complete at creation, which the append-ban cannot catch; only a creation-time gate can.
+
+NO ESCAPE HATCH: genuinely spec-less mechanical work (typo fix, dependency bump) is NOT a production task — it implements no design unit, so it does not belong in tackit any more than progress does (an untracked commit, or a one-line meta note). A pure gate avoids a loophole that would be abused.
+
+ACCEPTED RISK: the gate ensures a slice EXISTS and is linked; it cannot force the decision to live IN the slice rather than the (append-frozen) body — a stub slice plus a dumped body still satisfies it. Mitigated by workflow discipline (author the slice first — the plan-first control batch produced zero strands across 29 tasks) and by the D247 audit as backstop. The gate makes the good workflow the path of least resistance; it is not a perfect seal.
+
+ERGONOMIC CONSEQUENCE: linking a production task to its design/schema anchor makes that anchor a cascade NEIGHBOR — editing the production task stales the anchor, and the close-gate walks the connected graph transitively, so a stale anchor can block closing the task until it is reconciled. Reconcile the anchor after such an edit. This is inherent link-cascade mechanics, surfaced (not caused) by the gate making every production task carry a spec link. Realized by T263: a kind-guard in add()/load() (core.py) refusing production creation with zero design/schema links; the error names the rule and the fix (author/link the governing slice).', 'spec', 0, '2026-07-08T01:32:03.126365+00:00', '2026-07-08T05:17:13.207457+00:00', 'design', NULL);
+INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (257, 'Meta is a notepad — island boundary kept; no shortcut from meta to code', 'Meta is THE THINKING layer (see the kind ontology): experiments, investigations, brainstorming, release bookkeeping — the mutable playground where a decision gets REACHED. Refines the meta-island constraint (D110) with meta''s ROLE plus two guards.
+
+1. LINK BOUNDARY (D110 unchanged): meta links only within the island. meta↔meta is ALLOWED — a multi-part note may cross-reference itself and cannot contaminate the spec graph. meta↔non-meta is REFUSED. Decision: keep meta↔meta legal — forbidding it adds friction with zero integrity benefit, since the meta-island''s purpose is bounding the cascade OUT of meta, already served by the existing rule.
+
+2. NO SHORTCUT TO CODE (SKILL discipline, NOT a tackit gate — tackit has no working-tree/commit view, so it cannot refuse "you shipped code with only a meta task open"): code never ships straight from meta. A decision distills from meta into a spec slice; the spec spawns a production task; the task ships. Investigations and experiments live in meta, NOT production — much of what the dogfood store currently mis-files as production (reconciliation + investigation tasks) is meta-nature.
+
+Realized by (later): SKILL.md meta-guard text. The link boundary needs no code change — D110 already enforces it.', 'spec', 0, '2026-07-08T01:32:03.126458+00:00', '2026-07-08T01:41:25.296222+00:00', 'design', NULL);
+INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (258, 'Fold-back retargets by learning-type — decision → slice, progress → out, correction → production rewrite', 'The fold-back discipline (capture learnings as they surface) currently routes ~64% of learnings into production bodies and only ~6% into slices (dogfood sweep) — it is the primary delivery vehicle for stranded decisions. This is H1 promoted into a standing habit: the active task at discovery-time is production, so "fold it into the task I''m in" lands the learning in the wrong layer.
+
+Fold-back is RE-AIMED, not removed. A captured learning is exactly one of three things, each with a different home:
+- DECISION (design/schema-grade) → fold into an EXISTING design/schema slice, or (more often) create a NEW one. NEVER the production body.
+- TRANSIENT PROGRESS (built X, verified Y, committed Z) → NOT tackit at all (build-book / memory); git + status already carry it.
+- CORRECTION / SHRINK → a production rewrite (per the production editing contract) — the only fold-back that may touch a production body, and it corrects, never adds.
+
+RULE: a fold-back into a production task is ONLY for correction/shrink — never additive. Additive capture goes to a slice (if a decision) or nowhere in tackit (if progress). Meta is exempt — it is a notepad; fold anything.
+
+Realized by (later): rewrite the fold-back discipline text in SKILL.md and the mandatory end-of-turn fold-back report to route by learning-type; global CLAUDE.md + README carry the same discipline and move in lockstep.', 'spec', 0, '2026-07-08T01:32:03.126539+00:00', '2026-07-08T01:41:25.296222+00:00', 'design', NULL);
+INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (259, 'Closed tasks are immutable — no edit on a closed task; reopen to change', 'A closed task is a RECORD of a completed unit of work, and a wont_do task is a RECORD of a dropped one (kind ontology D254: a production/meta task in a terminal state is a frozen record). Editing such a record in place is how design decisions launder in and how a settled task silently acquires new content — the dogfood store showed ~67% of production edits land on already-closed tasks, ~35 of them folding a design decision into a closed body.
+
+DECIDED: the content-edit ops — edit(), edit_append(), edit_replace_substring() — are REFUSED on any terminal production/meta status, i.e. status IN (''closed'', ''wont_do''). Period, no exceptions, no in-place-edit escape flag. To change a CLOSED task you REOPEN it first (an honest status transition flipping it back to open, visible in history), edit while open, then close again. A WONT_DO task is terminal FOREVER (reopen is refused, D36) — its body can never change; if the work revives, create a new task.
+
+This replaces D29''s (D138) v0.4 stance that editing closed / wont_do tasks in place was allowed, and restores the pre-v0.4 no-edit-on-terminal refusal (M115) — but it KEEPS D29''s description_revisions audit table (S7): the table''s role narrows to backstopping edits made while a task is OPEN and edits to RETIRED slices, never terminal production/meta records.
+
+SCOPE (both original open questions resolved 2026-07-08): the refusal covers status IN (''closed'', ''wont_do'') — both are terminal production/meta records carrying the same laundering risk. Design/schema RETIRED slices are EXCLUDED — they stay editable, preserving the live annotate-a-dead-decision use case (D29 v0.5 + the D31 code-check); retire-then-edit is judged rare enough that its archaeology value outweighs the laundering risk there.
+
+Realized by: refuse the three edit ops on status IN (''closed'', ''wont_do'') in core.py, with a fail-loud error naming the rule and the fix (reopen first); narrow the audit-table narrative + update SKILL / README surfaces.', 'spec', 0, '2026-07-08T01:51:40.804368+00:00', '2026-07-08T02:29:46.183856+00:00', 'design', NULL);
 INSERT INTO task_labels (task_id, label) VALUES (37, 'core');
 INSERT INTO task_labels (task_id, label) VALUES (37, 'schema');
 INSERT INTO task_labels (task_id, label) VALUES (38, 'schema');
@@ -1390,6 +1449,24 @@ INSERT INTO links (id, task_a, task_b, because) VALUES (462, 172, 250, 'D37''s i
 INSERT INTO links (id, task_a, task_b, because) VALUES (463, 234, 250, 'Sibling spec-content hygiene: D234 says a slice holds decisions not code literals; this says a slice is coherent current-state not a changelog. Both define what a well-formed spec body is.');
 INSERT INTO links (id, task_a, task_b, because) VALUES (464, 245, 250, 'Sibling spec-content-quality invariant: D245 governs the KIND that holds a decision; this governs whether the decision is recorded COHERENTLY. Editing either''s notion of a well-formed spec slice forces re-checking the other.');
 INSERT INTO links (id, task_a, task_b, because) VALUES (465, 249, 250, 'This slice''s dangling-shape feedback is what keeps D249''s dead-ref suggestion from being resolved by a lazy token deletion; the two must agree on what a coherent post-edit body looks like.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (468, 245, 254, 'D245 (a decision homes in a spec slice) is the special case this ontology generalizes — spec=deciding, production=doing; change the ontology and D245''s meaning moves, and vice-versa.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (469, 254, 255, 'the append-ban follows from production being a forecast-then-record; if production''s definition changes, this editing contract changes.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (470, 250, 255, 'extends D250 / T251''s edit_append refusal (design/schema) to production — one shared kind-guard, one shared rationale (no accretion into the durable + record layers).');
+INSERT INTO links (id, task_a, task_b, because) VALUES (471, 245, 255, 'this is the mechanism that stops the additive stranding D245 forbids; move either and the other moves.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (472, 247, 255, 'the audit is the backstop for a design decision that slips into production via a full REWRITE (which this contract still permits).');
+INSERT INTO links (id, task_a, task_b, because) VALUES (473, 254, 256, 'the gate follows from production realizing an already-made decision; a task still MAKING the decision is meta, not production.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (474, 247, 256, 'the gate shrinks what the stranded-decision audit must catch (born-at-creation strands the append-ban misses); D247 backstops what the stub-slice hole still lets through.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (475, 245, 256, 'creation-time enforcement of D245''s decision-homing invariant.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (476, 254, 257, 'meta is the thinking layer of the ontology; this slice gives it its role + guards.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (477, 254, 258, 'fold-back routing follows the three-layer ontology — decision→spec, progress→out, doing-correction→production.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (478, 245, 258, 'fold-back mis-routing is the concrete act D245 forbids; this re-aims the exact discipline that keeps violating it.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (479, 255, 258, 'the correction/shrink route is precisely the rewrite the production editing contract permits; the two must agree on what may touch a production body.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (480, 110, 254, 'D254 is the conceptual ontology (deciding/doing/thinking + the meta→spec→production→code workflow direction) that deepens D110''s mechanical kind taxonomy; a change to D110''s kind set, classifier rule, or meta-island moves the ontology, and a reframing of the ontology forces D110''s definitions to realign.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (481, 110, 257, 'D257 refines D110''s meta-island constraint with meta''s notepad ROLE + the no-shortcut-to-code guard; a change to D110''s meta-island boundary changes what D257 refines, and vice-versa.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (482, 254, 259, 'closed = frozen record is the ontology principle this hard-enforces; a change to what "closed production/meta" means moves this rule.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (483, 255, 259, 'the production editing contract bans APPEND regardless of status; this adds the orthogonal STATUS dimension — once closed, ALL edits are refused, not just appends. The two together define what may touch a task body and when.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (484, 138, 259, 'supersedes D29''s v0.4 "edit-on-closed allowed" stance; D29''s audit table survives with a narrowed role (open-edits + retired-edits), so a change to either forces the other to re-align.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (485, 137, 259, 'D28 makes closed-stale record-only (you don''t reconcile a closed task); this makes closed CONTENT immutable — together they define "closed is a settled record you neither re-verify nor rewrite."');
 INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (80, 37, NULL, 'open', '2026-05-31T04:11:47.873715+00:00');
 INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (81, 38, NULL, 'open', '2026-05-31T04:11:47.876334+00:00');
 INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (82, 39, NULL, 'open', '2026-05-31T04:11:47.876420+00:00');
@@ -1544,4 +1621,10 @@ INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at)
 INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (565, 247, NULL, 'spec', '2026-07-07T05:09:02.039054+00:00');
 INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (568, 249, NULL, 'spec', '2026-07-07T18:05:54.322673+00:00');
 INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (569, 250, NULL, 'spec', '2026-07-07T18:08:39.248206+00:00');
+INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (576, 254, NULL, 'spec', '2026-07-08T01:32:03.125166+00:00');
+INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (577, 255, NULL, 'spec', '2026-07-08T01:32:03.126345+00:00');
+INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (578, 256, NULL, 'spec', '2026-07-08T01:32:03.126446+00:00');
+INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (579, 257, NULL, 'spec', '2026-07-08T01:32:03.126529+00:00');
+INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (580, 258, NULL, 'spec', '2026-07-08T01:32:03.126607+00:00');
+INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (581, 259, NULL, 'spec', '2026-07-08T01:51:40.804547+00:00');
 COMMIT;
