@@ -55,6 +55,10 @@ def _wrap(core: Core, result, short_alert: bool = False):
         # D249: set iff retire/rename/reclassify left a LINKED neighbor citing a
         # now-dead id. A list of soft repoint suggestions; advisory, non-blocking.
         "deadref_suggestions": core.last_deadref_suggestions,
+        # D280: set iff a just-edited body names a LIVE, non-retired, UNLINKED
+        # task by synthetic id -- a candidate missing edge (inverse of D249).
+        # A list of soft link suggestions; advisory, non-blocking.
+        "missing_edge_suggestions": core.last_missing_edge_suggestions,
         "result": result,
     }
 

@@ -322,6 +322,47 @@ def _ref_present(body: str | None, ref: str) -> bool:
     return re.search(pat, body or "") is not None
 
 
+# D280: the missing-edge soft-suggest -- the inverse of D249's dead-ref scan.
+_BODY_ID_REF = re.compile(r"(?<!\w)(?:([DSTM])(\d+)|#(\d+))(?![\w.])")
+_SUPERSEDED_CTX = re.compile(
+    r"\b(dropped|supersed\w*|retir\w*|remove[ds]?|deprecat\w*|obsolete|"
+    r"replac\w*|former\w*|historical|unlike|no longer|instead of|used to)\b",
+    re.IGNORECASE,
+)
+
+
+def _body_id_refs(text: str | None) -> set[tuple[str, int]]:
+    """D280 -- synthetic-id references present in a body: ``(kind_letter, id)``
+    for D#/S#/T#/M# tokens, ``("", id)`` for #id tokens. Boundary-guarded so
+    D12 does not match D123. §-refs are deliberately NOT scanned (empirically
+    zero recall + collision/fan-out noise; see D280 / M279)."""
+    out: set[tuple[str, int]] = set()
+    for letter, num, hashnum in _BODY_ID_REF.findall(text or ""):
+        if hashnum:
+            out.add(("", int(hashnum)))
+        else:
+            out.add((letter, int(num)))
+    return out
+
+
+def _all_occurrences_superseded(body: str, token: str) -> bool:
+    """D280 -- True iff EVERY occurrence of ``token`` sits in a superseded /
+    past-tense / contrastive context (a preceding-window marker like 'dropped
+    in', 'superseded', 'unlike'). Such a mention records a dead relationship,
+    not a live coupling, so the missing-edge scan skips it."""
+    pat = r"(?<!\w)" + re.escape(token) + r"(?![\w.])"
+    positions = [m.start() for m in re.finditer(pat, body)]
+    if not positions:
+        return False
+    for pos in positions:
+        # a marker can sit on either side ("dropped in T5" / "T5 was dropped"),
+        # so scan a window around each occurrence, not just what precedes it.
+        window = body[max(0, pos - 50):pos + len(token) + 50]
+        if not _SUPERSEDED_CTX.search(window):
+            return False
+    return True
+
+
 class Core:
     """The operation surface. Open via :meth:`open` for normal use (runs the D18
     startup sync first); construct directly only in tests with a ready store."""
@@ -352,6 +393,11 @@ class Core:
         # neighbors still citing its now-dead id. A list of soft repoint/
         # rationalize suggestions; advisory, ephemeral, one op's lifetime.
         self.last_deadref_suggestions: list[str] | None = None
+        # D280: set when a just-edited task's body names a LIVE, non-retired
+        # task by synthetic id that is NOT already a linked neighbor -- a
+        # candidate missing edge (the fold-back-forgot-the-edge case, the
+        # inverse of D249). Advisory, ephemeral, one op's lifetime.
+        self.last_missing_edge_suggestions: list[str] | None = None
 
     # --- T124: shared prelude for cascade-firing / delta-bearing ops --------
     def _record_delta(self, delta: str, op_name: str) -> None:
@@ -1792,6 +1838,55 @@ class Core:
         if out:
             self.last_deadref_suggestions = out
 
+    def _emit_missing_edge_suggestions(self, task_id: int) -> None:
+        """D280 -- inverse of D249: when the focal task's body names a LIVE,
+        non-retired task by synthetic id that is NOT already a linked neighbor,
+        surface a candidate missing link. Advisory, no gate. Synthetic-id only
+        (§-refs give zero recall + noise -- D280). Guards: skip a pair
+        straddling the meta-island boundary (that edge is refused by
+        construction, D26) and id mentions that appear only in superseded /
+        contrastive contexts."""
+        row = self.conn.execute(
+            "SELECT kind, name, description FROM tasks WHERE id = ?", (task_id,)
+        ).fetchone()
+        if row is None:
+            return
+        body = (row["name"] or "") + "\n" + (row["description"] or "")
+        focal_kind = row["kind"]
+        linked = {n.id for n in self._linked_with(task_id)}
+        out: list[str] = []
+        seen: set[int] = set()
+        for letter, num in sorted(_body_id_refs(body)):
+            if num == task_id or num in linked or num in seen:
+                continue
+            trow = self.conn.execute(
+                "SELECT kind, status FROM tasks WHERE id = ?", (num,)
+            ).fetchone()
+            if trow is None:
+                continue
+            # a prefixed token must match the target's actual kind (D32); a
+            # #id token matches any kind.
+            if letter and prefixed_id(trow["kind"], num) != f"{letter}{num}":
+                continue
+            if trow["status"] == "retired":
+                continue  # D36: no new edges to a dead decision
+            # meta-island (D26): an edge straddling the meta boundary is refused
+            # by construction -- never suggest it.
+            if (focal_kind == "meta") != (trow["kind"] == "meta"):
+                continue
+            token = f"{letter}{num}" if letter else f"#{num}"
+            if _all_occurrences_superseded(body, token):
+                continue
+            seen.add(num)
+            out.append(
+                f"{prefixed_id(focal_kind, task_id)} names "
+                f"{prefixed_id(trow['kind'], num)} in its body but they are not "
+                f"linked -- if that's a real coupling, wire it with link_add. "
+                f"(D280, advisory.)"
+            )
+        if out:
+            self.last_missing_edge_suggestions = out
+
     def _refuse_edit_on_terminal(self, row: sqlite3.Row) -> None:
         """D259 - closed + wont_do tasks are frozen RECORDS: the three content-
         edit ops refuse on them. To change one, reopen() it first (an honest
@@ -1849,6 +1944,7 @@ class Core:
         self._record_delta(delta, "edit")
         self.last_code_check_reminder = None  # D31: reflect only this op
         self.last_coherence_nudge = None  # D250: reflect only this op
+        self.last_missing_edge_suggestions = None  # D280: reflect only this op
         row = self._require_row(task_id)
         self._refuse_edit_on_terminal(row)  # D259
         if name is not None and not name.strip():
@@ -1916,6 +2012,7 @@ class Core:
                 self.last_coherence_nudge = _coherence_nudge_text(
                     row["kind"], task_id, _coh
                 )
+        self._emit_missing_edge_suggestions(task_id)  # D280
         return ChangeResult(task=self.get(task_id), newly_stale=newly_stale)
 
     # --- T179: diff-shaped description edits (append + substring replace) ---
@@ -1947,6 +2044,7 @@ class Core:
         (D29 / S7), UPDATE description+updated_at, D31 code-check reminder on
         design/schema edits."""
         task_id = row["id"]
+        self.last_missing_edge_suggestions = None  # D280: reflect only this op
         if new_description == row["description"]:
             return ChangeResult(task=self.get(task_id), newly_stale=[])
         with self._mutate():
@@ -1974,6 +2072,7 @@ class Core:
                 self.last_coherence_nudge = _coherence_nudge_text(
                     row["kind"], task_id, _coh
                 )
+        self._emit_missing_edge_suggestions(task_id)  # D280
         return ChangeResult(task=self.get(task_id), newly_stale=newly_stale)
 
     def edit_append(
