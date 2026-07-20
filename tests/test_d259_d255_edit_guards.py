@@ -46,7 +46,7 @@ def test_edit_refused_on_closed_production(core):
 
 def test_edit_refused_on_wont_do_says_terminal_forever(core):
     tid = _prod_linked(core, desc="original")
-    core.wont_do(tid, reason="dropped", delta="drop")
+    core.wont_do(tid, reason="dropped")
     with pytest.raises(ValidationError, match="terminal forever"):
         core.edit(tid, description="post-drop edit", delta="tried it")
     assert core.get(tid).description == "original"
@@ -54,7 +54,7 @@ def test_edit_refused_on_wont_do_says_terminal_forever(core):
 
 def test_edit_replace_substring_refused_on_wont_do(core):
     tid = _prod_linked(core, desc="hello world")
-    core.wont_do(tid, reason="dropped", delta="drop")
+    core.wont_do(tid, reason="dropped")
     with pytest.raises(ValidationError, match="frozen record"):
         core.edit_replace_substring(
             tid, old_string="world", new_string="planet", delta="tried it"
@@ -88,7 +88,7 @@ def test_edit_still_allowed_on_retired_design_slice(core):
     """D259 exempts retired slices: edit-on-retired stays for annotating a dead
     decision (D29 v0.5), and it still writes an audit row + fires D31."""
     core.add("d", kind="design", description="a decision")
-    core.retire(1, reason="fully superseded by D2, no migration", delta="retire")
+    core.retire(1, reason="fully superseded by D2, no migration")
     core.edit(1, description="a decision (retired — superseded by D2)", delta="annotate dead decision")
     assert core.get(1).status == "retired"
     assert "retired" in core.get(1).description
@@ -97,7 +97,7 @@ def test_edit_still_allowed_on_retired_design_slice(core):
 
 def test_edit_replace_substring_still_allowed_on_retired_slice(core):
     core.add("s", kind="schema", description="CREATE TABLE foo (...)")
-    core.retire(1, reason="table dropped, no replacement", delta="retire")
+    core.retire(1, reason="table dropped, no replacement")
     core.edit_replace_substring(
         1, old_string="foo", new_string="foo (DROPPED)", delta="mark dead table"
     )

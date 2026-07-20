@@ -109,7 +109,7 @@ def test_meta_naming_nonmeta_suppressed(core):
 def test_retired_target_not_suggested(core):
     core.add("dead decision", kind="design", description="body")  # D1
     core.add("dep", kind="design", description="body")  # D2
-    core.retire(1, reason="premise fully gone, no replacement", delta="retire")
+    core.retire(1, reason="premise fully gone, no replacement")
     core.edit(2, delta="build on the old one", description="this continues D1's line of work")
     # D1 is retired -> no new edge to a dead decision (D36); no suggestion
     assert core.last_missing_edge_suggestions is None

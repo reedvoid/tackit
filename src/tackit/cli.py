@@ -358,7 +358,7 @@ def _cmd_close(args) -> int:
 
 def _cmd_wont_do(args) -> int:
     with _core_session() as core:
-        result = core.wont_do(args.id, reason=args.reason, delta=args.delta)
+        result = core.wont_do(args.id, reason=args.reason)
         text = [
             f"marked wont_do " + _fmt_task(result.task),
             f"  reason: {result.task.wont_do_reason}",
@@ -371,7 +371,7 @@ def _cmd_wont_do(args) -> int:
 
 def _cmd_retire(args) -> int:
     with _core_session() as core:
-        result = core.retire(args.id, reason=args.reason, delta=args.delta)
+        result = core.retire(args.id, reason=args.reason)
         text = [
             f"retired " + _fmt_task(result.task),
             f"  reason: {result.task.wont_do_reason}",
@@ -452,7 +452,8 @@ def _cmd_ls(args) -> int:
     with _core_session() as core:
         stale = True if args.stale else None
         tasks = core.ls(status=args.status, label=args.label, stale=stale,
-                        kind=args.kind, name_prefix=args.name_prefix)
+                        kind=args.kind, name_prefix=args.name_prefix,
+                        order_by=args.order_by)
         if tasks:
             lines = []
             for t in tasks:
@@ -464,6 +465,20 @@ def _cmd_ls(args) -> int:
         for t in tasks:
             dumps.append(project_task(t, include_description=args.include_description))
         _emit(text, dumps, args.json)
+    return 0
+
+
+def _cmd_summary(args) -> int:
+    with _core_session() as core:
+        s = core.summary()
+        bs = s["by_status"]
+        line = (
+            f"{bs.get('open', 0)} open · {bs.get('closed', 0)} done · "
+            f"{bs.get('wont_do', 0)} wont_do · {bs.get('spec', 0)} spec · "
+            f"{bs.get('retired', 0)} retired · ⚠ {s['stale_open_spec']} stale "
+            f"(open+spec) · {s['total']} total"
+        )
+        _emit(line, s, args.json)
     return 0
 
 
@@ -491,7 +506,8 @@ def _cmd_board(args) -> int:
     with _core_session() as core:
         stale = True if args.stale else None
         tasks = core.ls(status=args.status, label=args.label, stale=stale,
-                        kind=args.kind, name_prefix=args.name_prefix)
+                        kind=args.kind, name_prefix=args.name_prefix,
+                        order_by=args.order_by)
         if args.json:
             cards = []
             for t in tasks:
@@ -502,11 +518,16 @@ def _cmd_board(args) -> int:
                 ))
             _emit("", cards, True)
             return 0
-        allt = core.ls()
-        n_open = sum(1 for t in allt if t.status == "open")
-        n_done = sum(1 for t in allt if t.status == "closed")
-        n_wont = sum(1 for t in allt if t.status == "wont_do")
-        n_stale = sum(1 for t in allt if t.stale)
+        # D283: one summary() rollup replaces a second full ls() + Python sums.
+        # n_stale is the obligation-bearing (open/spec) count -- what the `stale`
+        # worklist and the `summary` state line report; terminal-stale is
+        # record-only (D28/D36) and no longer inflates the board header.
+        s = core.summary()
+        by_status = s["by_status"]
+        n_open = by_status.get("open", 0)
+        n_done = by_status.get("closed", 0)
+        n_wont = by_status.get("wont_do", 0)
+        n_stale = s["stale_open_spec"]
         head = _board_paint("tackit", ["38;5;154", "1"]) + f"   {n_open} open · {n_done} done · {n_wont} wont_do · {n_stale} stale"
         body = _render_board(core, tasks)
         print(head + ("\n" + body if body else "\n(no matching tasks)"))
@@ -848,11 +869,6 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help="durable rationale for not doing this task (persists forever)",
     )
-    sp.add_argument(
-        "--delta",
-        required=True,
-        help="one-sentence semantic-change description (T117)",
-    )
 
     sp = add(
         "retire",
@@ -869,11 +885,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="durable rationale for retiring this decision (persists "
         "forever). Placeholders (empty / 'TBD' / 'TODO' / 'obsolete' / "
         "'no longer needed') refused per D33 extension.",
-    )
-    sp.add_argument(
-        "--delta",
-        required=True,
-        help="one-sentence semantic-change description (T117)",
     )
 
     sp = add(
@@ -947,8 +958,16 @@ def build_parser() -> argparse.ArgumentParser:
                     help="literal case-sensitive name prefix, e.g. '§9.1' (T220)")
     sp.add_argument("--include-description", action="store_true",
                     help="include full task bodies (D211; default lean)")
+    sp.add_argument("--order-by",
+                    choices=["id", "kind", "status", "created_at",
+                             "updated_at", "stale", "degree"],
+                    help="sort by a structured column (D283); default id")
 
     add("stale", _cmd_stale, "reconciliation worklist: all stale tasks (D11)")
+
+    add("summary", _cmd_summary,
+        "structured-column rollup: counts by status/kind + stale (D283) -- "
+        "the end-of-turn state line")
 
     add("labels", _cmd_labels, "list all labels with usage: count + sample tasks (D21)")
 
@@ -965,6 +984,10 @@ def build_parser() -> argparse.ArgumentParser:
                     help="include full task bodies in --json (D211; default lean)")
     sp.add_argument("--include-neighbor-because", action="store_true",
                     help="include neighbor edge rationales in --json (D211; default lean)")
+    sp.add_argument("--order-by",
+                    choices=["id", "kind", "status", "created_at",
+                             "updated_at", "stale", "degree"],
+                    help="sort by a structured column (D283); default id")
 
     sp = add("render", _cmd_render, "narrative render of a label -> markdown (D16)")
     sp.add_argument("--label", required=True)

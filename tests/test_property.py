@@ -121,9 +121,7 @@ class TackitMachine(RuleBasedStateMachine):
         so post-wont_do invariants (no double-decide, no further status
         change without reopen, etc.) get random-coverage exposure too."""
         try:
-            self.core.wont_do(
-                self._id(i), reason="property test", delta="property test"
-            )
+            self.core.wont_do(self._id(i), reason="property test")
         except InvariantError:
             # Refused: already-closed/wont_do (no double-decide), design/schema
             # kind (D30), or close-gate stale -- all expected.
@@ -188,7 +186,7 @@ class TackitMachine(RuleBasedStateMachine):
         cover the post-conditions whichever branch we took."""
         target = self._id(i)
         try:
-            self.core.retire(target, reason=reason, delta="property test")
+            self.core.retire(target, reason=reason)
         except (InvariantError, ValidationError):
             return
         # Success: row is now status='retired'. Track for the terminal
@@ -229,7 +227,7 @@ class TackitMachine(RuleBasedStateMachine):
         self.ids.append(d.id)
         self.ids.append(p.id)
         try:
-            self.core.retire(d.id, reason="trying", delta="prop test")
+            self.core.retire(d.id, reason="trying")
         except InvariantError as e:
             msg = str(e)
             assert f"T{p.id}" in msg, (

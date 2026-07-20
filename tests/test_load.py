@@ -290,7 +290,7 @@ def test_load_reserved_key_shaped_like_prefixed_id_refused(core):
 
 def test_load_existing_ref_to_retired_endpoint_refused(core):
     dead = core.add("dead decision", kind="design")  # D1, spec
-    core.retire(dead.id, reason="100% gone with no replacement", delta="retire for test")
+    core.retire(dead.id, reason="100% gone with no replacement")
     with pytest.raises(InvariantError):  # _add_link refuses a retired endpoint (D36)
         core.load(parse_plan(
             "[impl] thing\n  kind: production\n  depends_on:\n"

@@ -579,6 +579,17 @@ def test_skill_md_contains_spec_slice_holds_decisions_rule():
         "This is the recognition-gated re-introduction path the rule exists "
         "to close (D234 / D231)."
     )
+    # The one-directional bridge is the generalized rule (D234 v2): a slice
+    # must not carry a code LOCATION either (file:line / path / see-foo.py),
+    # not just a copied literal. Pinning it stops a revert to the old
+    # "point to the code home" phrasing, which was itself a spec->code
+    # reference that rots.
+    assert _contains(text, "a spec NEVER names code"), (
+        "SKILL.md must carry the one-directional spec<->code bridge rule -- "
+        "code names the spec by id (grep-bridged); a spec never names code "
+        "(no file:line / path / see-foo.py), because code churns while the "
+        "slice is durable (D234)."
+    )
 
 
 def test_skill_md_dev_copies_match_canonical():

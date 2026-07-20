@@ -93,7 +93,7 @@ def test_cascade_staling_already_stale_closed_is_idempotent(core):
 
 
 def test_close_gate_does_not_trip_on_closed_stale_under_v04(core):
-    """v0.4 (D28): the close-gate's 'transitively linked to stale' walk
+    """v0.4 (D28) + D56: the close-gate's direct-neighbor (1-hop) stale check
     filters to obligation-bearing stale tasks (open OR design/schema kind).
     A closed-stale production neighbor is record-only and does NOT pressure
     the close-gate -- T4 can close even though T3 is closed+stale."""

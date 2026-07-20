@@ -28,7 +28,7 @@ def test_retire_emits_for_section_ref(core):
     core.add("§9.4 — foo", kind="design", description="the decision")  # D1
     core.add("§9.5 — bar", kind="design", description="see §9.4 for the contract")  # D2
     core.link_add(1, 2, because="D2's contract depends on D1's decision")
-    core.retire(1, reason="fully replaced by a new premise, no migration", delta="retire")
+    core.retire(1, reason="fully replaced by a new premise, no migration")
     s = _joined(core)
     assert "§9.4" in s and "D2" in s
     assert "delete" not in s.lower() and "remove" not in s.lower()
@@ -39,7 +39,7 @@ def test_retire_emits_for_synthetic_id(core):
     core.add("a decision", kind="design", description="body")  # D1
     core.add("dependent", kind="design", description="as decided in D1, we do X")  # D2
     core.link_add(1, 2, because="D2 realizes D1")
-    core.retire(1, reason="premise fully dropped, no replacement", delta="retire")
+    core.retire(1, reason="premise fully dropped, no replacement")
     assert "D1" in _joined(core)
 
 
@@ -47,7 +47,7 @@ def test_retire_silent_when_neighbor_does_not_cite(core):
     core.add("§9.4 — foo", kind="design", description="the decision")  # D1
     core.add("§9.5 — bar", kind="design", description="an unrelated body")  # D2
     core.link_add(1, 2, because="loosely coupled")
-    core.retire(1, reason="premise dropped, nothing replaces it", delta="retire")
+    core.retire(1, reason="premise dropped, nothing replaces it")
     assert core.last_deadref_suggestions is None
 
 
@@ -56,7 +56,7 @@ def test_retire_section_ref_boundary_no_false_match(core):
     core.add("§9.4 — foo", kind="design", description="the decision")  # D1
     core.add("§9.5 — bar", kind="design", description="see §9.4.2 for the sub-contract")  # D2
     core.link_add(1, 2, because="coupled on the sub-contract")
-    core.retire(1, reason="premise dropped with no replacement", delta="retire")
+    core.retire(1, reason="premise dropped with no replacement")
     assert core.last_deadref_suggestions is None
 
 

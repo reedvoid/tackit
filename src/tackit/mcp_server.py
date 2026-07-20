@@ -433,8 +433,8 @@ def build_server() -> FastMCP:
     @mcp.tool()
     def close(id: int) -> dict:
         """Close a task (D12 + D14 + D36). For PRODUCTION + META tasks only.
-        REFUSED if the task is stale, or if it transitively depends on a
-        stale task (reconcile that upstream first, D14). REFUSED if
+        REFUSED if the task is stale, or if a DIRECT (1-hop) linked neighbor
+        is stale (reconcile that upstream first, D14 / D56). REFUSED if
         status='spec' -- design/schema slices are living spec, not work
         items. Use edit() to refine a decision; retire() if 100% abandoned
         with no replacement (D36). REFUSED on wont_do / retired (no double-
@@ -459,32 +459,35 @@ def build_server() -> FastMCP:
             return _wrap(c, c.reopen(id).model_dump(mode="json"))
 
     @mcp.tool()
-    def wont_do(id: int, reason: str, delta: str) -> dict:
+    def wont_do(id: int, reason: str) -> dict:
         """Mark a task as decided-not-to-do, distinct from closed=done (T132).
         For PRODUCTION + META tasks only. ``reason`` is durable (persists
-        forever in wont_do_reason); ``delta`` is ephemeral per T117.
+        forever in wont_do_reason). No ``delta`` (D284): wont_do does not
+        fire the cascade, so a delta would have no reader -- terminal status
+        verbs carry ``reason`` only, symmetric with close.
 
         Locked-forever per T132: reopen / close / wont_do refused on wont_do
         tasks (change-of-mind path is a fresh task with the new direction).
-        REFUSED if task is stale or in a linked-stale neighborhood (D14
-        close-gate). REFUSED on already-wont_do / closed / retired tasks (no
+        REFUSED if task is stale or has a directly-linked (1-hop) stale
+        neighbor (D14 / D56 close-gate). REFUSED on already-wont_do / closed / retired tasks (no
         double-decide). REFUSED if status='spec' (D36: design/schema can't
         be 'not done' -- use edit() to refine, or retire() if 100%
         abandoned). Does not fire the staling cascade -- returns one-hop
         neighbors for migrate-or-stay review like close."""
         with _core() as c:
-            return _wrap(c, c.wont_do(id, reason=reason, delta=delta).model_dump(mode="json"))
+            return _wrap(c, c.wont_do(id, reason=reason).model_dump(mode="json"))
 
     @mcp.tool()
-    def retire(id: int, reason: str, delta: str) -> dict:
+    def retire(id: int, reason: str) -> dict:
         """Retire a design/schema slice (D36): status spec -> retired. For
         DESIGN + SCHEMA only. Use ONLY when the decision is 100% gone with
         NO replacement -- partial-change path is edit() and let the cascade
         prompt link review.
 
         ``reason`` is durable (persists forever in wont_do_reason -- the
-        decision rationale survives even after the slice is dead). ``delta``
-        is ephemeral per T117. Placeholder reasons (empty / 'TBD' / 'TODO'
+        decision rationale survives even after the slice is dead). No
+        ``delta`` (D284): retire does not fire the cascade, so a delta would
+        have no reader. Placeholder reasons (empty / 'TBD' / 'TODO'
         / 'obsolete' / 'no longer needed') refused per D33 extension.
 
         Refusal order (fail-fast, 6 checks):
@@ -492,7 +495,7 @@ def build_server() -> FastMCP:
           2. status='spec' (only living specs can be retired).
           3. kind IN ('design','schema').
           4. stale gate.
-          5. linked-stale gate (transitive close-gate logic).
+          5. linked-stale gate (1-hop close-gate, D56).
           6. open-neighbor gate -- refused if ANY linked neighbor has
              status='open'. Refusal lists each open neighbor with its
              `because` rationale and presents the (i)/(ii) decision tree
@@ -504,7 +507,7 @@ def build_server() -> FastMCP:
         refused if either endpoint has status='retired'. Returns one-hop
         neighbors for migrate-or-stay review like wont_do/close."""
         with _core() as c:
-            return _wrap(c, c.retire(id, reason=reason, delta=delta).model_dump(mode="json"))
+            return _wrap(c, c.retire(id, reason=reason).model_dump(mode="json"))
 
     @mcp.tool()
     def reconcile(ids: list[int]) -> dict:
@@ -643,26 +646,42 @@ def build_server() -> FastMCP:
         kind: str | None = None,
         name_prefix: str | None = None,
         include_description: bool = False,
+        order_by: str | None = None,
     ) -> dict:
-        """Query/board (D15 + D211 + T220): filter tasks by status, label, stale,
-        kind, and/or name_prefix. Returns a LEAN projection by default -- task
-        scalars only, NO `description` (D211); pass include_description=True for
-        full bodies. For ONE full body use `show`. `status` choices (D36 v0.5):
-        open | closed | wont_do | spec | retired; `kind`: design | schema |
-        production | meta. `name_prefix` (T220) scopes to tasks whose name begins
-        with a LITERAL case-sensitive prefix -- use it to pull one section of a
-        large layer (e.g. name_prefix='§9.1') instead of the whole kind. It
-        matches the bare name, NOT the synthesized prefixed_name (so filter on
-        '§9.1', not 'D39')."""
+        """Query/board (D15 + D211 + T220 + D283): filter tasks by status, label,
+        stale, kind, and/or name_prefix, optionally sorted by a structured column.
+        Returns a LEAN projection by default -- task scalars only, NO
+        `description` (D211); pass include_description=True for full bodies. For
+        ONE full body use `show`. `status` choices (D36 v0.5): open | closed |
+        wont_do | spec | retired; `kind`: design | schema | production | meta.
+        `name_prefix` (T220) scopes to tasks whose name begins with a LITERAL
+        case-sensitive prefix -- use it to pull one section of a large layer
+        (e.g. name_prefix='§9.1') instead of the whole kind. It matches the bare
+        name, NOT the synthesized prefixed_name (so filter on '§9.1', not 'D39').
+        `order_by` (D283) sorts by a STRUCTURED column only -- one of id / kind /
+        status / created_at / updated_at / stale / degree (link count); never
+        body content. Defaults to id; a disallowed value is refused loudly."""
         with _core() as c:
             stale_filter = True if stale else None
             tasks = []
             for t in c.ls(
                 status=status, label=label, stale=stale_filter,
-                kind=kind, name_prefix=name_prefix,
+                kind=kind, name_prefix=name_prefix, order_by=order_by,
             ):
                 tasks.append(project_task(t, include_description=include_description))
             return _wrap(c, tasks, short_alert=True)
+
+    @mcp.tool()
+    def summary() -> dict:
+        """Structured-column rollup (D283) for situational awareness -- serves
+        the mandated end-of-turn state line. Returns counts by status, by kind,
+        by (status × kind), the total, and the obligation-bearing stale count
+        (stale AND status IN open/spec). A PURE read over structured columns; it
+        never touches body content, and a count forces a drill-down (ls / show /
+        board) to act on, so it can't substitute for reading a slice. The counts
+        are situational awareness, NOT a target to drive to zero."""
+        with _core() as c:
+            return _wrap(c, c.summary(), short_alert=True)
 
     @mcp.tool()
     def stale() -> dict:
@@ -741,22 +760,25 @@ def build_server() -> FastMCP:
         name_prefix: str | None = None,
         include_description: bool = False,
         include_neighbor_because: bool = False,
+        order_by: str | None = None,
     ) -> dict:
-        """Dependency-aware board (D22 + D36 + D211 + T220): the filtered tasks,
-        each as a slice (task + links + labels, the symmetric neighbour set), so you see
+        """Dependency-aware board (D22 + D36 + D211 + T220 + D283): the filtered
+        tasks, each as a slice (task + links + labels, the symmetric neighbour set), so you see
         the whole graph's structure in ONE call (richer than `ls`). LEAN by
         default: NO task `description` and NO neighbor `because`/`last_edit_delta`
         -- just the graph SHAPE (ids/prefixed_names/status/stale/kind). Opt in per
         axis: include_description (full bodies), include_neighbor_because (edge
         rationales). Filters: status, label, stale, kind, name_prefix (T220:
         literal case-sensitive name prefix, e.g. '§9.1', matching the bare name
-        not the synthesized prefixed_name)."""
+        not the synthesized prefixed_name). `order_by` (D283) sorts by a
+        structured column (id/kind/status/created_at/updated_at/stale/degree),
+        never body content; degree surfaces hubs first."""
         with _core() as c:
             stale_filter = True if stale else None
             cards = []
             for t in c.ls(
                 status=status, label=label, stale=stale_filter,
-                kind=kind, name_prefix=name_prefix,
+                kind=kind, name_prefix=name_prefix, order_by=order_by,
             ):
                 cards.append(project_slice(
                     c.show(t.id),

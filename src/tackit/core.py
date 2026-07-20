@@ -403,11 +403,12 @@ class Core:
     def _record_delta(self, delta: str, op_name: str) -> None:
         """T117/T124 shared prelude - validate the required delta and record
         it on self for envelope surfacing. Used by every op that takes a
-        required ``delta``: edit, reclassify (cascade-firing), wont_do (status
-        verb that carries a delta too). Link ops are NOT in this list (D213):
-        they don't cascade, so a delta they carried would have no reader.
-        Naming the helper makes "this op carries a delta" explicit at the
-        call site."""
+        required ``delta`` -- the cascade-firing ops: edit, edit_append,
+        edit_replace_substring, reclassify. Non-cascading ops are NOT in this
+        list: link ops (D213) and the terminal status verbs wont_do / retire
+        (D284) carry no delta, because an op that stales no neighbor produces
+        a delta with no reader. Naming the helper makes "this op carries a
+        delta" explicit at the call site."""
         _require_delta(delta, op_name)
         self.last_delta = delta.strip()
 
@@ -903,51 +904,44 @@ class Core:
             # UNIQUE(task_a, task_b): the link already exists -- idempotent.
             pass
 
-    def _stale_linked_transitive(self, task_id: int) -> list[tuple[int, str]]:
-        """All tasks transitively linked to ``task_id`` (in the symmetric graph)
-        that carry an obligation-bearing stale flag, excluding ``task_id``
-        itself, id-sorted. Underpins the symmetric close-gate (D14): closing
-        a task whose linked neighborhood is unreconciled is refused.
+    def _stale_linked_direct(self, task_id: int) -> list[tuple[int, str]]:
+        """The DIRECT (1-hop) linked neighbors of ``task_id`` (in the symmetric
+        graph) that carry an obligation-bearing stale flag, excluding
+        ``task_id`` itself, id-sorted. Underpins the symmetric close-gate
+        (D14 / D56): close / wont_do / retire on a task whose direct neighbor
+        is unreconciled is refused.
+
+        Reach is 1-HOP, SYMMETRIC with the D10/D13 staling cascade
+        (``_mark_linked_stale``), which marks staleness at 1 hop only
+        (non-transitive): a stale flag more than one hop away was raised about
+        ITS neighbors, not this task, so it must not block this task's
+        closure. (Prior behavior per D56 walked the whole transitive component,
+        where one stale hub could freeze an entire connected set of otherwise-
+        done work; the 1-hop gate matches the affect-model the cascade
+        actually asserts.)
 
         v0.5 (D28 + D36): obligation iff status IN ('open','spec'). The
         kind/status partition makes spec the open-equivalent for design/
         schema; closed/wont_do production/meta and retired design/schema
         neighbors carrying stale=1 are record-only -- they do NOT pressure
-        the close-gate. The walk itself still traverses all neighbors (so
-        an obligation-bearing task on the far side of a terminal-stale
-        neighbor is still found), but only obligation-bearing stale tasks
-        end up in the return list.
+        the close-gate.
 
         Returns list of (id, kind) tuples (T162) so callers can synthesize
         the D32 `<kind_letter><id>` prefix for refusal messages without a
         second lookup."""
-        seen: set[int] = {task_id}
-        stack: list[int] = [task_id]
         stale_found: list[tuple[int, str]] = []
-        while stack:
-            node = stack.pop()
-            rows = self.conn.execute(
-                "SELECT CASE WHEN task_a = ? THEN task_b ELSE task_a END AS other "
-                "FROM links WHERE task_a = ? OR task_b = ?",
-                (node, node, node),
-            ).fetchall()
-            for r in rows:
-                nxt = int(r["other"])
-                if nxt in seen:
-                    continue
-                seen.add(nxt)
-                row = self.conn.execute(
-                    "SELECT stale, status, kind FROM tasks WHERE id = ?", (nxt,)
-                ).fetchone()
-                if row is not None and bool(row["stale"]):
-                    # D28 + D36 (v0.5): obligation iff status IN ('open','spec').
-                    # The kind/status partition makes this equivalent to the
-                    # v0.4 `open OR kind IN (design,schema)` clause for live
-                    # rows, while correctly excluding 'retired' (which has
-                    # kind=design/schema but is terminal -- record-only).
-                    if row["status"] in ("open", "spec"):
-                        stale_found.append((nxt, row["kind"]))
-                stack.append(nxt)
+        for neighbor in self._linked_with(task_id):
+            row = self.conn.execute(
+                "SELECT stale, status, kind FROM tasks WHERE id = ?",
+                (neighbor.id,),
+            ).fetchone()
+            if row is None or not bool(row["stale"]):
+                continue
+            # D28 + D36 (v0.5): obligation iff status IN ('open','spec').
+            # Terminal-status (closed/wont_do/retired) stale neighbors are
+            # record-only and do NOT trip the gate.
+            if row["status"] in ("open", "spec"):
+                stale_found.append((neighbor.id, row["kind"]))
         stale_found.sort()  # tuples sort by id, then kind
         return stale_found
 
@@ -1567,16 +1561,16 @@ class Core:
                 f"REFUSED: {prefixed_id(row['kind'], task_id)} is stale -- it has unreconciled upstream "
                 f"changes. Reconcile (review + `reconcile`) first, then close (D14)."
             )
-        # Close-gate (D14 extended, T86 symmetric): refuse to mark T done while
-        # any task in its transitive linked neighborhood is stale. That
+        # Close-gate (D14 extended, T86 symmetric; D56 1-hop): refuse to mark T
+        # done while any DIRECT (1-hop) linked neighbor is stale. That
         # unreconciled drift may still change and re-invalidate T. Reach is
-        # bounded in practice by the meta-island constraint (D26).
-        linked_stale = self._stale_linked_transitive(task_id)
+        # 1-hop, symmetric with the D10/D13 cascade's affect-model.
+        linked_stale = self._stale_linked_direct(task_id)
         if linked_stale:
             id_list = ", ".join(prefixed_id(k, uid) for uid, k in linked_stale)
             raise InvariantError(
-                f"REFUSED: {prefixed_id(row['kind'], task_id)} is in a linked neighborhood with unreconciled "
-                f"stale task(s) {id_list} -- closing it would mark work done on top "
+                f"REFUSED: {prefixed_id(row['kind'], task_id)} has a directly-linked unreconciled "
+                f"stale neighbor(s) {id_list} -- closing it would mark work done on top "
                 f"of drift that may still change. Reconcile {id_list} first, then "
                 f"close (D14)."
             )
@@ -1595,11 +1589,13 @@ class Core:
     # ====================================================================
     # T132 - wont_do (terminal "decided not to do" status, distinct from close)
     # ====================================================================
-    def wont_do(self, task_id: int, reason: str, delta: str) -> WontDoResult:
+    def wont_do(self, task_id: int, reason: str) -> WontDoResult:
         """T132 / 2026-06-01 + D36 (v0.5) - mark a task as decided-not-to-do,
         distinct from closed (which means work done). Requires ``reason``
         (durable, persists in wont_do_reason column -- the rationale
-        survives forever) and ``delta`` (ephemeral per T117). Locked-forever
+        survives forever). No ``delta`` (D284): wont_do does NOT fire the
+        cascade, so a delta would have no reader -- terminal status verbs
+        carry ``reason`` only, symmetric with close(). Locked-forever
         per T132 pattern: reopen / close / wont_do all REFUSED on wont_do
         tasks (the change-of-mind path is a fresh task with the new
         direction). v0.4 allows edit on wont_do (P2 retires T118). REFUSED
@@ -1610,7 +1606,6 @@ class Core:
         content edit; symmetric with close). Returns the standard
         CloseResult-shaped payload of one-hop neighbors for migrate-or-stay
         review."""
-        self._record_delta(delta, "wont_do")
         if not reason or not reason.strip():
             raise ValidationError(
                 "wont_do requires a non-empty `reason` -- the durable rationale "
@@ -1655,12 +1650,12 @@ class Core:
                 f"REFUSED: {prefixed_id(row['kind'], task_id)} is stale -- it has unreconciled upstream "
                 f"changes. Reconcile (review + `reconcile`) first, then wont_do (T132)."
             )
-        linked_stale = self._stale_linked_transitive(task_id)
+        linked_stale = self._stale_linked_direct(task_id)
         if linked_stale:
             id_list = ", ".join(prefixed_id(k, uid) for uid, k in linked_stale)
             raise InvariantError(
-                f"REFUSED: {prefixed_id(row['kind'], task_id)} is in a linked neighborhood with "
-                f"unreconciled stale task(s) {id_list}. Reconcile {id_list} "
+                f"REFUSED: {prefixed_id(row['kind'], task_id)} has a directly-linked "
+                f"unreconciled stale neighbor(s) {id_list}. Reconcile {id_list} "
                 f"first, then wont_do (T132)."
             )
         with self._mutate():
@@ -1682,13 +1677,14 @@ class Core:
         {"tbd", "todo", "obsolete", "no longer needed"}
     )
 
-    def retire(self, task_id: int, reason: str, delta: str) -> WontDoResult:
+    def retire(self, task_id: int, reason: str) -> WontDoResult:
         """D36 (v0.5) - retire a design/schema slice: status spec -> retired.
 
         Use ONLY when the slice's premise is 100% gone with no replacement.
         Partial-change path is edit() + let the cascade prompt link review.
         Mirrors wont_do() shape (durable ``reason`` in wont_do_reason; no
-        cascade fire; no description_revisions row; returns one-hop
+        cascade fire; no ``delta`` per D284 -- a non-cascading verb has no
+        delta reader; no description_revisions row; returns one-hop
         obligation payload).
 
         Refusal order (fail-fast, 6 checks):
@@ -1697,8 +1693,8 @@ class Core:
           3. kind IN ('design','schema') (redundant under partition; kept
              for error clarity on the misuse path).
           4. Stale gate (D14): refused if the target is stale.
-          5. Linked-stale gate: refused if any obligation-bearing stale
-             task sits in the transitive linked neighborhood.
+          5. Linked-stale gate (1-hop, D56): refused if any obligation-
+             bearing stale task is a DIRECT linked neighbor.
           6. Open-neighbor gate: refused if any linked neighbor has
              status='open'. The refusal lists each open neighbor with its
              `because` rationale and presents the (i)/(ii) decision tree
@@ -1707,7 +1703,6 @@ class Core:
         Terminal state: reopen/close/wont_do/retire all refused on retired
         rows (T132 generalized -- no double-decide). Edit IS still allowed
         per D29 (audit-table backstop)."""
-        self._record_delta(delta, "retire")
         if not reason or not reason.strip():
             raise ValidationError(
                 "retire requires a non-empty `reason` -- the durable "
@@ -1750,12 +1745,12 @@ class Core:
                 f"it has unreconciled upstream changes. Reconcile (review + "
                 f"`reconcile`) first, then retire (D36)."
             )
-        linked_stale = self._stale_linked_transitive(task_id)
+        linked_stale = self._stale_linked_direct(task_id)
         if linked_stale:
             id_list = ", ".join(prefixed_id(k, uid) for uid, k in linked_stale)
             raise InvariantError(
-                f"REFUSED: {prefixed_id(row['kind'], task_id)} is in a "
-                f"linked neighborhood with unreconciled stale task(s) "
+                f"REFUSED: {prefixed_id(row['kind'], task_id)} has a "
+                f"directly-linked unreconciled stale neighbor(s) "
                 f"{id_list}. Reconcile {id_list} first, then retire (D36)."
             )
         linked = self._linked_with(task_id)
@@ -2183,6 +2178,21 @@ class Core:
     # ====================================================================
     # D15 - query / board (derived views)
     # ====================================================================
+    # D283: order_by is over STRUCTURED COLUMNS only -- an enum of column
+    # names, never a body-derived key. Each expression carries a `t.id`
+    # tiebreak for deterministic ordering. degree/stale default DESC (hubs
+    # and stale surface first, the useful triage direction).
+    _LS_ORDER_COLUMNS = {
+        "id": "t.id",
+        "kind": "t.kind, t.id",
+        "status": "t.status, t.id",
+        "created_at": "t.created_at, t.id",
+        "updated_at": "t.updated_at, t.id",
+        "stale": "t.stale DESC, t.id",
+        "degree": "(SELECT COUNT(*) FROM links lk "
+                  "WHERE lk.task_a = t.id OR lk.task_b = t.id) DESC, t.id",
+    }
+
     def ls(
         self,
         status: str | None = None,
@@ -2190,12 +2200,20 @@ class Core:
         stale: bool | None = None,
         kind: str | None = None,
         name_prefix: str | None = None,
+        order_by: str | None = None,
     ) -> list[Task]:
-        """D15 + T157 + D36 (v0.5) + D211 + T220 - list/filter tasks by status,
-        label, stale, kind, and/or name_prefix. The work queue and any board are
+        """D15 + T157 + D36 (v0.5) + D211 + T220 + D283 - list/filter tasks by
+        status, label, stale, kind, and/or name_prefix, optionally sorted by a
+        structured column via ``order_by``. The work queue and any board are
         *queries over the fields*, not maintained lists. Status filter accepts
         the full v0.5 set (open, closed, wont_do for production/meta; spec,
         retired for design/schema) per D7+D36's five-status partitioned taxonomy.
+
+        ``order_by`` (D283) sorts by a STRUCTURED column only -- one of
+        id / kind / status / created_at / updated_at / stale / degree (link
+        count); never a body-derived key. Defaults to id. A disallowed value
+        is refused loudly (the firewall that keeps sort from re-opening the
+        no-content-query rule).
 
         T220: ``name_prefix`` scopes results to tasks whose stored ``name``
         begins with the given string -- a LITERAL, case-sensitive prefix (no
@@ -2220,6 +2238,16 @@ class Core:
                 "name_prefix filter must be non-empty (an empty prefix matches "
                 "everything -- omit the filter instead) (T220)."
             )
+        order_clause = self._LS_ORDER_COLUMNS["id"]
+        if order_by is not None:
+            if order_by not in self._LS_ORDER_COLUMNS:
+                valid = ", ".join(sorted(self._LS_ORDER_COLUMNS))
+                raise ValidationError(
+                    f"order_by must be one of {valid} (D283: sort is over "
+                    f"STRUCTURED COLUMNS only -- never body content). "
+                    f"Got {order_by!r}."
+                )
+            order_clause = self._LS_ORDER_COLUMNS[order_by]
         clauses, params = [], []
         join = ""
         if label is not None:
@@ -2243,9 +2271,47 @@ class Core:
             params.append(name_prefix)
         where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
         rows = self.conn.execute(
-            f"SELECT DISTINCT t.* FROM tasks t {join} {where} ORDER BY t.id", tuple(params)
+            f"SELECT DISTINCT t.* FROM tasks t {join} {where} "
+            f"ORDER BY {order_clause}",
+            tuple(params),
         ).fetchall()
         return [self._task_from_row(r) for r in rows]
+
+    def summary(self) -> dict:
+        """D283 - structured-column rollup for situational awareness (serves
+        the mandated end-of-turn state line). Counts tasks by (status, kind)
+        plus the obligation-bearing stale count (stale=1 AND status IN
+        ('open','spec')). A PURE read over structured columns -- it never
+        touches body content (D283 firewall), and a count structurally forces
+        a drill-down (ls / show / board) to act on, so it can't substitute for
+        reading a slice. Descriptive, not a target (a headline 'open count' is
+        situational awareness, not a number to drive to zero)."""
+        by_status: dict[str, int] = {}
+        by_kind: dict[str, int] = {}
+        by_status_kind: dict[str, dict[str, int]] = {}
+        total = 0
+        rows = self.conn.execute(
+            "SELECT status, kind, COUNT(*) AS n FROM tasks GROUP BY status, kind"
+        ).fetchall()
+        for r in rows:
+            status = r["status"]
+            kind = r["kind"]
+            n = int(r["n"])
+            total += n
+            by_status[status] = by_status.get(status, 0) + n
+            by_kind[kind] = by_kind.get(kind, 0) + n
+            by_status_kind.setdefault(status, {})[kind] = n
+        stale_row = self.conn.execute(
+            "SELECT COUNT(*) AS n FROM tasks "
+            "WHERE stale = 1 AND status IN ('open', 'spec')"
+        ).fetchone()
+        return {
+            "total": total,
+            "by_status": by_status,
+            "by_kind": by_kind,
+            "by_status_kind": by_status_kind,
+            "stale_open_spec": int(stale_row["n"]),
+        }
 
     # ====================================================================
     # D16 - narrative render

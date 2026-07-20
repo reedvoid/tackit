@@ -132,7 +132,6 @@ def test_cli_retire_clean_succeeds(cli, capsys):
     exit_code = main([
         "retire", "1",
         "--reason", "premise replaced by D99",
-        "--delta", "retiring D1",
     ])
     assert exit_code == 0
     out = capsys.readouterr().out
@@ -619,3 +618,41 @@ def test_cli_links_add_bulk(cli, tmp_path, capsys):
     result = json.loads(capsys.readouterr().out)
     assert result["created"] == 2
     assert result["already_linked"] == 0
+
+
+def test_cli_summary(cli, capsys):
+    """D283: the summary subcommand emits the structured-column state line."""
+    main(["add", "d1", "--kind", "design"])
+    main(["add", "m1", "--kind", "meta"])
+    capsys.readouterr()
+    assert main(["summary", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["total"] == 2
+    assert data["by_kind"] == {"design": 1, "meta": 1}
+    assert data["stale_open_spec"] == 0
+
+
+def test_cli_ls_order_by(cli, capsys):
+    """D283: ls --order-by sorts over a structured column."""
+    main(["add", "d1", "--kind", "design"])  # spec
+    main(["add", "m1", "--kind", "meta"])    # open
+    capsys.readouterr()
+    assert main(["ls", "--order-by", "status", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert [t["status"] for t in data] == ["open", "spec"]
+
+
+def test_cli_board_header_stale_is_obligation_bearing(cli, capsys):
+    """D283 / T289: the board header's stale count is obligation-bearing
+    (open/spec) only -- a closed-stale (record-only, D28/D36) task does NOT
+    inflate it, matching the `stale` worklist and `summary`."""
+    main(["add", "anchor", "--kind", "design"])  # D1
+    main(["add", "a", "--kind", "production", "--dep", "1::realizes the anchor decision"])  # T2 open
+    main(["add", "b", "--kind", "production", "--dep", "1::realizes the anchor decision"])  # T3
+    main(["close", "3"])  # T3 -> closed
+    # Editing D1 stales its direct neighbors: T2 (open) and T3 (closed).
+    main(["edit", "1", "--desc", "shifted", "--delta", "upstream change"])
+    capsys.readouterr()
+    assert main(["board"]) == 0
+    head = capsys.readouterr().out.splitlines()[0]
+    assert "1 stale" in head  # only T2 (open-stale); T3 closed-stale is record-only

@@ -84,7 +84,7 @@ def test_stale_worklist_includes_spec_design_when_stale(core):
 
 
 # ----------------------------------------------------------------------------
-# D28 - close-gate filter (transitive walk skips closed-stale production)
+# D28 - close-gate filter (1-hop, D56; skips closed-stale production)
 # ----------------------------------------------------------------------------
 
 
@@ -249,7 +249,7 @@ def test_reconcile_refused_on_wont_do_production(core):
     """Same as closed-production -- wont_do production rows are record-only."""
     core.add("anchor", kind="design")  # T1 -- D256 creation-gate anchor
     core.add("a", kind="production", deps={1: "realizes anchor"})  # T2
-    core.wont_do(2, reason="not pursuing", delta="dropped")
+    core.wont_do(2, reason="not pursuing")
     with pytest.raises(InvariantError, match=r"record-only|archaeology"):
         core.reconcile(2)
 
@@ -264,7 +264,7 @@ def test_reconcile_refused_on_closed_meta(core):
 
 def test_reconcile_refused_on_wont_do_meta(core):
     core.add("a", kind="meta")
-    core.wont_do(1, reason="dropped", delta="dropped")
+    core.wont_do(1, reason="dropped")
     with pytest.raises(InvariantError, match=r"record-only|archaeology"):
         core.reconcile(1)
 
@@ -386,7 +386,7 @@ def test_wont_do_refused_on_spec_status(core):
     as close() (edit + retire)."""
     core.add("d1", kind="design")
     with pytest.raises(InvariantError) as excinfo:
-        core.wont_do(1, reason="trying to retire", delta="testing")
+        core.wont_do(1, reason="trying to retire")
     msg = str(excinfo.value)
     assert "spec" in msg
     assert "edit" in msg.lower()
@@ -396,7 +396,7 @@ def test_wont_do_refused_on_spec_status(core):
 def test_wont_do_refused_on_spec_status_schema(core):
     core.add("s1", kind="schema")
     with pytest.raises(InvariantError) as excinfo:
-        core.wont_do(1, reason="trying to retire", delta="testing")
+        core.wont_do(1, reason="trying to retire")
     msg = str(excinfo.value)
     assert "spec" in msg
     assert "edit" in msg.lower()
@@ -495,7 +495,7 @@ def test_search_hit_includes_wont_do_reason(core):
     show why the scope was dropped without an extra fetch."""
     core.add("anchor", kind="design")  # T1 -- D256 creation-gate anchor
     core.add("dropped target", kind="production", deps={1: "realizes anchor"})  # T2
-    core.wont_do(2, reason="redundant with X", delta="dropping")
+    core.wont_do(2, reason="redundant with X")
     hits = core.search("dropped target")
     assert len(hits) == 1
     assert hits[0].status == "wont_do"

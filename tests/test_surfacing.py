@@ -55,26 +55,35 @@ def test_d19_alert_lists_all_stale_in_id_order(core):
     assert payload["stale_task_ids"] == [3, 4]
 
 
-def test_d14_close_refused_when_upstream_transitively_stale(core):
-    # chain T4 -> T3 -> T2 ; editing T2 stales its DIRECT neighbors only: T3
-    # AND the shared design anchor D1 (T4 is also directly linked to D1, so
-    # the close-gate's transitive walk still finds D1 stale after T3 alone
-    # is reconciled -- both must be cleared before close succeeds).
+def test_d56_close_gate_ignores_two_hop_stale(core):
+    """D56: the close-gate reaches 1-hop only (symmetric with the cascade).
+    A stale task TWO hops away -- not a direct neighbor -- does NOT block
+    close. (Prior behavior walked the whole transitive component, so one
+    stale hub could freeze an entire connected set of otherwise-done work.)"""
     core.add("spec anchor", kind="design")  # D1
-    core.add("base", kind="production", deps={1: "realizes the anchor decision"})  # T2
-    core.add("mid", kind="production", deps={1: "realizes the anchor decision"})  # T3
-    core.link_add(3, 2, because="test fixture")  # T3 depends_on T2
-    core.add("top", kind="production", deps={1: "realizes the anchor decision"})  # T4
-    core.link_add(4, 3, because="test fixture")  # T4 depends_on T3
-    core.edit(2, description="x", delta="test")  # stales T3 and D1 (one hop each)
-    assert core.get(4).stale is False  # T4 itself is NOT stale (non-transitive)
+    core.add("x", kind="production", deps={1: "realizes the anchor decision"})  # T2
+    core.add("y", kind="production", deps={1: "realizes the anchor decision"})  # T3
+    core.add("z", kind="production", deps={1: "realizes the anchor decision"})  # T4
+    core.link_add(2, 3, because="x-y direct")  # T2 <-> T3
+    core.link_add(3, 4, because="y-z direct")  # T3 <-> T4
+    # Force ONLY z (T4) stale, leaving its neighbors (y=T3, anchor D1) clean,
+    # so z is a genuine 2-hop-from-x stale node with no direct edge to x.
+    core.conn.execute("UPDATE tasks SET stale = 1 WHERE id = 4")
+    # x's (T2) direct neighbors are y (T3) and the anchor D1 -- both clean;
+    # z (T4) is two hops away (via y). The 1-hop gate lets x close.
+    assert core.close(2).task.status == "closed"
+
+
+def test_d56_close_gate_blocks_one_hop_stale(core):
+    """D56 converse: a DIRECT (1-hop) stale neighbor DOES still block close."""
+    core.add("spec anchor", kind="design")  # D1
+    core.add("x", kind="production", deps={1: "realizes the anchor decision"})  # T2
+    core.add("y", kind="production", deps={1: "realizes the anchor decision"})  # T3
+    core.link_add(2, 3, because="x-y direct")  # T2 <-> T3
+    # y (T3) is a direct neighbor of x (T2); force it stale (anchor stays clean).
+    core.conn.execute("UPDATE tasks SET stale = 1 WHERE id = 3")
     with pytest.raises(InvariantError):
-        core.close(4)  # sits on stale T3 (and stale D1, also linked) -> refused
-    core.reconcile(3)  # clear the direct upstream
-    with pytest.raises(InvariantError):
-        core.close(4)  # still refused: D1 (also linked to T4 via the anchor edge) remains stale
-    core.reconcile(1)  # clear the anchor too
-    assert core.close(4).task.status == "closed"  # now allowed
+        core.close(2)  # direct stale neighbor y -> refused
 
 
 def test_d14_close_allowed_when_upstream_clean(core):

@@ -112,7 +112,7 @@ def test_edit_append_refused_on_design_replace_still_works(core):
     D36 + D29: the retired row can still be edited via a body-engaging op
     (edit_replace_substring), and the audit table records it."""
     core.add("d", kind="design", description="decision text")  # T1, spec
-    core.retire(1, reason="fully replaced by D2 with no migration", delta="retire d")
+    core.retire(1, reason="fully replaced by D2 with no migration")
     with pytest.raises(ValidationError, match="edit_append refused"):
         core.edit_append(1, content=" (clarification)", delta="historical note")
     core.edit_replace_substring(

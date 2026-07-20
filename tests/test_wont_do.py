@@ -2,7 +2,8 @@
 
 wont_do is a third terminal status distinct from closed: closed = "we did this";
 wont_do = "we decided not to do this". The verb takes a durable reason (persists
-forever in wont_do_reason column) + ephemeral delta (T117). Locked-forever per
+forever in wont_do_reason column). No delta (D284): wont_do doesn't fire the
+cascade, so a delta would have no reader. Locked-forever per
 T118 pattern: edit / reopen / close / wont_do all refused on wont_do tasks;
 supersede is the only path to change the decision (with a new task carrying the
 new direction).
@@ -18,7 +19,7 @@ from tackit.errors import InvariantError, ValidationError, NotFoundError
 def test_wont_do_sets_status_and_reason(core):
     core.add("spec anchor", kind="design")  # T1 -- D256 creation-gate anchor
     core.add("scope_drop_candidate", kind="production", deps={1: "realizes the anchor decision"})
-    result = core.wont_do(2, reason="redundant with T_other", delta="dropped scope")
+    result = core.wont_do(2, reason="redundant with T_other")
     assert result.task.status == "wont_do"
     assert result.task.wont_do_reason == "redundant with T_other"
     # Persists across re-read.
@@ -34,7 +35,7 @@ def test_wont_do_returns_one_hop_neighbors(core):
     core.add("nbr_b", kind="production", deps={1: "realizes the anchor decision"})
     core.link_add(3, 2, because="setup")
     core.link_add(4, 2, because="setup")
-    result = core.wont_do(2, reason="not doing this", delta="dropped")
+    result = core.wont_do(2, reason="not doing this")
     nbr_ids = sorted(n.id for n in result.links)
     # dropped(2) is linked to the anchor (D256, T1) plus nbr_a(3)/nbr_b(4).
     assert nbr_ids == [1, 3, 4]
@@ -43,7 +44,7 @@ def test_wont_do_returns_one_hop_neighbors(core):
 def test_wont_do_logs_transition(core):
     core.add("spec anchor", kind="design")  # T1 -- D256 creation-gate anchor
     core.add("task", kind="production", deps={1: "realizes the anchor decision"})
-    core.wont_do(2, reason="dropped", delta="not doing it")
+    core.wont_do(2, reason="dropped")
     seq = [(h.from_status, h.to_status) for h in core.history(2).status_transitions]
     assert seq == [(None, "open"), ("open", "wont_do")]
 
@@ -54,26 +55,29 @@ def test_wont_do_empty_reason_refused(core):
     core.add("spec anchor", kind="design")  # T1 -- D256 creation-gate anchor
     core.add("task", kind="production", deps={1: "realizes the anchor decision"})
     with pytest.raises(ValidationError, match="reason"):
-        core.wont_do(2, reason="", delta="missing reason")
+        core.wont_do(2, reason="")
 
 
 def test_wont_do_whitespace_reason_refused(core):
     core.add("spec anchor", kind="design")  # T1 -- D256 creation-gate anchor
     core.add("task", kind="production", deps={1: "realizes the anchor decision"})
     with pytest.raises(ValidationError, match="reason"):
-        core.wont_do(2, reason="   ", delta="missing reason")
+        core.wont_do(2, reason="   ")
 
 
-def test_wont_do_empty_delta_refused(core):
+def test_wont_do_succeeds_without_delta(core):
+    """D284: wont_do carries reason only -- no delta required (it does not
+    fire the cascade, so a delta would have no reader; symmetric with close)."""
     core.add("spec anchor", kind="design")  # T1 -- D256 creation-gate anchor
     core.add("task", kind="production", deps={1: "realizes the anchor decision"})
-    with pytest.raises(ValidationError, match="delta"):
-        core.wont_do(2, reason="ok", delta="")
+    result = core.wont_do(2, reason="scope dropped")
+    assert result.task.status == "wont_do"
+    assert result.task.wont_do_reason == "scope dropped"
 
 
 def test_wont_do_missing_task_refused(core):
     with pytest.raises(NotFoundError):
-        core.wont_do(999, reason="nope", delta="nope")
+        core.wont_do(999, reason="nope")
 
 
 # --- locked-forever (T118 pattern extends to wont_do) ----------------------
@@ -85,7 +89,7 @@ def test_wont_do_edit_refused_under_d259(core):
     new task. No audit row is written."""
     core.add("spec anchor", kind="design")  # T1 -- D256 creation-gate anchor
     core.add("task", kind="production", description="initial", deps={1: "realizes the anchor decision"})
-    core.wont_do(2, reason="dropped because X", delta="initial drop")
+    core.wont_do(2, reason="dropped because X")
     with pytest.raises(ValidationError, match="frozen record"):
         core.edit(2, description="updated rationale prose", delta="refining the wont_do context")
     t = core.get(2)
@@ -99,7 +103,7 @@ def test_wont_do_reopen_refused(core):
     """wont_do is terminal forever; the change-of-mind path is supersede."""
     core.add("spec anchor", kind="design")  # T1 -- D256 creation-gate anchor
     core.add("task", kind="production", deps={1: "realizes the anchor decision"})
-    core.wont_do(2, reason="dropped", delta="dropped")
+    core.wont_do(2, reason="dropped")
     with pytest.raises(InvariantError, match="wont_do"):
         core.reopen(2)
 
@@ -108,7 +112,7 @@ def test_wont_do_close_refused(core):
     """closed and wont_do are distinct terminal states; can't move between."""
     core.add("spec anchor", kind="design")  # T1 -- D256 creation-gate anchor
     core.add("task", kind="production", deps={1: "realizes the anchor decision"})
-    core.wont_do(2, reason="dropped", delta="dropped")
+    core.wont_do(2, reason="dropped")
     with pytest.raises(InvariantError, match="wont_do"):
         core.close(2)
 
@@ -117,9 +121,9 @@ def test_wont_do_already_wont_do_refused(core):
     """No double-decide; the decision is locked."""
     core.add("spec anchor", kind="design")  # T1 -- D256 creation-gate anchor
     core.add("task", kind="production", deps={1: "realizes the anchor decision"})
-    core.wont_do(2, reason="dropped", delta="dropped")
+    core.wont_do(2, reason="dropped")
     with pytest.raises(InvariantError, match="already wont_do"):
-        core.wont_do(2, reason="dropped again", delta="redundant")
+        core.wont_do(2, reason="dropped again")
 
 
 def test_wont_do_on_closed_refused(core):
@@ -129,7 +133,7 @@ def test_wont_do_on_closed_refused(core):
     core.add("task", kind="production", deps={1: "realizes the anchor decision"})
     core.close(2)
     with pytest.raises(InvariantError, match="closed"):
-        core.wont_do(2, reason="changing my mind", delta="this should refuse")
+        core.wont_do(2, reason="changing my mind")
 
 
 # --- change-of-mind path is a fresh task -----------------------------------
@@ -141,7 +145,7 @@ def test_wont_do_then_fresh_task_for_changed_mind(core):
     matters, link_add records it."""
     core.add("spec anchor", kind="design")  # T1 -- D256 creation-gate anchor
     core.add("dropped_originally", kind="production", deps={1: "realizes the anchor decision"})
-    core.wont_do(2, reason="not doing", delta="dropped")
+    core.wont_do(2, reason="not doing")
     # Change of mind: spawn a new task with the new direction.
     core.add("now_doing_it", kind="production", deps={1: "realizes the anchor decision"})
     # The wont_do row is untouched.
@@ -160,7 +164,7 @@ def test_wont_do_refused_when_task_is_stale(core):
     core.link_add(3, 2, because="setup")
     core.edit(2, description="x", delta="staling T3")  # stales T3
     with pytest.raises(InvariantError, match="stale"):
-        core.wont_do(3, reason="dropped", delta="dropped")
+        core.wont_do(3, reason="dropped")
 
 
 def test_wont_do_refused_when_linked_stale(core):
@@ -174,7 +178,7 @@ def test_wont_do_refused_when_linked_stale(core):
     core.link_add(4, 3, because="setup")
     core.edit(2, description="x", delta="stales T3")
     with pytest.raises(InvariantError, match="stale"):
-        core.wont_do(4, reason="dropped", delta="dropped")
+        core.wont_do(4, reason="dropped")
 
 
 # --- structural ops still allowed on wont_do tasks -------------------------
@@ -185,7 +189,7 @@ def test_wont_do_link_add_allowed(core):
     core.add("spec anchor", kind="design")  # T1 -- D256 creation-gate anchor
     core.add("dropped", kind="production", deps={1: "realizes the anchor decision"})  # T2
     core.add("other", kind="production", deps={1: "realizes the anchor decision"})  # T3
-    core.wont_do(2, reason="dropped", delta="dropped")
+    core.wont_do(2, reason="dropped")
     s = core.link_add(3, 2, because="historical edge to dropped task")
     assert 2 in [n.id for n in s.links]
 
@@ -195,7 +199,7 @@ def test_wont_do_link_rm_allowed(core):
     core.add("dropped", kind="production", deps={1: "realizes the anchor decision"})  # T2
     core.add("other", kind="production", deps={1: "realizes the anchor decision"})  # T3
     core.link_add(3, 2, because="will be pruned")
-    core.wont_do(2, reason="dropped", delta="dropped")
+    core.wont_do(2, reason="dropped")
     core.link_rm(3, 2)
     n = core.conn.execute("SELECT COUNT(*) FROM links WHERE task_a = 2 AND task_b = 3").fetchone()[0]
     assert n == 0
@@ -204,7 +208,7 @@ def test_wont_do_link_rm_allowed(core):
 def test_wont_do_label_ops_allowed(core):
     core.add("spec anchor", kind="design")  # T1 -- D256 creation-gate anchor
     core.add("dropped", kind="production", deps={1: "realizes the anchor decision"})  # T2
-    core.wont_do(2, reason="dropped", delta="dropped")
+    core.wont_do(2, reason="dropped")
     core.label_add(2, "historical")
     assert "historical" in core.labels_of(2)
     core.label_rm(2, "historical")
@@ -221,7 +225,7 @@ def test_wont_do_task_cascade_staled_stays_wont_do(core):
     core.add("upstream", kind="production", deps={1: "realizes the anchor decision"})  # T2
     core.add("dropped_downstream", kind="production", deps={1: "realizes the anchor decision"})  # T3
     core.link_add(3, 2, because="setup")
-    core.wont_do(3, reason="dropped", delta="dropped")
+    core.wont_do(3, reason="dropped")
     core.edit(2, description="upstream shifted", delta="upstream shift stales T3")
     t3 = core.get(3)
     assert t3.stale is True
@@ -235,7 +239,7 @@ def test_reconcile_refused_on_wont_do_stale_under_v04(core):
     core.add("upstream", kind="production", deps={1: "realizes the anchor decision"})  # T2
     core.add("dropped", kind="production", deps={1: "realizes the anchor decision"})  # T3
     core.link_add(3, 2, because="setup")
-    core.wont_do(3, reason="dropped", delta="dropped")
+    core.wont_do(3, reason="dropped")
     core.edit(2, description="x", delta="staling")
     with pytest.raises(InvariantError, match=r"record-only|archaeology"):
         core.reconcile(3)

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "tackit"
-version = "0.9.1"
+version = "0.9.2"
 description = "A deterministic task + dependency tracker for coding agents (SQLite + Pydantic, MCP + CLI)."
 readme = "README.md"
 requires-python = ">=3.10"

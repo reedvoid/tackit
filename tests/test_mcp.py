@@ -41,11 +41,11 @@ def test_mcp_registers_all_tools(tmp_path, monkeypatch):
         return [t.name for t in listing.tools]
 
     names = _drive(tmp_path, monkeypatch, scenario)
-    assert len(names) == 25  # +2 T179 (edit_append/replace); +1 T204 (links); +1 T216 (links_add)
+    assert len(names) == 26  # +2 T179 (edit_append/replace); +1 T204 (links); +1 T216 (links_add); +1 D283 (summary)
     expected = {"add", "show", "search", "links", "edit", "edit_append",
                 "edit_replace_substring", "close", "reconcile", "link_add",
                 "links_add", "stale", "labels", "load", "board", "reclassify",
-                "wont_do", "retire"}
+                "wont_do", "retire", "summary"}
     assert expected <= set(names)
 
 
@@ -338,12 +338,25 @@ def test_mcp_retire_smoke(tmp_path, monkeypatch):
         await s.call_tool("add", {"name": "d1 living spec", "kind": "design"})
         return _envelope(await s.call_tool(
             "retire",
-            {"id": 1, "reason": "premise replaced by D99", "delta": "retiring"},
+            {"id": 1, "reason": "premise replaced by D99"},
         ))
 
     env = _drive(tmp_path, monkeypatch, scenario)
     assert env["result"]["task"]["status"] == "retired"
     assert env["result"]["task"]["wont_do_reason"] == "premise replaced by D99"
+
+
+def test_mcp_summary_smoke(tmp_path, monkeypatch):
+    """D283: the summary MCP tool returns the structured-column rollup."""
+    async def scenario(s):
+        await s.call_tool("add", {"name": "d1", "kind": "design"})
+        await s.call_tool("add", {"name": "m1", "kind": "meta"})
+        return _envelope(await s.call_tool("summary", {}))
+
+    env = _drive(tmp_path, monkeypatch, scenario)
+    assert env["result"]["total"] == 2
+    assert env["result"]["by_kind"] == {"design": 1, "meta": 1}
+    assert env["result"]["stale_open_spec"] == 0
 
 
 # --- T179: edit_append + edit_replace_substring MCP wiring --------------

@@ -39,7 +39,7 @@ def test_close_result_single_links(core):
 
 def test_wont_do_result_single_links(core):
     _two_linked(core)
-    r = core.wont_do(2, reason="dropped", delta="scope dropped")
+    r = core.wont_do(2, reason="dropped")
     assert [n.id for n in r.links] == [1, 3]
     assert "dependents" not in r.model_dump()
 
@@ -52,7 +52,7 @@ def test_retire_result_single_links(core):
     # link, then drop the neighbour so retire's open-neighbour gate is clear
     core.link_add(1, 2, because="d1 relates to d2")
     core.link_rm(1, 2)
-    r = core.retire(d.id, reason="abandoned", delta="decision dead")
+    r = core.retire(d.id, reason="abandoned")
     assert [n.id for n in r.links] == []              # no neighbours, one list
     assert "dependencies" not in r.model_dump()
 

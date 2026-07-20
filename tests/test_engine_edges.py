@@ -209,7 +209,7 @@ def test_ls_status_filter_accepts_all_three_v04_values(core):
     core.add("b", kind="production", deps={1: "realizes the anchor decision"})  # id 3 -> closed
     core.close(3)
     core.add("c", kind="production", deps={1: "realizes the anchor decision"})  # id 4 -> wont_do
-    core.wont_do(4, reason="dropped", delta="dropped")
+    core.wont_do(4, reason="dropped")
 
     assert [t.id for t in core.ls(status="open")] == [2]
     assert [t.id for t in core.ls(status="closed")] == [3]
@@ -382,12 +382,13 @@ def test_unpaired_surrogate_in_name_refused(core):
 
 
 def test_diamond_traversal_dedup(core):
-    # Under symmetric semantics (T86), the diamond exercises the `seen` dedup
-    # in `_stale_linked_transitive` (the close-gate walker). T4 reaches T1 by
-    # two paths in the undirected graph; the walker must not revisit T1. Cycles
-    # are no longer a concept (undirected edges have no directed cycle), so
-    # closing the apex is permitted and the would-be-cycle dep_add is now
-    # idempotent (the canonical pair (1, 4) is created either way).
+    # Under symmetric semantics (T86), the diamond is a link-dedup + no-cycle
+    # check. The apex reaches the base by two undirected paths; the canonical
+    # pair is stored once. Cycles are no longer a concept (undirected edges
+    # have no directed cycle), so closing the apex is permitted (D56: the
+    # 1-hop gate sees only the apex's direct neighbors, all clean) and the
+    # would-be-cycle link_add is idempotent (the canonical pair is created
+    # either way).
     core.add("spec anchor", kind="design")  # id 1
     core.add("base", kind="production", deps={1: "realizes the anchor decision"})  # id 2
     core.add("left", kind="production", deps={1: "realizes the anchor decision"})  # id 3

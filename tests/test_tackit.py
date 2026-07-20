@@ -219,9 +219,9 @@ def test_d14_close_gate_refuses_stale_then_allows_after_reconcile(core):
     with pytest.raises(InvariantError):
         core.close(3)
     core.reconcile(3)
-    # The close-gate checks the transitive linked neighborhood (D14): the
-    # anchor (T1) is still stale, so T3 still can't close until it too is
-    # reconciled.
+    # The close-gate checks direct (1-hop) linked neighbors (D14 / D56): the
+    # anchor D1 is a DIRECT neighbor of T3 (the D256 gate edge) and is still
+    # stale, so T3 still can't close until it too is reconciled.
     core.reconcile(1)
     assert core.close(3).task.status == "closed"
 
