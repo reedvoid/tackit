@@ -75,8 +75,8 @@ def render_setup(cwd: Path) -> str:
             "4. CREATE THE STORE in this project:",
             "     tackit init",
             "",
-            "After that, `tackit.sql` is the committed source of truth and the MCP",
-            "tools are the primary door. The portable .mcp.json above and tackit.sql",
+            "After that, `tackit.sql.gz` is the committed source of truth and the MCP",
+            "tools are the primary door. The portable .mcp.json above and tackit.sql.gz",
             "are both safe to commit; the binary tackit.db is gitignored by `init`.",
             "See `tackit --help` for the full surface.",
         ]

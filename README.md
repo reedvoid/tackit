@@ -156,10 +156,25 @@ tackit ls --status open                                                  # query
 ```
 
 The store lives at `.tackit/tackit.db` (binary, gitignored). Its git-canonical form
-is a deterministic SQL text dump, `.tackit/tackit.sql`, re-written on every change and
-committed — so diffs and merges are reviewable text, never a binary blob. Sync is
-automatic; `tackit status` / `export` / `import` / `restore` exist only for the
-divergence cases auto-sync deliberately refuses to guess at.
+is a deterministic SQL dump, `.tackit/tackit.sql.gz`, re-written on every change and
+committed. It is gzip compressed in chunks of rows, so git still stores each new
+version as a small delta. Any standard `gunzip` reads it. A store with an older text
+`tackit.sql` is converted the next time it opens; commit the removal and the new file
+together. Sync is automatic; `tackit status` / `export` / `import` / `restore` exist
+only for the divergence cases auto-sync deliberately refuses to guess at.
+
+Git shows the dump as a binary file. For readable diffs, add this line to
+`.gitattributes`:
+
+```
+.tackit/tackit.sql.gz diff=gzip-text
+```
+
+and run this once in each clone:
+
+```bash
+git config diff.gzip-text.textconv "gzip -dc"
+```
 
 ## For agents: start here
 
@@ -607,7 +622,7 @@ Honest notes:
 - **It's append-mostly.** tackit has no delete; the terminal verbs are `close` (work
   shipped), `wont_do` (production/meta scope dropped), and `retire` (design/schema spec
   100% abandoned). Your undo for a bad import is `restore` from a backup or `import` an
-  older `tackit.sql`. Eyeball the plan first.
+  older `tackit.sql.gz`. Eyeball the plan first.
 
 ## Testing
 
@@ -620,7 +635,7 @@ random operation sequences against the always-true invariants — including
 monotonic, canonical link pairs (T86), `description_revisions` append-only
 (D29), `wont_do_reason` non-null on wont_do rows, the **spec-integrity model**
 (D254–D259: the kind ontology, the production creation-gate, the meta-only
-append-ban, and edit-refused-on-terminal), and `tackit.sql` round-trip
+append-ban, and edit-refused-on-terminal), and `tackit.sql.gz` round-trip
 fidelity. The machine has already caught real bugs: a serialization edge case,
 a `reopen()` no-op guard that didn't honor the spec/open partition, and a
 `load()` path that hardcoded `status='open'` regardless of kind — exactly the

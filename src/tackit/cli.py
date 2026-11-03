@@ -163,7 +163,7 @@ def _cmd_init(args) -> int:
     store = init_store(Path.cwd())
     _emit(
         f"Initialized tackit store at {store.dir} "
-        f"(db gitignored; tackit.sql is the committed source of truth).",
+        f"(db gitignored; tackit.sql.gz is the committed source of truth).",
         {"root": str(store.root), "dir": str(store.dir)},
         args.json,
     )
@@ -605,7 +605,7 @@ def _cmd_export(args) -> int:
             # stdout: just print the SQL, no envelope -- caller redirects.
             print(text, end="")
         return 0
-    # Default: D18 full-sync .db -> tackit.sql (legacy behavior).
+    # Default: D18 full-sync .db -> tackit.sql.gz.
     store = require_store()
     v = sync.export(store)
     _emit(f"exported db -> {store.sql_path} (version {v}).", {"version": v}, args.json)
@@ -1009,11 +1009,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp = add("history", _cmd_history, "status transition history of a task (D8)")
     sp.add_argument("id", type=int)
 
-    add("status", _cmd_status, "db version vs tackit.sql + sync verdict (D18)")
+    add("status", _cmd_status, "db version vs tackit.sql.gz + sync verdict (D18)")
     sp = add(
         "export",
         _cmd_export,
-        "force-dump .db -> tackit.sql (D18 full sync) by default. With "
+        "force-dump .db -> tackit.sql.gz (D18 full sync) by default. With "
         "--specs-only: emit a spec-layer-only SQL dump (design + schema "
         "slices + their labels + spec-to-spec links + audit rows) per "
         "M187 / T193 -- the disaster-recovery artifact for the dogfood. "
@@ -1034,7 +1034,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="output file path (--specs-only only). Default: stdout.",
     )
 
-    sp = add("import", _cmd_import, "adopt tackit.sql (backup + rebuild .db) (D18)")
+    sp = add("import", _cmd_import, "adopt tackit.sql.gz (backup + rebuild .db) (D18)")
     sp.add_argument("--force", action="store_true", help="adopt even if local db is newer")
 
     sp = add("restore", _cmd_restore, "restore .db from a rotating backup (D18)")

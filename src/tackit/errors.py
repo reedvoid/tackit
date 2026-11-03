@@ -28,6 +28,6 @@ class InvariantError(TackitError):
 
 
 class SyncError(TackitError):
-    """D18 - the on-disk tackit.sql and the local tackit.db diverged in a way the
+    """D18 - the on-disk tackit.sql.gz and the local tackit.db diverged in a way the
     auto-sync deliberately refuses to guess at (ambiguous/older/merge collision).
     Routes the agent to `import`/`export`/`restore`."""

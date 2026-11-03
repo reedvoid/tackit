@@ -5,7 +5,7 @@ over this one module. "No logic lives [in the adapters] -- determinism,
 invariants, and obligations all stay in core, so neither door can bypass them."
 
 Every public method is tagged with the design slice it implements; every mutating
-op runs inside ``_mutate`` so the D18 version-bump + tackit.sql re-dump happens
+op runs inside ``_mutate`` so the D18 version-bump + tackit.sql.gz re-dump happens
 atomically with the data change. Obligation payloads (D12/D13) are returned from
 the ops, never left implicit.
 """
@@ -157,7 +157,7 @@ def _validate_text(value: str | None, field: str) -> None:
 
       * a **NUL byte** (``\\x00``) survives into the SQLite TEXT value but breaks the
         D18 serialization -- ``sqlite3.executescript`` raises on an embedded NUL when
-        rebuilding tackit.db from tackit.sql (fresh clone / import / pull);
+        rebuilding tackit.db from tackit.sql.gz (fresh clone / import / pull);
       * an **unpaired UTF-16 surrogate** (``\\ud800``-``\\udfff``) is not valid UTF-8,
         so SQLite cannot even encode it on insert (UnicodeEncodeError).
     """
@@ -166,7 +166,7 @@ def _validate_text(value: str | None, field: str) -> None:
     if "\x00" in value:
         raise ValidationError(
             f"{field} contains a NUL byte (\\x00), which is not allowed because it "
-            f"breaks the tackit.sql serialization (D2/D18)."
+            f"breaks the tackit.sql.gz serialization (D2/D18)."
         )
     try:
         value.encode("utf-8")
@@ -424,6 +424,7 @@ class Core:
         from . import migrations
 
         store = require_store(start)
+        sync.adopt_legacy_dump(store)  # T301: a text tackit.sql becomes tackit.sql.gz
         # D18 sync verdict. We call startup_sync only when at least one of the
         # two files exists; we also avoid the "no .sql" branch (which would
         # export a pre-migration db) by handling that case after migration
@@ -450,7 +451,7 @@ class Core:
     @contextmanager
     def _mutate(self):
         """Wrap a mutating op: BEGIN, run it, finalize (bump version + re-dump
-        tackit.sql), COMMIT. Roll back loudly on any error."""
+        tackit.sql.gz), COMMIT. Roll back loudly on any error."""
         self.conn.execute("BEGIN")
         try:
             yield
@@ -771,7 +772,7 @@ class Core:
         clean = label.strip()
         new_labels = self._new_labels([clean])  # D23: [clean] iff brand-new, else []
         # No-op guard (D20): re-adding a label the task already carries changes nothing,
-        # so it must not bump version / re-dump tackit.sql.
+        # so it must not bump version / re-dump tackit.sql.gz.
         on_this_task = self.conn.execute(
             "SELECT 1 FROM task_labels WHERE task_id = ? AND label = ?", (task_id, clean)
         ).fetchone()
@@ -1583,7 +1584,7 @@ class Core:
             )
         # No-op guard (D20): closing an already-closed task changes nothing -- still
         # return the obligation payload (deps/dependents), but don't bump version
-        # or re-dump tackit.sql. (A closed task is never stale, so the gate above
+        # or re-dump tackit.sql.gz. (A closed task is never stale, so the gate above
         # always passes on this path.)
         if row["status"] != "closed":
             with self._mutate():

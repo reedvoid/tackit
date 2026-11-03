@@ -285,7 +285,7 @@ def test_d18_mutation_bumps_version_and_dumps(core, store_path):
     core.add("spec anchor", kind="design")  # T1 (D1)
     core.add("a", kind="production", deps={1: "realizes the anchor decision"})  # T2
     assert store.sql_path.exists()
-    assert sync.parse_version_from_sql(store.sql_path.read_text()) >= 1
+    assert sync.parse_version_from_sql(sync.read_dump(store.sql_path)) >= 1
 
 
 def test_d18_rebuild_on_fresh_clone(core, store_path):
@@ -309,10 +309,10 @@ def test_d18_ambiguous_divergence_refused(core, store_path):
     store = Store(store_path)
     core.add("spec anchor", kind="design")  # T1 (D1)
     core.add("v1 task", kind="production", deps={1: "realizes the anchor decision"})  # T2
-    sql_v1 = store.sql_path.read_text()
+    sql_v1 = sync.read_dump(store.sql_path)
     core.add("v2 task", kind="production", deps={1: "realizes the anchor decision"})  # T3, db + sql now newer
     core.close_conn()
-    store.sql_path.write_text(sql_v1)  # disk reverted to older, db is newer
+    sync.write_dump(store.sql_path, sql_v1)  # disk reverted to older, db is newer
     with pytest.raises(SyncError):
         Core.open(start=store_path)
 
@@ -321,14 +321,14 @@ def test_d18_pull_newer_sql_rebuilds(core, store_path):
     store = Store(store_path)
     core.add("spec anchor", kind="design")  # T1 (D1)
     core.add("v1 task", kind="production", deps={1: "realizes the anchor decision"})  # T2
-    sql_v1 = store.sql_path.read_text()
+    sql_v1 = sync.read_dump(store.sql_path)
     core.add("v2 task", kind="production", deps={1: "realizes the anchor decision"})  # T3
-    sql_v2 = store.sql_path.read_text()
+    sql_v2 = sync.read_dump(store.sql_path)
     core.close_conn()
     # make the db match v1 (synced), then drop a strictly-newer v2 .sql on disk
-    store.sql_path.write_text(sql_v1)
+    sync.write_dump(store.sql_path, sql_v1)
     sync.rebuild_db_from_sql(store)
-    store.sql_path.write_text(sql_v2)
+    sync.write_dump(store.sql_path, sql_v2)
     c2 = Core.open(start=store_path)  # Vsql > Vdb -> pull
     try:
         assert c2.get(3).name == "v2 task"

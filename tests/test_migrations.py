@@ -9,7 +9,7 @@ import sqlite3
 
 import pytest
 
-from tackit import migrations, schema
+from tackit import migrations, schema, sync
 from tackit.core import Core
 from tackit.db import Store, connect
 
@@ -187,7 +187,7 @@ def test_sql_dump_reflects_per_migration_finalize(store_path, clean_registry, mo
     finally:
         conn.close()
 
-    text = store.sql_path.read_text()
+    text = sync.read_dump(store.sql_path)
     assert "mig_marker" in text and "present" in text
 
 

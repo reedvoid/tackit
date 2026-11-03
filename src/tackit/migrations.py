@@ -498,7 +498,7 @@ def run_pending_migrations(
     """Apply every registered migration whose target_version is above the
     current schema_version, in order, each in its own transaction. After all
     pending migrations succeed, run one D18 finalize_mutation to emit a
-    consistent ``tackit.sql`` at the final schema. Returns the migrations that
+    consistent ``tackit.sql.gz`` at the final schema. Returns the migrations that
     ran (possibly empty).
 
     Per-batch finalize (rather than per-migration) because intermediate

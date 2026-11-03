@@ -53,9 +53,9 @@ def test_status_no_sql_directs_to_export(store_path):
 def test_status_diverged_ambiguous(store_path):
     store = Store(store_path)
     _seed(store_path, 1)
-    sql_v1 = store.sql_path.read_text()
+    sql_v1 = sync.read_dump(store.sql_path)
     _seed(store_path, 1)  # db now newer than v1
-    store.sql_path.write_text(sql_v1)  # disk reverted -> ambiguous (db newer)
+    sync.write_dump(store.sql_path, sql_v1)  # disk reverted -> ambiguous (db newer)
     info = sync.status(store)
     assert "DIVERGED" in info["verdict"] or "ambiguous" in info["verdict"]
 
@@ -63,9 +63,9 @@ def test_status_diverged_ambiguous(store_path):
 def test_import_refused_when_local_db_newer(store_path):
     store = Store(store_path)
     _seed(store_path, 1)
-    sql_v1 = store.sql_path.read_text()
+    sql_v1 = sync.read_dump(store.sql_path)
     _seed(store_path, 1)  # more mutations -> db strictly newer than v1
-    store.sql_path.write_text(sql_v1)
+    sync.write_dump(store.sql_path, sql_v1)
     with pytest.raises(SyncError):
         sync.import_sql(store, force=False)
 

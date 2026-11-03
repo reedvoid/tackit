@@ -2,8 +2,8 @@
 
 design.md D1: all state in a single local SQLite file (WAL mode); found by
 walking up from cwd. design.md "Interface - CLI": the DB lives at
-``.tackit/tackit.db`` (binary, gitignored); ``tackit.sql`` (committed text) sits
-alongside; backups live under ``.tackit/backups/``.
+``.tackit/tackit.db`` (binary, gitignored); ``tackit.sql.gz`` (the committed dump)
+sits alongside; backups live under ``.tackit/backups/``.
 """
 
 from __future__ import annotations
@@ -17,16 +17,18 @@ from .schema import ALL_DDL, SCHEMA_VERSION
 
 DIR_NAME = ".tackit"
 DB_NAME = "tackit.db"
-SQL_NAME = "tackit.sql"  # D18: git-canonical text dump, committed
+SQL_NAME = "tackit.sql.gz"  # D18: git-canonical compressed dump, committed
+LEGACY_SQL_NAME = "tackit.sql"  # T301: pre-compression text dump, adopted on open
 BACKUPS_DIR = "backups"  # D18: rotating pre-override snapshots
 
-# .tackit/.gitignore: commit the .sql text dump, ignore the binary db + backups.
+# .tackit/.gitignore: commit the compressed dump, ignore the binary db + backups.
 GITIGNORE_BODY = (
     "# tackit: the binary store is local; the committed source of truth is "
-    "tackit.sql (D18).\n"
+    "tackit.sql.gz (D18).\n"
     "tackit.db\n"
     "tackit.db-wal\n"
     "tackit.db-shm\n"
+    "*.tmp\n"
     "backups/\n"
 )
 
@@ -49,6 +51,10 @@ class Store:
     @property
     def sql_path(self) -> Path:
         return self.dir / SQL_NAME
+
+    @property
+    def legacy_sql_path(self) -> Path:
+        return self.dir / LEGACY_SQL_NAME
 
     @property
     def backups_dir(self) -> Path:

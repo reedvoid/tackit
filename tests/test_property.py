@@ -23,6 +23,7 @@ forces you to get right.
 """
 
 import shutil
+import gzip
 import sqlite3
 import tempfile
 from pathlib import Path
@@ -392,6 +393,8 @@ class TackitMachine(RuleBasedStateMachine):
     @invariant()
     def sql_dump_round_trips(self):
         text = sync.dump_text(self.core.conn)
+        decompressed = gzip.decompress(sync.compress_dump(text)).decode("utf-8")
+        assert decompressed == text  # T301: compression is lossless for fuzzed bodies
         mem = sqlite3.connect(":memory:")
         try:
             mem.executescript(text)

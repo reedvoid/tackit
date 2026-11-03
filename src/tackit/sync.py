@@ -1,25 +1,27 @@
-"""D18 - Git-tracked text serialization + safe DB<->SQL sync.
+"""D18 - Git-tracked compressed serialization + safe DB<->dump sync.
 
-design.md D18. The git-canonical form is a deterministic SQL text dump
-(``tackit.sql``, committed); the binary ``tackit.db`` is gitignored and local.
-Two markers in ``meta`` (S6) govern sync:
+The git-canonical form is a deterministic SQL dump, committed as row-chunked gzip
+(``tackit.sql.gz``, T301); the binary ``tackit.db`` is gitignored and local. Two
+markers in ``meta`` (S6) govern sync:
 
   * ``version``         - monotonic generation counter, +1 per mutation. The
                           *ordering* signal ("which is newer"). Embedded in the
                           dump (as a meta row) so the disk file carries its Vsql.
-  * ``synced_sql_hash`` - sha256 of the last dump *this db produced*. The
-                          *integrity* signal. Local-only: deliberately NOT written
-                          into the dumped text (that would be circular), so the
-                          hash of the on-disk file lines up with what's stored.
-
-Resolves issue #9 (binary-in-git): commits/PRs are reviewable, mergeable text.
+  * ``synced_sql_hash`` - sha256 of the decompressed text of the last dump *this
+                          db produced*. The *integrity* signal. Local-only:
+                          deliberately NOT written into the dumped text (that
+                          would be circular), so the hash of the on-disk file's
+                          text lines up with what's stored.
 """
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import os
 import sqlite3
+import threading
+import zlib
 from pathlib import Path
 
 from . import schema
@@ -27,6 +29,13 @@ from .db import Store, connect
 from .errors import SyncError
 
 MAX_BACKUPS = 20  # design.md D18: "rotating backup (last ~20)"
+
+# D18 compression format: gzip container, level 1, full flush on rows whose crc32
+# is divisible by 8, so unchanged runs of rows compress to identical bytes.
+_DUMP_COMPRESSION_LEVEL = 1
+_GZIP_WBITS = 31
+_FLUSH_ROW_MODULUS = 8
+_ROW_BOUNDARY = b"\nINSERT INTO "
 
 # Tables serialized into the dump, in a dependency-safe, deterministic order.
 # tasks_fts (S5) is intentionally excluded -- it is derived content, rebuilt by
@@ -53,7 +62,7 @@ def _sql_literal(value) -> str:
 
 
 def dump_text(conn: sqlite3.Connection) -> str:
-    """Produce the deterministic ``tackit.sql`` text from the current db state.
+    """Produce the deterministic dump text from the current db state.
 
     Self-contained: schema DDL (so the file rebuilds standalone) followed by
     ordered INSERTs. Excludes the local-only ``synced_sql_hash`` meta row. The
@@ -117,39 +126,128 @@ def _set_meta(conn: sqlite3.Connection, key: str, value: str) -> None:
     )
 
 
-def _write_atomic(path: Path, text: str) -> None:
-    """Write ``text`` to ``path`` atomically (temp file + os.replace) so a crash
-    mid-write never leaves a partially-parseable dump."""
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(text)
-    os.replace(tmp, path)
+def compress_dump(text: str) -> bytes:
+    """T301 / D18: gzip ``text``, full-flushing at content-defined row boundaries.
+    A flush resets the compressor, so the bytes for a run of rows depend only on
+    those rows, and git can delta one version of the dump against the next."""
+    data = text.encode("utf-8")
+    compressor = zlib.compressobj(_DUMP_COMPRESSION_LEVEL, zlib.DEFLATED, _GZIP_WBITS)
+    parts: list[bytes] = []
+    chunk_start = 0
+    row_start = data.find(_ROW_BOUNDARY)
+    while row_start != -1:
+        next_row = data.find(_ROW_BOUNDARY, row_start + 1)
+        row_end = len(data)
+        if next_row != -1:
+            row_end = next_row
+        if zlib.crc32(data[row_start:row_end]) % _FLUSH_ROW_MODULUS == 0:
+            parts.append(compressor.compress(data[chunk_start:row_start]))
+            parts.append(compressor.flush(zlib.Z_FULL_FLUSH))
+            chunk_start = row_start
+        row_start = next_row
+    parts.append(compressor.compress(data[chunk_start:]))
+    parts.append(compressor.flush())
+    return b"".join(parts)
+
+
+def read_dump(path: Path) -> str:
+    """Return the decompressed dump text, refusing a damaged file loudly (D18): a
+    dump that can't be read is never treated as absent or empty."""
+    raw = path.read_bytes()
+    if not raw:
+        raise SyncError(f"{path} is empty, not a gzip dump; restore it from git.")
+    try:
+        return gzip.decompress(raw).decode("utf-8")
+    except (gzip.BadGzipFile, EOFError, zlib.error, UnicodeDecodeError) as exc:
+        raise SyncError(f"{path} is damaged, not a readable gzip dump ({exc}); restore it from git.") from exc
+
+
+def write_dump(path: Path, text: str) -> None:
+    """Write the compressed dump atomically (temp file + os.replace) so a crash
+    mid-write never leaves a partial dump. The temp name is unique per writer
+    because adopt_legacy_dump runs outside any db lock, so two sessions opening
+    a store during its first upgrade can write at once."""
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        tmp.write_bytes(compress_dump(text))
+        os.replace(tmp, path)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def adopt_legacy_dump(store: Store) -> str:
+    """T301 / D18 legacy adoption: bring a text ``tackit.sql`` into the gz file,
+    removing it only once the gz durably holds its content. Returns what it did.
+
+      * no legacy file ............... nothing
+      * legacy only .................. convert
+      * both, identical text ......... remove legacy (recovers an interrupted run)
+      * both, legacy strictly newer .. adopt legacy (an older tackit wrote it)
+      * both, anything else .......... refuse; neither is safe to discard
+    """
+    legacy_path = store.legacy_sql_path
+    try:
+        legacy_bytes = legacy_path.read_bytes()
+    except FileNotFoundError:
+        return "no-legacy"
+    try:
+        legacy_text = legacy_bytes.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise SyncError(f"{legacy_path} is not valid UTF-8: {exc}") from exc
+    legacy_version = parse_version_from_sql(legacy_text)
+
+    # missing_ok below: another session opening the same store may finish first.
+    if not store.sql_path.exists():
+        write_dump(store.sql_path, legacy_text)
+        legacy_path.unlink(missing_ok=True)
+        return "converted-legacy"
+
+    current_text = read_dump(store.sql_path)
+    if current_text == legacy_text:
+        legacy_path.unlink(missing_ok=True)
+        return "removed-identical-legacy"
+
+    current_version = parse_version_from_sql(current_text)
+    if legacy_version > current_version:
+        write_dump(store.sql_path, legacy_text)
+        legacy_path.unlink(missing_ok=True)
+        return "adopted-newer-legacy"
+
+    raise SyncError(
+        f"tackit.sql (V{legacy_version}) conflicts with tackit.sql.gz "
+        f"(V{current_version}) and is not strictly newer -- refusing to discard "
+        f"either. Delete tackit.sql to keep tackit.sql.gz, or delete tackit.sql.gz "
+        f"to adopt tackit.sql."
+    )
 
 
 def finalize_mutation(conn: sqlite3.Connection, store: Store) -> None:
-    """D18 "after every mutation": bump ``version``, re-dump ``tackit.sql``
+    """D18 "after every mutation": bump ``version``, re-dump ``tackit.sql.gz``
     (embedding the new version + content), record ``synced_sql_hash``.
 
     Called by ``core`` inside each mutating op's transaction so the db writes
     (version + hash) commit atomically with the data change; the file is written
     immediately before COMMIT. (If COMMIT then fails, the file is merely *ahead*
-    -- Vsql > Vdb -- which startup_sync recovers as a clean rebuild-from-.sql.)
+    -- Vsql > Vdb -- which startup_sync recovers as a clean rebuild from the dump.)
     """
     _set_meta(conn, "version", str(get_version(conn) + 1))
     text = dump_text(conn)
     _set_meta(conn, "synced_sql_hash", _hash_text(text))
-    _write_atomic(store.sql_path, text)
+    write_dump(store.sql_path, text)
 
 
 def export(store: Store) -> int:
-    """D18 ``tackit export`` - force-dump the current ``.db`` to ``tackit.sql``
+    """D18 ``tackit export`` - force-dump the current ``.db`` to ``tackit.sql.gz``
     WITHOUT bumping version (it is not a mutation; it just re-emits current
     state). Used to resolve the "db ahead of disk" ambiguity. Returns version."""
+    adopt_legacy_dump(store)
     conn = connect(store.db_path)
     try:
         conn.execute("BEGIN")
         text = dump_text(conn)
         _set_meta(conn, "synced_sql_hash", _hash_text(text))
-        _write_atomic(store.sql_path, text)
+        write_dump(store.sql_path, text)
         conn.execute("COMMIT")
         return get_version(conn)
     finally:
@@ -167,16 +265,17 @@ def parse_version_from_sql(sql_text: str) -> int:
         row = tmp.execute("SELECT value FROM meta WHERE key = 'version'").fetchone()
         return int(row[0]) if row else 0
     except sqlite3.Error as exc:
-        raise SyncError(f"tackit.sql is not a valid tackit dump: {exc}") from exc
+        raise SyncError(f"the dump is not a valid tackit dump: {exc}") from exc
     finally:
         tmp.close()
 
 
 def rebuild_db_from_sql(store: Store) -> None:
-    """Replace ``tackit.db`` with a fresh db built from ``tackit.sql``, then
+    """Replace ``tackit.db`` with a fresh db built from ``tackit.sql.gz``, then
     record synced_sql_hash so the rebuilt db is marked in-sync with the file.
-    Removes WAL/SHM sidecars so no stale pages survive the swap."""
-    sql_text = store.sql_path.read_text()
+    Removes WAL/SHM sidecars so no stale pages survive the swap. The dump is read
+    first, so a damaged one refuses before the db is touched."""
+    sql_text = read_dump(store.sql_path)
     for suffix in ("", "-wal", "-shm"):
         p = Path(str(store.db_path) + suffix)
         if p.exists():
@@ -236,12 +335,12 @@ def startup_sync(store: Store) -> str:
     disk (or raise SyncError on the ambiguous cases). Returns a short status
     string describing what it did.
 
-    Decision table (db has Vdb + last hash; disk tackit.sql has embedded Vsql +
-    computed hash):
-      * no .db yet (fresh clone) ............... build it from tackit.sql
-      * hash(tackit.sql) == synced_sql_hash .... in sync, trust the .db
+    Decision table (db has Vdb + last hash; disk tackit.sql.gz has embedded Vsql +
+    a hash computed over its decompressed text):
+      * no .db yet (fresh clone) ............... build it from the dump
+      * hash(dump text) == synced_sql_hash ..... in sync, trust the .db
       * Vsql > Vdb ............................. strictly newer (a pull): backup
-                                                 + rebuild .db from tackit.sql
+                                                 + rebuild .db from the dump
       * Vsql < Vdb, or Vsql == Vdb w/ diff ..... AMBIGUOUS: refuse, route to
                                                  import/export (SyncError)
     """
@@ -265,7 +364,7 @@ def startup_sync(store: Store) -> str:
     finally:
         conn.close()
 
-    disk_text = store.sql_path.read_text()
+    disk_text = read_dump(store.sql_path)
     if _hash_text(disk_text) == stored_hash:
         return "in-sync"
 
@@ -276,19 +375,24 @@ def startup_sync(store: Store) -> str:
         return "pulled-newer-sql"
 
     raise SyncError(
-        f"tackit.sql diverged from tackit.db and is NOT strictly newer "
+        f"tackit.sql.gz diverged from tackit.db and is NOT strictly newer "
         f"(Vsql={vsql}, Vdb={vdb}) -- refusing to auto-clobber. "
-        f"Resolve explicitly: `tackit import --force` to adopt tackit.sql "
+        f"Resolve explicitly: `tackit import --force` to adopt tackit.sql.gz "
         f"(backs up the .db first), or `tackit export` to write the .db out."
     )
 
 
 def status(store: Store) -> dict:
     """D18 ``tackit status`` - report db version vs disk version and the sync
-    verdict, without changing anything."""
+    verdict, without changing anything (so a legacy text dump is only reported)."""
     db_exists = store.db_path.exists()
     sql_exists = store.sql_path.exists()
-    info: dict = {"db_exists": db_exists, "sql_exists": sql_exists}
+    legacy_exists = store.legacy_sql_path.exists()
+    info: dict = {
+        "db_exists": db_exists,
+        "sql_exists": sql_exists,
+        "legacy_sql_exists": legacy_exists,
+    }
     if db_exists:
         conn = connect(store.db_path)
         try:
@@ -297,19 +401,24 @@ def status(store: Store) -> dict:
         finally:
             conn.close()
     if sql_exists:
-        disk_text = store.sql_path.read_text()
+        disk_text = read_dump(store.sql_path)
         info["sql_version"] = parse_version_from_sql(disk_text)
         info["sql_hash"] = _hash_text(disk_text)
 
-    if not db_exists and sql_exists:
+    if legacy_exists:
+        info["verdict"] = (
+            "legacy text tackit.sql present; the next op converts it to "
+            "tackit.sql.gz, or refuses if the two conflict"
+        )
+    elif not db_exists and sql_exists:
         info["verdict"] = "no local db; `tackit import` (or any op) will build it"
     elif db_exists and not sql_exists:
-        info["verdict"] = "no tackit.sql; run `tackit export` to create it"
+        info["verdict"] = "no tackit.sql.gz; run `tackit export` to create it"
     elif db_exists and sql_exists:
         if info.get("synced_sql_hash") == info.get("sql_hash"):
             info["verdict"] = "in sync"
         elif info["sql_version"] > info["db_version"]:
-            info["verdict"] = "tackit.sql is newer (a pull); next op rebuilds the db"
+            info["verdict"] = "tackit.sql.gz is newer (a pull); next op rebuilds the db"
         else:
             info["verdict"] = "DIVERGED/ambiguous; resolve with import/export"
     else:
@@ -318,7 +427,7 @@ def status(store: Store) -> dict:
 
 
 def import_sql(store: Store, force: bool = False) -> str:
-    """D18 ``tackit import`` - adopt ``tackit.sql`` (backup the current .db, then
+    """D18 ``tackit import`` - adopt ``tackit.sql.gz`` (backup the current .db, then
     rebuild from the file). This is the explicit resolution for the ambiguous /
     merge-collision cases startup_sync refuses to guess at.
 
@@ -326,9 +435,10 @@ def import_sql(store: Store, force: bool = False) -> str:
     file (Vdb > Vsql) -- that would discard local work; the agent must pass
     ``--force`` to confirm, having presumably exported or accepted the loss.
     """
+    adopt_legacy_dump(store)
     if not store.sql_path.exists():
-        raise SyncError("no tackit.sql to import.")
-    disk_text = store.sql_path.read_text()
+        raise SyncError("no tackit.sql.gz to import.")
+    disk_text = read_dump(store.sql_path)
     vsql = parse_version_from_sql(disk_text)
 
     if store.db_path.exists() and not force:
@@ -339,13 +449,13 @@ def import_sql(store: Store, force: bool = False) -> str:
             conn.close()
         if vdb > vsql:
             raise SyncError(
-                f"refusing import: local db (V{vdb}) is newer than tackit.sql "
+                f"refusing import: local db (V{vdb}) is newer than tackit.sql.gz "
                 f"(V{vsql}); this would discard local work. `tackit export` to "
                 f"keep it, or `tackit import --force` to discard and adopt the file."
             )
     backup = backup_db(store)
     rebuild_db_from_sql(store)
-    return f"imported tackit.sql (V{vsql}); previous db backed up to {backup}"
+    return f"imported tackit.sql.gz (V{vsql}); previous db backed up to {backup}"
 
 
 def restore(store: Store, backup_path: Path) -> str:
@@ -353,6 +463,7 @@ def restore(store: Store, backup_path: Path) -> str:
     snapshotting the current db first so a restore is itself reversible."""
     if not backup_path.exists():
         raise SyncError(f"backup not found: {backup_path}")
+    adopt_legacy_dump(store)
     backup_db(store)  # snapshot current before overwriting
     for suffix in ("-wal", "-shm"):
         p = Path(str(store.db_path) + suffix)
@@ -362,4 +473,4 @@ def restore(store: Store, backup_path: Path) -> str:
     # the restored db's view of "synced" may differ from disk; re-export so the
     # file matches the now-live db (keeps version as-is; not a mutation).
     export(store)
-    return f"restored {backup_path.name}; re-exported tackit.sql to match"
+    return f"restored {backup_path.name}; re-exported tackit.sql.gz to match"
