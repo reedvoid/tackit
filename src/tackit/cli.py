@@ -24,7 +24,7 @@ from . import __version__, sync
 from .core import Core, stale_alert_text
 from .db import init_store, require_store
 from .errors import TackitError
-from .models import project_slice, project_task
+from .models import project_show_slice, project_slice, project_task
 from .plan import parse_plan
 
 
@@ -204,14 +204,25 @@ def _cmd_add(args) -> int:
             labels=args.label,
             deps=deps_dict,
         )
-        _emit("created " + _fmt_slice(core.show(task.id)), _dump(core.show(task.id)), args.json)
+        s = core.show(task.id)
+        _emit(
+            "created " + _fmt_slice(s),
+            project_show_slice(s, include_neighbor_because=False),
+            args.json,
+        )
     return 0
 
 
 def _cmd_show(args) -> int:
     with _core_session() as core:
         s = core.show(args.id)
-        _emit(_fmt_slice(s), _dump(s), args.json)
+        _emit(
+            _fmt_slice(s),
+            project_show_slice(
+                s, include_neighbor_because=args.include_neighbor_because
+            ),
+            args.json,
+        )
     return 0
 
 
@@ -430,7 +441,7 @@ def _cmd_link(args) -> int:
             verb = "removed"
         _emit(
             f"{verb} link T{args.a} <-> T{args.b}\n" + _fmt_slice(s),
-            _dump(s),
+            project_show_slice(s, include_neighbor_because=False),
             args.json,
         )
     return 0
@@ -756,6 +767,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = add("show", _cmd_show, "slice fetch: task + links (symmetric) + labels (D9)")
     sp.add_argument("id", type=int)
+    sp.add_argument("--include-neighbor-because", action="store_true",
+                    help="include edge rationales on every link in --json "
+                         "(default: only where reconciliation needs them)")
 
     sp = add(
         "edit",

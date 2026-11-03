@@ -19,7 +19,7 @@ from mcp.server.fastmcp.utilities import func_metadata as _func_metadata
 from pydantic import ValidationError as _PydanticValidationError
 
 from .core import Core, stale_alert_payload
-from .models import project_slice, project_task
+from .models import project_show_slice, project_slice, project_task
 from .plan import parse_plan
 
 
@@ -233,14 +233,20 @@ def build_server() -> FastMCP:
         Returns the new task's slice plus any ``stale_alert``."""
         with _core() as c:
             t = c.add(name, kind=kind, description=description, labels=labels, deps=deps)
-            return _wrap(c, c.show(t.id).model_dump(mode="json"))
+            return _wrap(
+                c, project_show_slice(c.show(t.id), include_neighbor_because=False)
+            )
 
     @mcp.tool()
-    def show(id: int) -> dict:
-        """Slice fetch (D9): a task plus its `links` (the single symmetric
-        neighbour set -- D5/T237, not duplicated deps/dependents) and labels."""
+    def show(id: int, include_neighbor_because: bool = False) -> dict:
+        """Slice fetch (D9): a task plus its `links` (the single symmetric neighbour set) and labels. The task is returned in full. Links are lean by default (id/prefixed_name/status/stale/kind). `because` and `last_edit_delta` appear only when a link or this task is stale and open/spec, for reconciliation. Pass include_neighbor_because=True for them on every link.
+
+        D211 + D34 + T294."""
         with _core() as c:
-            return _wrap(c, c.show(id).model_dump(mode="json"), short_alert=True)
+            payload = project_show_slice(
+                c.show(id), include_neighbor_because=include_neighbor_because
+            )
+            return _wrap(c, payload, short_alert=True)
 
     @mcp.tool()
     def search(terms: str, limit: int = 20, name_only: bool = False) -> dict:
@@ -601,7 +607,9 @@ def build_server() -> FastMCP:
         do NOT cascade and carry NO ``delta`` (D213). Argument order doesn't
         matter (canonical lookup)."""
         with _core() as c:
-            return _wrap(c, c.link_rm(a, b).model_dump(mode="json"))
+            return _wrap(
+                c, project_show_slice(c.link_rm(a, b), include_neighbor_because=False)
+            )
 
     @mcp.tool()
     def links_add(edges: list[dict]) -> dict:
