@@ -14,6 +14,7 @@ import json
 import pytest
 
 from tackit.cli import main
+from tackit.core import LINK_BECAUSE_REMINDER
 from tackit.errors import ValidationError
 from tackit.models import project_slice, project_task
 
@@ -118,6 +119,75 @@ def test_project_slice_opt_in_axes_independent(core):
     assert only_nbr["links"][0]["because"] == "T2 realizes D1"
 
 
+# --- T299 (D34): board returns the reminder only with its fields -------------
+
+
+def _stale_pair(core):
+    """Spec 1 and task 2, then edit 1: 2 is stale. Card 2 is focal-stale; card 1
+    has a stale neighbor. Both trigger Core.show's reminder."""
+    core.add("spec", kind="design")  # 1
+    core.add("task", kind="production", description="the body",
+             deps={1: "task realizes spec"})  # 2
+    core.edit(1, description="new", delta="changed spec")
+
+
+@pytest.mark.parametrize("card_id", [1, 2])
+def test_lean_card_on_a_stale_pair_has_a_null_reminder(core, card_id):
+    _stale_pair(core)
+    card = project_slice(
+        core.show(card_id), include_description=False, include_neighbor_because=False
+    )
+    assert "because_reminder" in card
+    assert card["because_reminder"] is None
+
+
+@pytest.mark.parametrize("card_id", [1, 2])
+def test_opt_in_card_on_a_stale_pair_keeps_reminder_and_fields(core, card_id):
+    _stale_pair(core)
+    card = project_slice(
+        core.show(card_id), include_description=False, include_neighbor_because=True
+    )
+    assert card["because_reminder"] == LINK_BECAUSE_REMINDER
+    assert card["links"][0]["because"] == "task realizes spec"
+    assert "last_edit_delta" in card["links"][0]
+
+
+def test_include_description_alone_does_not_bring_the_reminder_back(core):
+    _stale_pair(core)
+    card = project_slice(
+        core.show(2), include_description=True, include_neighbor_because=False
+    )
+    assert card["task"]["description"] == "the body"
+    assert card["because_reminder"] is None
+
+
+@pytest.mark.parametrize("opt_in", [False, True])
+def test_non_stale_card_has_a_null_reminder_either_way(core, opt_in):
+    core.add("spec", kind="design")  # 1
+    core.add("task", kind="production", deps={1: "task realizes spec"})  # 2
+    card = project_slice(
+        core.show(2), include_description=False, include_neighbor_because=opt_in
+    )
+    assert card["because_reminder"] is None
+
+
+def test_lean_card_keeps_the_stale_flag_that_signals_reconciliation(core):
+    """Dangerous direction: dropping the reminder must not drop the signal."""
+    _stale_pair(core)
+    card = project_slice(
+        core.show(1), include_description=False, include_neighbor_because=False
+    )
+    assert card["links"][0]["id"] == 2
+    assert card["links"][0]["stale"] is True
+
+
+def test_project_slice_does_not_mutate_the_slice_reminder(core):
+    _stale_pair(core)
+    slice_ = core.show(2)
+    project_slice(slice_, include_description=False, include_neighbor_because=False)
+    assert slice_.because_reminder == LINK_BECAUSE_REMINDER
+
+
 # --- core.ls kind filter ----------------------------------------------------
 
 
@@ -196,3 +266,23 @@ def test_cli_board_lean_default_and_opt_in(cli, capsys):
     t2f = full[1]
     assert t2f["task"]["description"] == "impl body"
     assert t2f["links"][0]["because"] == "T2 realizes D1"
+
+
+def test_cli_board_json_returns_the_reminder_only_with_the_opt_in(cli, capsys):
+    """T299 (D34), through main()."""
+    main(["add", "spec", "--kind", "design", "--desc", "old text"])  # D1
+    main(["add", "task", "--kind", "production", "--dep", "1::task realizes spec"])  # T2
+    main(["edit-replace", "1", "--old", "old", "--new", "new", "--delta", "changed spec"])
+    capsys.readouterr()
+    assert main(["board", "--json"]) == 0
+    lean = json.loads(capsys.readouterr().out)
+    assert len(lean) == 2
+    for card in lean:
+        assert card["because_reminder"] is None
+    assert lean[0]["links"][0]["stale"] is True  # D1's entry for stale T2
+    assert main(["board", "--json", "--include-neighbor-because"]) == 0
+    full = json.loads(capsys.readouterr().out)
+    assert len(full) == 2
+    for card in full:
+        assert card["because_reminder"] == LINK_BECAUSE_REMINDER
+        assert card["links"][0]["because"] == "task realizes spec"

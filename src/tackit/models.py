@@ -368,7 +368,8 @@ def project_slice(
     `name` (the prefixed_name carries it). By default also drops the task's
     `description` AND each neighbor's `because` + `last_edit_delta` (keeping the
     graph SHAPE: id/prefixed_name/status/stale/kind); those two are opt-in
-    independently. Never truncates."""
+    independently. Never truncates. D34 + T298: `because_reminder` only explains
+    the neighbor fields, so it is null unless they are returned."""
     # T221: the focal task drops the same redundant name + timestamps as the ls
     # list projection; each neighbor drops the bare `name` (its prefixed_name
     # carries it). NeighborRef has no timestamps.
@@ -382,7 +383,10 @@ def project_slice(
         "task": task_excl,
         "links": {"__all__": nbr_excl},
     }
-    return slice_.model_dump(mode="json", exclude=exclude)
+    payload = slice_.model_dump(mode="json", exclude=exclude)
+    if not include_neighbor_because:
+        payload["because_reminder"] = None
+    return payload
 
 
 def obligation_stale(item: "Task | NeighborRef") -> bool:

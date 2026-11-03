@@ -642,6 +642,35 @@ def test_mcp_board_lean_default_and_opt_in(tmp_path, monkeypatch):
     assert t2_full["links"][0]["because"] == "T2 realizes D1"
 
 
+def test_mcp_board_returns_the_reminder_only_with_the_opt_in(tmp_path, monkeypatch):
+    """T299 (D34): lean cards return a null reminder, while their stale flags and
+    the envelope's stale_alert stay as the signal; the opt-in brings it back."""
+    from tackit.core import LINK_BECAUSE_REMINDER
+
+    async def scenario(s):
+        await s.call_tool("add", {"name": "spec", "kind": "design"})  # D1
+        await s.call_tool("add", {"name": "task", "kind": "production",
+                                  "deps": {1: "task realizes spec"}})  # T2
+        await s.call_tool("edit", {"id": 1, "description": "new",
+                                   "delta": "changed spec"})
+        lean = _envelope(await s.call_tool("board", {}))
+        full = _envelope(await s.call_tool(
+            "board", {"include_neighbor_because": True}))
+        return lean, full
+
+    lean, full = _drive(tmp_path, monkeypatch, scenario)
+    assert lean["stale_alert"] is not None
+    assert len(lean["result"]) == 2
+    for card in lean["result"]:
+        assert card["because_reminder"] is None
+    assert lean["result"][0]["links"][0]["stale"] is True  # D1's entry for stale T2
+    assert lean["result"][1]["task"]["stale"] is True  # T2 itself
+    assert len(full["result"]) == 2
+    for card in full["result"]:
+        assert card["because_reminder"] == LINK_BECAUSE_REMINDER
+        assert card["links"][0]["because"] == "task realizes spec"
+
+
 def test_mcp_reconcile_ids_compact_payload_and_short_alert(tmp_path, monkeypatch):
     """D39 #1+#6: reconcile(ids) returns {"reconciled","remaining_stale"} and a
     SHORT stale alert during the sweep, not the full obligation paragraph."""
