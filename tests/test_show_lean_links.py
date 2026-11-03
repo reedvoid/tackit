@@ -564,3 +564,60 @@ def test_cli_text_output_still_prints_neighbor_names(cli, capsys):
     assert "distinctive spec name" in capsys.readouterr().out
     assert main(["show", "2", "--include-neighbor-because"]) == 0
     assert "distinctive spec name" in capsys.readouterr().out
+
+
+# --- user-visible text -------------------------------------------------------
+
+
+def _one_line(text):
+    return " ".join(text.split())
+
+
+def test_mcp_show_description_states_the_default_and_the_opt_in(tmp_path, monkeypatch):
+    async def scenario(s):
+        return await s.list_tools()
+
+    listing = _drive(tmp_path, monkeypatch, scenario)
+    description = None
+    for tool in listing.tools:
+        if tool.name == "show":
+            description = _one_line(tool.description)
+    assert description is not None
+    assert "The task is returned in full." in description
+    assert "Links are lean by default (id/prefixed_name/status/stale/kind)." in description
+    assert (
+        "`because` and `last_edit_delta` appear only when a link or this task is "
+        "stale and open/spec, for reconciliation." in description
+    )
+    assert (
+        "Pass include_neighbor_because=True for them on every link." in description
+    )
+
+
+def test_cli_show_help_states_the_opt_in(capsys):
+    with pytest.raises(SystemExit) as exit_info:
+        main(["show", "--help"])
+    assert exit_info.value.code == 0
+    assert (
+        "include edge rationales on every link in --json (default: only where "
+        "reconciliation needs them)" in _one_line(capsys.readouterr().out)
+    )
+
+
+def test_readme_states_the_show_default():
+    import pathlib
+
+    readme = pathlib.Path(__file__).resolve().parent.parent / "README.md"
+    text = _one_line(readme.read_text())
+    assert (
+        "`show` — full task + labels + lean linked tasks; `because` + "
+        "`last_edit_delta` where reconciliation needs them, or on every link with "
+        "`include_neighbor_because=True`" in text
+    )
+    assert (
+        "`show` returns the full task with lean links, keeping `because` / "
+        "`last_edit_delta` only on open/spec stale reads; "
+        "`include_neighbor_because=True` returns them on every link." in text
+    )
+    # The old claim must be gone, not just outnumbered.
+    assert "+ because + last_edit_delta on each" not in text

@@ -275,7 +275,9 @@ which op you reach for (the partition and verb taxonomy are unchanged):
   neighbor `because` / `last_edit_delta` too). That's what keeps a board query
   bounded as a project grows past a couple hundred tasks. Opt back in per call with
   `include_description=True` (both) / `include_neighbor_because=True` (`board`);
-  for one full body, use `show`. `ls`/`board` also gained a `name_prefix` filter
+  for one full body, use `show`. `show` returns the full task with lean links, keeping
+  `because` / `last_edit_delta` only on open/spec stale reads;
+  `include_neighbor_because=True` returns them on every link. `ls`/`board` also gained a `name_prefix` filter
   (T220) to scope a query to a single name prefix.
 - **Bulk-link existing tasks with `links_add` (D213).** Where `load` creates *new*
   tasks with their edges in one atomic import, `links_add` wires edges between tasks
@@ -532,7 +534,7 @@ Everything you can drive through your agent — it maps your request to tackit's
 |---|---|
 | "Add task X (linked to Y, label Z)" | `add` with `deps={Y: "<because>"}` + `label_add` |
 | "Find the task about the FTS query" | `search` (ranked keyword) |
-| "Show me task 12 and what it touches" | `show` — task + linked tasks + labels + because + last_edit_delta on each |
+| "Show me task 12 and what it touches" | `show` — full task + labels + lean linked tasks; `because` + `last_edit_delta` where reconciliation needs them, or on every link with `include_neighbor_because=True` |
 | "Update task 12's description" | `edit` — and stales its linked tasks (cascade) |
 | "Task 12 is linked to task 7" / "remove that link" | `link_add` (with `because`) / `link_rm` |
 | "Wire up these N links between existing tasks" | `links_add` — atomic batch of `{a, b, because}` edges (per-edge `because` required; whole batch rolls back on any bad edge) |
