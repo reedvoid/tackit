@@ -34,6 +34,7 @@ from .models import (
     Task,
     WontDoResult,
     default_status_for_kind,
+    obligation_stale,
     prefixed_id,
 )
 from .schema import KIND_VALUES
@@ -191,9 +192,9 @@ LINK_BECAUSE_REMINDER = (
     "re-reading the linked neighbor (FAST path); otherwise re-read and edit-or-"
     "reconcile (SLOW path with the question pre-formed)."
 )
-"""D34 / T166 - the single-source reminder string. Emitted on show / board
-envelopes that contain at least one stale dep entry, alongside the per-entry
-`because` + `last_edit_delta` fields the agent uses to orient reconciliation."""
+"""D34 / T166 / T293 - the single-source reminder string. Set on a slice whose
+task or link is obligation-bearing stale; `because` + `last_edit_delta` are the
+per-entry fields the agent uses to orient reconciliation."""
 
 
 def stale_alert_text(stale_tasks: list[Task]) -> str:
@@ -1497,25 +1498,31 @@ class Core:
     # D9 - slice fetch
     # ====================================================================
     def show(self, task_id: int) -> Slice:
-        """D9 - one task plus its directly-linked context (deps, dependents,
-        labels): the small, step-sized unit of access.
+        """D9 - one task plus its directly-linked context (links, labels): the
+        small, step-sized unit of access. This is the FULL read: every link
+        carries `because` + `last_edit_delta`. Adapters project it down
+        (D211/T293 project_show_slice, D211 project_slice).
 
-        D34/T166: when at least one dep entry is stale, surface the FAST-
-        filter reminder so the agent knows to compare the upstream's
-        `last_edit_delta` (on the dep entry) against the link's `because`
-        (also on the dep entry) before opening the dependent."""
+        D34/T293: when the task or a link is obligation-bearing stale, surface
+        the FAST-filter reminder so the agent knows to compare a neighbor's
+        `last_edit_delta` against the link's `because` before opening it."""
         task = self.get(task_id)
         # T237: under D5 symmetric links the neighbour set is single -- the old
         # dependencies/dependents were both _linked_with, i.e. identical -- so
         # the slice carries one `links` list.
         links = self._linked_with(task_id)
-        # D34/T166 trigger: any stale neighbour reachable from this slice.
-        has_stale_neighbor = any(n.stale for n in links)
+        reconcile_pending = obligation_stale(task)
+        for neighbor in links:
+            if obligation_stale(neighbor):
+                reconcile_pending = True
+        reminder = None
+        if reconcile_pending:
+            reminder = LINK_BECAUSE_REMINDER
         return Slice(
             task=task,
             labels=self.labels_of(task_id),
             links=links,
-            because_reminder=LINK_BECAUSE_REMINDER if has_stale_neighbor else None,
+            because_reminder=reminder,
         )
 
     # ====================================================================

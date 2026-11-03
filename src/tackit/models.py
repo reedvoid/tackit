@@ -165,13 +165,14 @@ class NeighborRef(BaseModel):
     (`prefixed_name`) without a second lookup.
 
     D34 / T166 (v0.4): in slice contexts where there is a specific edge from
-    the focal task to this neighbor (show, board, close/wont_do payloads),
-    the `because` (link's coupling rationale, T116) and `last_edit_delta`
-    (neighbor's most recent edit delta from S7, T117/D29) are populated so
-    the agent can compare delta x because to orient reconciliation of a
-    stale neighbor without re-reading the dependent's full description.
-    Both are None in non-slice contexts like the `links()` op output where
-    a candidate isn't tied to a single edge from the input ids' perspective."""
+    the focal task to this neighbor (Core.show, close/wont_do payloads), the
+    `because` (link's coupling rationale, T116) and `last_edit_delta` (neighbor's
+    most recent edit delta from S7, T117/D29) are populated so the agent can
+    compare delta x because to orient reconciliation of a stale neighbor without
+    re-reading the dependent's full description. Adapters project slice returns
+    down per D211 (project_show_slice, project_slice), so a returned entry may
+    omit them. Both are None in non-slice contexts like the `links()` op output
+    where a candidate isn't tied to a single edge from the input ids' perspective."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -204,10 +205,10 @@ class Slice(BaseModel):
     not two duplicated `dependencies`/`dependents` fields (which made a
     high-degree slice double its payload and read every edge twice).
 
-    D34 / T166 (v0.4): when at least one link entry has stale=True, the
-    `because_reminder` field carries the FAST-filter discipline reminder
+    D34 / T166 / T293: when the task or a link entry is obligation-bearing stale,
+    the `because_reminder` field carries the FAST-filter discipline reminder
     pointing the agent at the per-entry `because` + `last_edit_delta` they
-    should use to orient reconciliation. None when no link entry is stale."""
+    should use to orient reconciliation. None otherwise."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -382,3 +383,33 @@ def project_slice(
         "links": {"__all__": nbr_excl},
     }
     return slice_.model_dump(mode="json", exclude=exclude)
+
+
+def obligation_stale(item: "Task | NeighborRef") -> bool:
+    """D28 + D36: stale AND status IN ('open','spec'), the worklist predicate.
+    A stale flag on any other status is record-only (D7)."""
+    return item.stale and item.status in ("open", "spec")
+
+
+def project_show_slice(slice_: "Slice", *, include_neighbor_because: bool) -> dict:
+    """D211 + D34 + T293: lean projection of a slice return. The focal task,
+    labels and `because_reminder` are returned as-is. Every neighbor entry drops
+    its bare `name`. An entry keeps `because` + `last_edit_delta` iff the caller
+    opted in, or the entry or the focal task is obligation-bearing stale: an edit
+    stales the edited task's neighbors, so reconciling a stale task needs the
+    fields on entries that are not themselves stale. Omitted fields are absent
+    keys, never null (null `last_edit_delta` means "never edited"). Entries are
+    never dropped, whatever their status."""
+    payload = slice_.model_dump(mode="json")
+    focal_owes_reconcile = obligation_stale(slice_.task)
+    for neighbor, entry in zip(slice_.links, payload["links"]):
+        del entry["name"]
+        keep_fields = (
+            include_neighbor_because
+            or focal_owes_reconcile
+            or obligation_stale(neighbor)
+        )
+        if not keep_fields:
+            del entry["because"]
+            del entry["last_edit_delta"]
+    return payload
