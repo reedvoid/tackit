@@ -10,7 +10,7 @@ survives across sessions and context-window compaction, and a change to one task
 traceable to everything that depends on it. A typed boundary refuses malformed data,
 and a reconcile-on-change discipline surfaces what each change invalidates.
 
-> **Status: alpha (0.9.0).** The data model, interfaces, and sync design are
+> **Status: alpha (0.9.3).** The data model, interfaces, and sync design are
 > settled and implemented, with 660+ tests across unit / CLI / MCP / Hypothesis
 > property suites. The core shape — a kind/status partition (design/schema slices
 > live at `spec`/`retired`; production/meta at `open`/`closed`/`wont_do`) and the
@@ -638,7 +638,7 @@ Honest notes:
 
 ## Testing
 
-660+ tests: unit, adapter integration (CLI and MCP driven end-to-end), and
+890+ tests: unit, adapter integration (CLI and MCP driven end-to-end), and
 **property-based** (Hypothesis stateful testing). The property machine fuzzes
 random operation sequences against the always-true invariants — including
 **kind/status partition holds** (D36), worklist filter
