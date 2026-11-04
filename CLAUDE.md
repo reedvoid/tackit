@@ -43,3 +43,9 @@ paranoid; opt-in per contributor.
 `description_revisions` audit trail from the public dump). The rule is
 **ACTIVE** — run the dump before every commit that touches a spec
 slice.
+
+## The workflow commands — the repo is the master copy
+
+Edit `src/tackit/data/workflow/`, then copy to `~/.claude`. An edit made only in
+`~/.claude` drifts and never ships. Everything in that folder is public: keep private
+project names and vocabulary out.

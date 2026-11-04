@@ -172,3 +172,32 @@ def test_test_audit_skill_has_a_name_and_description():
     frontmatter = text.split("---\n")[1]
     assert "name: test-audit" in frontmatter
     assert "description:" in frontmatter
+
+
+# --- T309: the README and project CLAUDE.md say so ----------------------------
+
+REPO = Path(__file__).resolve().parent.parent
+
+
+def _normalized(path: Path) -> str:
+    return " ".join(path.read_text(encoding="utf-8").split())
+
+
+def test_readme_describes_the_set_under_install():
+    raw = (REPO / "README.md").read_text(encoding="utf-8")
+    assert raw.index("## Install") < raw.index("### Optional: the workflow commands") < raw.index("## Using tackit")
+    text = _normalized(REPO / "README.md")
+    for command in COMMANDS:
+        assert f"`/{command}`" in text
+    assert "`/plain`" not in text
+    assert "The `test-audit` skill comes with them." in text
+    assert "They are opinionated and Claude Code only, and `/diagnose` also needs the `superpowers` plugin." in text
+    assert "> Run `tackit setup` and carry out the optional workflow-commands step." in text
+
+
+def test_project_claude_md_names_the_repo_as_master():
+    text = _normalized(REPO / "CLAUDE.md")
+    assert "## The workflow commands — the repo is the master copy" in text
+    assert "Edit `src/tackit/data/workflow/`, then copy to `~/.claude`." in text
+    assert "An edit made only in `~/.claude` drifts and never ships." in text
+    assert "Everything in that folder is public: keep private project names and vocabulary out." in text

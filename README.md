@@ -76,6 +76,17 @@ settings](#configure-your-agents-settings)), and `tackit init`. The agent carrie
 out — it does the wiring because it knows where its own config lives — and should read
 [For agents: start here](#for-agents-start-here) while installing.
 
+### Optional: the workflow commands
+
+tackit ships the slash commands its maintainer works with: `/diagnose` proves a bug's
+root cause, `/firmup` settles a plan, `/graduate` turns it into specs and tasks, `/build`
+builds them test-first, and `/orient`, `/handoff` and `/trim` carry state between
+sessions. The `test-audit` skill comes with them. They are opinionated and Claude Code
+only, and `/diagnose` also needs the `superpowers` plugin. To install them, tell your
+agent:
+
+> Run `tackit setup` and carry out the optional workflow-commands step.
+
 ## Using tackit (through your agent)
 
 Day to day you don't touch tackit directly — you tell your coding agent in plain
