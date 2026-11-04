@@ -527,3 +527,348 @@ def test_status_without_legacy_reports_false(store_path):
     store = Store(store_path)
     _add_design(store_path, "anchor")
     assert sync.status(store)["legacy_sql_exists"] is False
+
+
+# --- T303: a lone legacy dump the sync decision would refuse ------------------
+
+def _git(cwd, *args):
+    result = subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout
+
+
+def _repo_with_text_era_branch(root):
+    """A real upgrade history: `text-era` tracks tackit.sql, `main` has converted
+    and moved on, and the checkout is on main with a clean tree."""
+    _git(root, "init", "-q", "-b", "main")
+    store = init_store(root)
+    _add_design(root, "one")
+    _make_legacy_only(store)
+    _git(root, "add", ".tackit")
+    _git(root, "commit", "-qm", "text era")
+    _git(root, "branch", "text-era")
+    _task_name(root, 1)  # the open converts the dump
+    _git(root, "add", ".tackit")
+    _git(root, "commit", "-qm", "converted")
+    _add_design(root, "two")
+    _git(root, "add", ".tackit")
+    _git(root, "commit", "-qm", "moved on")
+    assert _git(root, "status", "--short") == ""
+    return store
+
+
+def test_opening_a_text_era_branch_refuses_and_changes_no_file(tmp_path):
+    store = _repo_with_text_era_branch(tmp_path)
+    _git(tmp_path, "checkout", "-q", "text-era")
+    legacy_before = store.legacy_sql_path.read_bytes()
+
+    with pytest.raises(SyncError) as excinfo:
+        Core.open(start=tmp_path)
+
+    message = str(excinfo.value)
+    assert "tackit.sql " in message
+    assert "V1" in message and "V2" in message
+    assert "import --force" in message and "tackit export" in message
+    assert store.legacy_sql_path.read_bytes() == legacy_before
+    assert not store.sql_path.exists()
+    assert _git(tmp_path, "status", "--short") == ""
+    assert sync.list_backups(store) == []
+
+
+def test_after_that_refusal_switching_back_works_and_the_store_opens(tmp_path):
+    """The regression itself: the refused open used to leave an untracked gz that
+    made this checkout abort."""
+    store = _repo_with_text_era_branch(tmp_path)
+    _git(tmp_path, "checkout", "-q", "text-era")
+    with pytest.raises(SyncError):
+        Core.open(start=tmp_path)
+
+    _git(tmp_path, "checkout", "-q", "main")
+
+    assert _task_name(tmp_path, 2) == "two"
+    assert _git(tmp_path, "status", "--short") == ""
+    assert sync.status(store)["verdict"] == "in sync"
+
+
+def test_cli_reports_that_refusal_without_a_traceback(tmp_path, monkeypatch, capsys):
+    store = _repo_with_text_era_branch(tmp_path)
+    _git(tmp_path, "checkout", "-q", "text-era")
+    monkeypatch.chdir(tmp_path)
+
+    assert cli.main(["ls"]) != 0
+
+    captured = capsys.readouterr()
+    assert "tackit export" in captured.err + captured.out
+    assert "Traceback" not in captured.err
+    assert not store.sql_path.exists()
+
+
+def test_import_force_resolves_it_by_adopting_the_old_dump(tmp_path):
+    store = _repo_with_text_era_branch(tmp_path)
+    _git(tmp_path, "checkout", "-q", "text-era")
+
+    sync.import_sql(store, force=True)
+
+    assert not store.legacy_sql_path.exists()
+    assert _task_name(tmp_path, 1) == "one"
+    core = Core.open(start=tmp_path)
+    try:
+        ids = [task.id for task in core.ls()]
+    finally:
+        core.close_conn()
+    assert ids == [1]  # the db really went back; task 2 lives only in the backup
+    assert len(sync.list_backups(store)) == 1
+
+
+def test_import_without_force_refuses_a_text_era_branch_and_changes_no_file(tmp_path):
+    """Same bug class as open: refusing after converting would block switching back."""
+    store = _repo_with_text_era_branch(tmp_path)
+    _git(tmp_path, "checkout", "-q", "text-era")
+
+    with pytest.raises(SyncError, match="discard local work"):
+        sync.import_sql(store)
+
+    assert _git(tmp_path, "status", "--short") == ""
+    assert not store.sql_path.exists()
+    assert sync.list_backups(store) == []
+    _git(tmp_path, "checkout", "-q", "main")
+    assert _task_name(tmp_path, 2) == "two"
+
+
+def test_import_without_force_still_adopts_a_same_version_lone_legacy(store_path):
+    """Import is D18's explicit answer to an equal-version collision, so only a db
+    strictly newer than the dump needs --force; this must keep working."""
+    store = Store(store_path)
+    _add_design(store_path, "one")
+    text = _make_legacy_only(store)
+    store.legacy_sql_path.write_bytes(text.replace("'one'", "'not one'").encode("utf-8"))
+
+    sync.import_sql(store)
+
+    assert not store.legacy_sql_path.exists()
+    assert _task_name(store_path, 1) == "not one"
+
+
+def test_export_resolves_it_by_keeping_the_db(tmp_path):
+    store = _repo_with_text_era_branch(tmp_path)
+    _git(tmp_path, "checkout", "-q", "text-era")
+
+    sync.export(store)
+
+    assert not store.legacy_sql_path.exists()
+    assert _task_name(tmp_path, 2) == "two"
+    assert sync.status(store)["verdict"] == "in sync"
+
+
+def test_same_version_different_text_also_refuses_untouched(store_path):
+    store = Store(store_path)
+    _add_design(store_path, "one")
+    text = _make_legacy_only(store)
+    changed = text.replace("'one'", "'not one'")
+    assert changed != text
+    store.legacy_sql_path.write_bytes(changed.encode("utf-8"))
+
+    with pytest.raises(SyncError):
+        Core.open(start=store_path)
+
+    assert store.legacy_sql_path.read_bytes() == changed.encode("utf-8")
+    assert not store.sql_path.exists()
+
+
+def test_newer_lone_legacy_still_converts_as_a_pull(store_path):
+    """Converse of the refusal: a teammate's newer text dump must not be blocked."""
+    store = Store(store_path)
+    _add_design(store_path, "one")
+    older_gz = store.sql_path.read_bytes()
+    _add_design(store_path, "two")
+    newer_text = sync.read_dump(store.sql_path)
+    store.sql_path.write_bytes(older_gz)
+    sync.rebuild_db_from_sql(store)
+    store.sql_path.unlink()
+    store.legacy_sql_path.write_bytes(newer_text.encode("utf-8"))
+
+    assert _task_name(store_path, 2) == "two"
+
+    assert not store.legacy_sql_path.exists()
+    assert len(sync.list_backups(store)) == 1  # the pull path backed up the older db
+
+
+@pytest.mark.parametrize("content", [b"", b"not a dump ;;;", b"\xff\xfe nope"])
+def test_invalid_lone_legacy_refuses_and_stays(store_path, content):
+    store = Store(store_path)
+    _add_design(store_path, "anchor")
+    _make_legacy_only(store)
+    store.legacy_sql_path.write_bytes(content)
+
+    with pytest.raises(SyncError):
+        Core.open(start=store_path)
+
+    assert store.legacy_sql_path.read_bytes() == content
+    assert not store.sql_path.exists()
+
+
+def test_guard_ignores_a_legacy_file_beside_the_gz(store_path):
+    """Both files present is the adoption table's case, which names both files."""
+    store = Store(store_path)
+    _add_design(store_path, "one")
+    older_text = sync.read_dump(store.sql_path)
+    _add_design(store_path, "two")
+    store.legacy_sql_path.write_bytes(older_text.encode("utf-8"))
+    sync.refuse_diverged_legacy(store)  # returns quietly; open's table then refuses
+    with pytest.raises(SyncError, match="tackit.sql.gz"):
+        Core.open(start=store_path)
+
+
+def test_guard_is_quiet_with_no_legacy_and_with_no_db(store_path):
+    store = Store(store_path)
+    _add_design(store_path, "one")
+    sync.refuse_diverged_legacy(store)  # no legacy file
+    _make_legacy_only(store)
+    for suffix in ("", "-wal", "-shm"):
+        path = store.db_path.with_name(store.db_path.name + suffix)
+        if path.exists():
+            path.unlink()
+    sync.refuse_diverged_legacy(store)  # no db: a fresh clone must build from it
+    assert store.legacy_sql_path.exists()
+
+
+def test_status_on_a_text_era_branch_reports_and_changes_nothing(tmp_path):
+    store = _repo_with_text_era_branch(tmp_path)
+    _git(tmp_path, "checkout", "-q", "text-era")
+    verdict = sync.status(store)["verdict"]
+    assert "tackit.db" in verdict and "refuses" in verdict
+    assert _git(tmp_path, "status", "--short") == ""
+
+
+# --- T302: existing stores get the temp-file ignore rule ----------------------
+
+PRE_T301_GITIGNORE = b"# old comment\ntackit.db\ntackit.db-wal\ntackit.db-shm\nbackups/\n"
+
+
+def _gitignore_path(store):
+    return store.dir / ".gitignore"
+
+
+def test_conversion_makes_git_ignore_temp_files_in_an_old_store(tmp_path):
+    _git(tmp_path, "init", "-q")
+    store = init_store(tmp_path)
+    _add_design(tmp_path, "anchor")
+    _make_legacy_only(store)
+    _gitignore_path(store).write_bytes(PRE_T301_GITIGNORE)
+    temp_name = ".tackit/tackit.sql.gz.1.2.tmp"
+    unignored = subprocess.run(["git", "check-ignore", "-q", temp_name], cwd=tmp_path)
+    assert unignored.returncode == 1  # proves the check below can fail
+
+    _task_name(tmp_path, 1)
+
+    ignored = subprocess.run(["git", "check-ignore", "-q", temp_name], cwd=tmp_path)
+    assert ignored.returncode == 0
+    kept = subprocess.run(["git", "check-ignore", "-q", ".tackit/tackit.sql.gz"], cwd=tmp_path)
+    assert kept.returncode == 1  # the dump must stay committable
+
+
+@pytest.mark.parametrize(
+    "before, after",
+    [
+        (PRE_T301_GITIGNORE, PRE_T301_GITIGNORE + b"*.tmp\n"),
+        (b"custom-line", b"custom-line\n*.tmp\n"),
+        (b"", b"*.tmp\n"),
+        (b"crlf.db\r\n", b"crlf.db\r\n*.tmp\n"),
+        (b"caf\xe9-not-utf8\n", b"caf\xe9-not-utf8\n*.tmp\n"),
+        (b"a\n*.tmp\nb\n", b"a\n*.tmp\nb\n"),
+        (b"a\n*.tmp\r\nb\n", b"a\n*.tmp\r\nb\n"),
+        (b"keep-*.tmp-please\n", b"keep-*.tmp-please\n*.tmp\n"),
+    ],
+    ids=["plain", "no-newline", "empty", "crlf", "not-utf8", "present", "present-crlf", "substring"],
+)
+def test_ensure_temp_files_ignored_edits_only_what_it_must(store_path, before, after):
+    store = Store(store_path)
+    _gitignore_path(store).write_bytes(before)
+    sync.ensure_temp_files_ignored(store)
+    assert _gitignore_path(store).read_bytes() == after
+    sync.ensure_temp_files_ignored(store)  # no-op the second time
+    assert _gitignore_path(store).read_bytes() == after
+
+
+def test_ensure_temp_files_ignored_does_not_create_a_missing_file(store_path):
+    store = Store(store_path)
+    _gitignore_path(store).unlink()
+    sync.ensure_temp_files_ignored(store)
+    assert not _gitignore_path(store).exists()
+
+
+def test_every_adoption_path_adds_the_rule(store_path):
+    store = Store(store_path)
+    _add_design(store_path, "one")
+
+    # removed-identical-legacy: an adoption interrupted before it added the rule
+    text = sync.read_dump(store.sql_path)
+    store.legacy_sql_path.write_bytes(text.encode("utf-8"))
+    _gitignore_path(store).write_bytes(PRE_T301_GITIGNORE)
+    assert sync.adopt_legacy_dump(store) == "removed-identical-legacy"
+    assert b"*.tmp" in _gitignore_path(store).read_bytes()
+
+    # adopted-newer-legacy
+    older_gz = store.sql_path.read_bytes()
+    _add_design(store_path, "two")
+    newer_text = sync.read_dump(store.sql_path)
+    store.sql_path.write_bytes(older_gz)
+    store.legacy_sql_path.write_bytes(newer_text.encode("utf-8"))
+    _gitignore_path(store).write_bytes(PRE_T301_GITIGNORE)
+    assert sync.adopt_legacy_dump(store) == "adopted-newer-legacy"
+    assert b"*.tmp" in _gitignore_path(store).read_bytes()
+
+    # converted-legacy
+    _make_legacy_only(store)
+    _gitignore_path(store).write_bytes(PRE_T301_GITIGNORE)
+    assert sync.adopt_legacy_dump(store) == "converted-legacy"
+    assert b"*.tmp" in _gitignore_path(store).read_bytes()
+
+
+def test_store_with_no_legacy_file_keeps_its_gitignore(store_path):
+    """Opening an already-converted store must not dirty a tracked file."""
+    store = Store(store_path)
+    _add_design(store_path, "anchor")
+    _gitignore_path(store).write_bytes(PRE_T301_GITIGNORE)
+    assert _task_name(store_path, 1) == "anchor"
+    assert _gitignore_path(store).read_bytes() == PRE_T301_GITIGNORE
+
+
+def test_adoption_refusal_leaves_the_gitignore_alone(store_path):
+    store = Store(store_path)
+    _add_design(store_path, "one")
+    older_text = sync.read_dump(store.sql_path)
+    _add_design(store_path, "two")
+    store.legacy_sql_path.write_bytes(older_text.encode("utf-8"))
+    _gitignore_path(store).write_bytes(PRE_T301_GITIGNORE)
+    with pytest.raises(SyncError):
+        sync.adopt_legacy_dump(store)
+    assert _gitignore_path(store).read_bytes() == PRE_T301_GITIGNORE
+
+
+def test_opening_a_text_era_branch_leaves_its_gitignore_alone(tmp_path):
+    store = _repo_with_text_era_branch(tmp_path)
+    _git(tmp_path, "checkout", "-q", "text-era")
+    before = _gitignore_path(store).read_bytes()
+    with pytest.raises(SyncError):
+        Core.open(start=tmp_path)
+    assert _gitignore_path(store).read_bytes() == before
+
+
+def test_unwritable_gitignore_fails_loud_and_keeps_the_legacy_dump(store_path, monkeypatch):
+    store = Store(store_path)
+    _add_design(store_path, "anchor")
+    _make_legacy_only(store)
+
+    def fail(*args):
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr(sync, "ensure_temp_files_ignored", fail)
+    with pytest.raises(OSError, match="read-only"):
+        sync.adopt_legacy_dump(store)
+    assert store.legacy_sql_path.exists()

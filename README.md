@@ -160,7 +160,8 @@ is a deterministic SQL dump, `.tackit/tackit.sql.gz`, re-written on every change
 committed. It is gzip compressed in chunks of rows, so git still stores each new
 version as a small delta. Any standard `gunzip` reads it. A store with an older text
 `tackit.sql` is converted the next time it opens; commit the removal and the new file
-together. Sync is automatic; `tackit status` / `export` / `import` / `restore` exist
+together. A text dump older than the local db, as on a branch from before the upgrade,
+is refused with no file changed, so you can switch back. Sync is automatic; `tackit status` / `export` / `import` / `restore` exist
 only for the divergence cases auto-sync deliberately refuses to guess at.
 
 Git shows the dump as a binary file. For readable diffs, add this line to

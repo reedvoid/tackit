@@ -176,6 +176,67 @@ def write_dump(path: Path, text: str) -> None:
         raise
 
 
+def _read_legacy_text(store: Store) -> str | None:
+    """The text of ``tackit.sql``, or None if there is none."""
+    legacy_path = store.legacy_sql_path
+    try:
+        legacy_bytes = legacy_path.read_bytes()
+    except FileNotFoundError:
+        return None
+    try:
+        return legacy_bytes.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise SyncError(f"{legacy_path} is not valid UTF-8: {exc}") from exc
+
+
+def ensure_temp_files_ignored(store: Store) -> None:
+    """T302 / D18: a store created before ``write_dump``'s temp files has no ignore
+    rule for them, and a crash can strand one. Bytes, because the file is the user's
+    and may not be UTF-8. A store with no .gitignore is left without one."""
+    path = store.dir / ".gitignore"
+    try:
+        content = path.read_bytes()
+    except FileNotFoundError:
+        return
+    if b"*.tmp" in content.splitlines():
+        return
+    addition = b"*.tmp\n"
+    if content and not content.endswith((b"\n", b"\r")):
+        addition = b"\n" + addition
+    with path.open("ab") as handle:
+        handle.write(addition)
+
+
+def refuse_diverged_legacy(store: Store) -> None:
+    """T303 / D18: refuse, changing nothing, a lone ``tackit.sql`` that the sync
+    decision would refuse anyway. Converting first would delete a tracked file and
+    add an untracked gz, which then blocks switching back to the branch that tracks
+    the gz. The sync commands skip this: running them is the resolution."""
+    if store.sql_path.exists() or not store.db_path.exists():
+        return
+    legacy_text = _read_legacy_text(store)
+    if legacy_text is None:
+        return
+    conn = connect(store.db_path)
+    try:
+        stored_hash = get_synced_hash(conn)
+        vdb = get_version(conn)
+    finally:
+        conn.close()
+    if _hash_text(legacy_text) == stored_hash:
+        return
+    vsql = parse_version_from_sql(legacy_text)
+    if vsql > vdb:
+        return
+    raise SyncError(
+        f"tackit.sql (V{vsql}) diverged from tackit.db (V{vdb}) and is NOT strictly "
+        f"newer, as after checking out a branch from before tackit.sql.gz. Nothing was "
+        f"changed. Switch to the branch holding the current dump, or resolve explicitly: "
+        f"`tackit import --force` to adopt tackit.sql (backs up the .db first), or "
+        f"`tackit export` to write the .db out."
+    )
+
+
 def adopt_legacy_dump(store: Store) -> str:
     """T301 / D18 legacy adoption: bring a text ``tackit.sql`` into the gz file,
     removing it only once the gz durably holds its content. Returns what it did.
@@ -185,31 +246,32 @@ def adopt_legacy_dump(store: Store) -> str:
       * both, identical text ......... remove legacy (recovers an interrupted run)
       * both, legacy strictly newer .. adopt legacy (an older tackit wrote it)
       * both, anything else .......... refuse; neither is safe to discard
+
+    Each path that removes the legacy file first adds the temp-file ignore rule
+    (T302), so an interrupted run retries it.
     """
     legacy_path = store.legacy_sql_path
-    try:
-        legacy_bytes = legacy_path.read_bytes()
-    except FileNotFoundError:
+    legacy_text = _read_legacy_text(store)
+    if legacy_text is None:
         return "no-legacy"
-    try:
-        legacy_text = legacy_bytes.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise SyncError(f"{legacy_path} is not valid UTF-8: {exc}") from exc
     legacy_version = parse_version_from_sql(legacy_text)
 
     # missing_ok below: another session opening the same store may finish first.
     if not store.sql_path.exists():
+        ensure_temp_files_ignored(store)
         write_dump(store.sql_path, legacy_text)
         legacy_path.unlink(missing_ok=True)
         return "converted-legacy"
 
     current_text = read_dump(store.sql_path)
     if current_text == legacy_text:
+        ensure_temp_files_ignored(store)
         legacy_path.unlink(missing_ok=True)
         return "removed-identical-legacy"
 
     current_version = parse_version_from_sql(current_text)
     if legacy_version > current_version:
+        ensure_temp_files_ignored(store)
         write_dump(store.sql_path, legacy_text)
         legacy_path.unlink(missing_ok=True)
         return "adopted-newer-legacy"
@@ -408,7 +470,7 @@ def status(store: Store) -> dict:
     if legacy_exists:
         info["verdict"] = (
             "legacy text tackit.sql present; the next op converts it to "
-            "tackit.sql.gz, or refuses if the two conflict"
+            "tackit.sql.gz, or refuses if it conflicts with tackit.sql.gz or tackit.db"
         )
     elif not db_exists and sql_exists:
         info["verdict"] = "no local db; `tackit import` (or any op) will build it"
@@ -426,6 +488,22 @@ def status(store: Store) -> dict:
     return info
 
 
+def _refuse_import_over_newer_db(store: Store, vsql: int, dump_name: str) -> None:
+    if not store.db_path.exists():
+        return
+    conn = connect(store.db_path)
+    try:
+        vdb = get_version(conn)
+    finally:
+        conn.close()
+    if vdb > vsql:
+        raise SyncError(
+            f"refusing import: local db (V{vdb}) is newer than {dump_name} "
+            f"(V{vsql}); this would discard local work. `tackit export` to "
+            f"keep it, or `tackit import --force` to discard and adopt the file."
+        )
+
+
 def import_sql(store: Store, force: bool = False) -> str:
     """D18 ``tackit import`` - adopt ``tackit.sql.gz`` (backup the current .db, then
     rebuild from the file). This is the explicit resolution for the ambiguous /
@@ -435,24 +513,19 @@ def import_sql(store: Store, force: bool = False) -> str:
     file (Vdb > Vsql) -- that would discard local work; the agent must pass
     ``--force`` to confirm, having presumably exported or accepted the loss.
     """
+    # T303: check a lone legacy dump before converting it, so a refusal changes no file.
+    if not force and not store.sql_path.exists():
+        legacy_text = _read_legacy_text(store)
+        if legacy_text is not None:
+            _refuse_import_over_newer_db(store, parse_version_from_sql(legacy_text), "tackit.sql")
     adopt_legacy_dump(store)
     if not store.sql_path.exists():
         raise SyncError("no tackit.sql.gz to import.")
     disk_text = read_dump(store.sql_path)
     vsql = parse_version_from_sql(disk_text)
 
-    if store.db_path.exists() and not force:
-        conn = connect(store.db_path)
-        try:
-            vdb = get_version(conn)
-        finally:
-            conn.close()
-        if vdb > vsql:
-            raise SyncError(
-                f"refusing import: local db (V{vdb}) is newer than tackit.sql.gz "
-                f"(V{vsql}); this would discard local work. `tackit export` to "
-                f"keep it, or `tackit import --force` to discard and adopt the file."
-            )
+    if not force:
+        _refuse_import_over_newer_db(store, vsql, "tackit.sql.gz")
     backup = backup_db(store)
     rebuild_db_from_sql(store)
     return f"imported tackit.sql.gz (V{vsql}); previous db backed up to {backup}"

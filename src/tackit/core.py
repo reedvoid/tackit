@@ -424,6 +424,7 @@ class Core:
         from . import migrations
 
         store = require_store(start)
+        sync.refuse_diverged_legacy(store)  # T303: refuse before changing any file
         sync.adopt_legacy_dump(store)  # T301: a text tackit.sql becomes tackit.sql.gz
         # D18 sync verdict. We call startup_sync only when at least one of the
         # two files exists; we also avoid the "no .sql" branch (which would
