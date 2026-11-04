@@ -105,6 +105,13 @@ def test_shipped_text_does_not_cite_personal_configuration():
         ("commands/trim.md", "`M12 → closed in tackit`, `D34 → superseded by D56`"),
         ("commands/diagnose.md", "(parse → validate → query)"),
         ("skills/test-audit/SKILL.md", "costs far more than any audit. So this skill is NOT offered"),
+        # T311: the second scan's edits
+        ("commands/firmup.md", "sync, streaming, batch, background"),
+        ("commands/firmup.md", "the project's do-not-read list, if it has one"),
+        ("skills/test-audit/SKILL.md", "must not be read raw is read through the project's own safe route"),
+        ("skills/test-audit/SKILL.md", "goes to a separate agent as ONE narrow question"),
+        ("skills/test-audit/SKILL.md", 'can produce a delete-cascade "bug"'),
+        ("skills/test-audit/references/llm-eval.md", "too little material for the expected label"),
     ],
 )
 def test_each_genericizing_edit_landed(filename, replacement):
