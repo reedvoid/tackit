@@ -1,0 +1,25 @@
+---
+description: Graduate a firmed-up meta task — port the settled decision into authoritative design/schema slice(s), carve the production + test tasks with links (one verifying task per coverage-matrix row), cold-read each carved body, set the build order. Executes the plan /firmup wrote; assumes decisions are LOCKED.
+argument-hint: <meta task id> [optional: emphasis]
+---
+⛔ PRECONDITION — decisions must be LOCKED (run /firmup first). Before emitting anything, verify the meta body carries a DECISIONS-LOCKED block, a slices-to-amend / code-change plan and a COVERAGE MATRIX. If any design-grade question is still open, a coverage-matrix row is empty, or the plan CONFLICTS with a settled slice without a conscious ruling, STOP and say so — graduation writes AUTHORITATIVE specs and a wrong one rots. Do not invent decisions the firm-up didn't settle.
+
+Target meta task (+ any emphasis): $ARGUMENTS
+
+1. PORT THE DECISION INTO A DESIGN/SCHEMA SLICE — never leave it in the meta or a production body (tackit D245: a design-grade decision lives in a design slice). ⭐ The META-ISLAND rule bars production/design tasks from linking a meta, so the settled rule MUST live in an authoritative slice the build tasks can link — that slice is the bridge, always.
+   - Amend the UNIVERSAL-HOME slice FIRST (the rule's canonical home), then the slices that reference it.
+   - A slice is a COHERENT CURRENT-STATE body — EDIT/rewrite it and CUT the superseded prose; NEVER append a dated "SUPERSEDES" block (tackit D250, spec-is-current-state; edit_append is refused on spec — use edit / edit_replace_substring). Pin a stable §-ref RULE, never a `file:line` (code names the spec; the spec never points at code — that bridge is one-directional).
+   - If the decision is genuinely new (not an extension of one existing slice), MINT a new design/schema slice; link it to the slices it EXTENDS (design→design/schema links are fine), each edge with a real per-`because`.
+   - The meta stays the diagnostic ORIGIN — it references the new slice in PROSE (it cannot link it).
+
+2. CARVE THE PRODUCTION TASKS from the plan — impl-ready (tackit D37, granular description: a fresh session builds from the body + linked slices alone — concrete `file:line`, no TBD/pointer-only body). ⭐ EACH task links ≥1 design/schema slice: tackit's D256 creation-gate REFUSES a production task with zero spec links. Per task: the change, the touchpoints, the SLICE FOLD-BACK it makes AT SHIP (the big existing slices get amended as a ship fold-back, tracked here — not blind-edited now), and a VERIFICATION note — drive the REAL path and assert on the real screen/state, never the mechanism in isolation.
+
+3. CARVE THE TEST / EVAL TASKS SEPARATELY — build ≠ validation. Carve ONE verifying task (or a named part of one) per COVERAGE-MATRIX row; an empty row is a STOP (back to /firmup), never a task left to discover later. For LLM behavior it is a BILLED SHIP-GATE: link it to the build task it gates ("must not ship until this is green"), and specify both-directions cases with the EXPENSIVE direction pinned hardest, plus a leak guard — probe inputs DISTINCT from the prompt few-shot, gold never shown to the model, reproduce the PRODUCTION seam, grade PER-CASE and read the raw emissions (never trust the blended rate); its design must pass test-audit's Pass 5. For deterministic code, a hermetic test task whose body names the mandatory test-audit over every test the build adds or rewrites (test-audit SKILL.md, "When this audit is required"). Never fold "and test it" into a build body.
+
+4. WIRE the build order + dependency links (uncertain/load-bearing piece first; a gate links what it gates). Prefer `load` for a batch import over N separate `add()` calls.
+
+5. COLD-READ + RECONCILE.
+   - COLD-READ each carved body against the code it cites, as the next session's orient will: open each cited `file:line`, confirm it says what the body claims, and fix every claim you could not build from (a wrong path, a missed sibling entry point, an unstated decision). A correction REPLACES the wrong text everywhere in the meta's plan (task list and coverage row included), never only a note beside it (/firmup step 3). Report what the cold read corrected, or "none".
+   - RECONCILE the cascade — every slice edit re-stales its linked neighbors; clear them (reconcile if still-correct, edit if now-wrong; closed slices stay record-only). Leave nothing stale. Report the emitted slices + tasks + links verb-grouped (Added / Edited / Linked) with the build order.
+
+Hand-off to build: see /build step 7 (billed-eval preconditions) — not repeated here.

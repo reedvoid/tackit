@@ -1,0 +1,42 @@
+---
+description: Firm up a meta task for graduation — sweep specs/code/run-logs/tests FIRST-HAND, settle every open decision with me, and write the complete graduation PLAN into the meta body (decisions-locked · slices-to-amend · code-change map · coverage matrix · production + test tasks · links · build order). READ + DECIDE + PLAN; emit NO slices/tasks (that is /graduate).
+argument-hint: <meta task id> [optional: emphasis / scope]
+---
+⛔ FIRM-UP, not build and not graduate. You sweep everything, settle the decisions WITH me, and write a complete graduation PLAN INTO the meta task body — but you create NO design/schema slices and NO production tasks (that is /graduate). Meta is decide-only. The goal is a meta body a fresh session could graduate from without asking: every design-grade question LOCKED, the whole plan present. A meta with ONE open design-grade question, or ONE unread item on its reading list, is NOT graduation-ready (step 4) — surface it, don't paper over it.
+
+Target meta task (+ any emphasis): $ARGUMENTS
+
+1. READ THE META IN FULL + its linked neighbors. Then BUILD A READING LIST and read every item IN FULL — first-hand, never a keyword skim or a ±20-line window (a window confirms a `file:line`; it does not teach the design):
+   - every design/schema slice the change HITS — the WHOLE slice + the exact rule; classify each edit as REVISE / CONFIRM / EXTEND / RETIRE / UNCHANGED-but-referenced.
+   - A READ DELEGATED to an agent (the project bars reading that file here) counts only for what the agent actually read. Its brief requires it to report, per file, READ IN FULL or SAMPLED + what it left out. A sampled or skipped file stays an unread item unless the plan states why sampling answers its question.
+   - every code touchpoint — the WHOLE function/section + the callers/callees the design leans on. ⭐ READ THE CODE YOURSELF for every load-bearing claim: a task body OVER-CLAIMS blast radius and a summary/delegated claim has been wrong before — each factual claim carries `file:line` or the word UNVERIFIED, no third option; a universal quantifier (all/only/none) obliges an ENUMERATED check.
+   - the RUN-LOGS: where was this SEEN live (the evidence anchor — the record id + the log that FOUND the problem), and what was validated only NARROWLY (a prior green over one phrasing/register is NOT coverage). Re-read the meta's own reversal / "what changed" notes so you never revive a RETRACTED hypothesis or measure the wrong thing.
+   - the TESTS: which existing tests PIN the behavior being overturned (they get REWRITTEN, not patched), and where a new test would land (the test index, the eval seam).
+   - ⭐ THE IMPACT SWEEP — run it on the FINAL plan, and RE-RUN it whenever a decision adds a change (a scope added mid-firm-up is exactly what escapes: a count + a line rewording added after the test check left "tests rewritten: none" answering only the original question, missing 4 tests + an oracle). For EVERY symbol, string, event/return shape, template line, or stored value the plan changes, ENUMERATE each hit with a verdict — REWRITE / UNAFFECTED because <reason>. The sweep must name, with a verdict each, these SURFACES:
+     (a) every ENTRY POINT that performs the changed job — sync, streaming, batch, background — found by what the code DOES, not only by name (a loop doing the same job inline never matches the helper's name);
+     (b) the billed / costly eval harnesses (app-wide guards often do not cover them);
+     (c) e2e specs, fixtures, seed data and goldens, plus any file that COPIES the changed text verbatim (a new constraint or migration hits the first three; a text change breaks a byte-for-byte golden and leaves independent copies behind);
+     (d) every OTHER open meta that changes a model, contract or table this plan depends on — the ordering between them is a decision (step 2).
+     A NEGATIVE assertion on changed text (`"old words" not in line`) is a hit too: after the change it passes vacuously, so it must be retargeted. SEARCH with the names/counts form first (`-l` / `-c`); print matching lines only on paths checked against the project's do-not-read list, if it has one.
+   - A rule adopted over a CLASS (every read of X, every write path to Y, every model tier) records in the plan its ENUMERATED members — the re-checkable set — and the search that produced it, with every spelling searched (a sweep for one column name misses the same query written over another). A set found by keyword search is a MINIMUM: the plan says so and names the bound (which words, which paths), and only a set checked some other way may be called complete.
+
+2. SURFACE THE CRITICAL QUESTIONS — this is the whole job, not a warm-up. For each:
+   - the open "decide / verify-at-build" items the meta still carries;
+   - any CONFLICT with a SETTLED slice — a fix that silently revises a prior decision is a CONSCIOUS ruling; name it, don't smuggle it;
+   - a WRONG / unverified root-cause hypothesis — re-derive the corrected model from the code and give it plainly (no three-model tour);
+   - what is HERMETICALLY knowable vs what needs a BILLED measurement — an LLM behavior/accuracy is NEVER claimed hermetically; flag every decision riding on an UNMEASURED number;
+   - the CONVERSE / both failure directions per invariant, naming the EXPENSIVE/dangerous direction to pin hardest;
+   - the NEWLY REACHABLE STATES — for each change, the states it makes reachable that were impossible before (a single-file upload made "some files saved, some rejected" impossible; batch upload made it real, and the report silently dropped the rejected ones). Write them as a TABLE: state × each reader/writer of that state (every endpoint that reads or writes it, not only the one the plan names), every cell a verdict. An unhandled cell is a decision, not a build detail;
+   - the CONTENT of every user-visible surface the plan adds or changes (a message, a status line, UI text, an error) — a decision item, never left for the build to invent.
+   Give each a RECOMMENDED DEFAULT (default HARD toward proceeding; I correct it), except a choice I leaned on or reserved, which stays a question. Ask in prose, never a menu.
+
+3. SETTLE the decide-list WITH me, then WRITE THE GRADUATION PLAN into the meta body (edit the meta; cite `file:line` for every load-bearing claim). A superseded plan block is REPLACED, never left above a newer one (if it must stay as history, the body's FIRST line reads "CURRENT PLAN: block <name>"). The plan must carry:
+   - DECISIONS LOCKED — every question closed, dated, with its reason;
+   - SLICES TO AMEND — each slice + which rule + REVISE/CONFIRM/EXTEND/RETIRE, the UNIVERSAL-HOME slice named FIRST;
+   - CODE-CHANGE MAP — `file:line` call sites + functions, every one READ. "Re-verify at build" marks a line number that may MOVE before the build; it never stands in for a file not yet read;
+   - ⭐ COVERAGE MATRIX — every component the plan changes (each model tier / call site, store, outcome, user-visible surface) → the task that verifies it on the REAL path. An empty row is an open question (step 2), not a build detail;
+   - PRODUCTION TASKS to carve — buildable units in build order (the uncertain/load-bearing piece first);
+   - TEST/EVAL task carved SEPARATELY — for LLM behavior a BILLED ship-gate designed to pass test-audit's Pass 5 (`references/llm-eval.md`: one factor per arm, gold reachable from its input, leak guard, both directions); for deterministic code a hermetic task; name the tests that get rewritten — as the IMPACT SWEEP's enumerated list (each hit + REWRITE/UNAFFECTED + reason), never a bare "none";
+   - LINK PLAN — each production task links ≥1 slice; the eval links the task it gates.
+
+4. VERDICT — graduation-ready or not, most-blocking first. NOT ready while ANY of: an open design-grade question; an unread item on the reading list (list each as a blocker); an impact-sweep surface (a)–(d) without a verdict; an empty coverage-matrix row. A "ready" verdict states each bound it rests on (sampled reads, keyword-found sets) and never says "every" over a bounded set. STOP here: emit no slices/tasks (that is /graduate). Report the READING LIST (so a skipped read is visible), the locked decisions, and any remaining blocker + who owns it. A small BILLED canary to settle a decision runs ONLY on my explicit go, never by default.

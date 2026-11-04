@@ -1,0 +1,35 @@
+---
+description: Aggressively consolidate a bloated MEMORY.md into a lean two-zone index — SOLO ONLY. Moves inline detail to topic files, cuts stale/superseded, merges per-session NEXT blocks. The destructive counterpart to add-only /handoff.
+argument-hint: [optional: any emphasis for this run]
+---
+Aggressively trim + consolidate MEMORY.md. This is the DESTRUCTIVE, global-view counterpart to the add-only /handoff.
+
+⛔ SOLO ONLY. This command REWRITES MEMORY.md wholesale and DELETES content. If another session is active — or might run /handoff while this runs — STOP: a concurrent add-only handoff writes from its own stale copy and your rewrite would clobber it (and vice-versa). Confirm you are the only active session before proceeding. This is the ONE place a full MEMORY.md rewrite is legitimate, precisely because nothing else is writing.
+
+WHEN TO RUN — two triggers, SAME mechanics (both solo, both rebuild the file):
+- (a) BLOAT-GC: the /handoff bloat alert fired. The file is EXTREMELY bloated — cut HARD; shaving a few lines is pointless.
+- (b) ONE-TIME MIGRATION: MEMORY.md is still in an OLD format (inline prose, no clean two-zone split — e.g. the pre-restructure file). Convert it into the target shape below. Here the priority is LOSSLESS RELOCATION (move every inline block into a topic file + establish the two zones), deleting only what is genuinely stale / already-captured. Getting the structure right matters more than cutting.
+
+⭐ Either way, the goal is a lean INDEX, not a lightly-tidied essay. Default assumption: any inline prose block can move to a topic file and be replaced by a one-line pointer, and anything already captured in git + tackit + logs is a pointer (or gone), never prose.
+
+⭐⭐ VERIFY AGAINST THE SOURCE — NEVER DECIDE STALENESS FROM THE MEMORY TEXT ALONE. FORCEFUL / load-bearing — the most important rule here.
+- why: MEMORY.md is a STALE, LOSSY SUMMARY, not the authority. Judging what to keep/cut by re-reading it is CIRCULAR — it is how a task that tackit already closed keeps a live `⭐ NEXT` slot, a hub that is actually done reads as open, and a rule whose D# was superseded survives. The memory line's own prose CANNOT tell you its referent's real state; only the referent can. A failure is a disagreement, so consult the AUTHORITY: the memory text is never the authority.
+- do: for EVERY keep / demote / delete / merge decision on an entry that NAMES a referent — a tackit task (`M#`/`T#`), a design/schema slice (`D#`/`S#`), a commit hash, a `[[topic-file]]`, a run-log — make the decision against that referent's ACTUAL CURRENT STATE, FETCHED THIS RUN, not against how fresh or stale the memory line reads:
+  - tackit id → `show`/`board` it. `closed` / `wont_do` / `retired` / terminal-stale ⇒ demote to a one-line DONE pointer or cut. `open` AND still the live priority ⇒ keep. ⭐ A `NEXT`/open-hub line whose task is terminal in tackit is STALE no matter how active its prose sounds — that mismatch is the exact bug this rule exists to catch.
+  - `D#`/`S#` slice, commit, run-log, `[[topic-file]]` → OPEN it and confirm it still says what the entry claims BEFORE you compress, move, or drop the entry.
+- don't-do: prune/demote/merge on the memory text's own say-so; assume "looks done" = done or "sounds active" = active; skip this check to save turns (skipping it IS the dangerous failure). If a referent cannot be fetched this run, do NOT delete on a guess — KEEP it and flag it in the report as unverified.
+
+TARGET SHAPE — TWO ZONES:
+- **ZONE 1 — ACTIVE CORE** (the top `# ⬅ ACTIVE` region; always-on, HARD CAP ~40 lines / ~3k tokens): ONLY what every cold session must hold WITHOUT a file read — the current `⭐ NEXT` (task ids + pointers, prose minimized) and the load-bearing DO-NOT-RE-DERIVE rules, ONE line each = the rule + a `[[file]]`/`D#` pointer to its detail. A line that isn't earning its always-on slot (not needed by current/next work, or safe to re-derive) gets DEMOTED to Zone 2.
+- **ZONE 2 — INDEX** (pure one-line pointers, ZERO inline content): RECENT SESSIONS, DONE, LIVE FACTS, FEEDBACK, REFERENCE, ARCHIVE, and the durable-knowledge DETAIL files. Every entry is `- [Title](file.md) — hook`.
+
+STEPS:
+1. Read MEMORY.md IN FULL; record its size (lines + ~tokens) as the BEFORE.
+2. For every inline prose block (durable invariants / methods / negatives / lessons, session narratives, hub-status tables): MOVE the detail into a topic file (create it, or confirm it already exists) and REPLACE the block in MEMORY.md with a one-line pointer. Keep a load-bearing RULE as a Zone-1 one-liner ONLY if it is truly always-needed; else pointer-only in Zone 2.
+3. MERGE the per-session `### [session: …]` sub-blocks under `⭐ NEXT` into ONE coherent NEXT priority. ⭐ FIRST verify each sub-block's task ids against tackit (per the VERIFY-AGAINST-THE-SOURCE rule): a sub-block whose tasks are all terminal does not belong in the merged NEXT at all — it drops to a DONE pointer. Merge only the entries whose referents tackit confirms are still open + live. If two sessions' *still-open* nexts genuinely conflict (not just concatenate), surface it and ASK rather than silently picking one.
+4. DELETE ruthlessly — but EVERY deletion is JUSTIFIED BY THE SOURCE, never by the memory text (see the VERIFY-AGAINST-THE-SOURCE rule above; run the tackit/git/slice/file check FIRST for each entry you touch): stale / superseded / done-and-already-captured entries, confirmed terminal/stale AT THE SOURCE this run. Terminal/archived content is at most a one-line pointer, never prose. ⚠ Before deleting a fact that lives ONLY in MEMORY.md (no topic file, not in git/tackit/logs), MOVE it to a topic file first — trimming is RELOCATING detail + cutting what's already captured elsewhere, never LOSING a unique fact. An entry you could NOT verify at its source stays (flagged unverified), never cut on a guess.
+5. Enforce the Zone-1 hard cap. Over budget → demote more to Zone 2 pointers.
+6. Report: BEFORE→AFTER size (lines + ~tokens), what moved to which files, what was deleted, and the merged NEXT. ⭐ For each entry pruned or demoted, name the SOURCE STATE that justified it (e.g. `M12 → closed in tackit`, `D34 → superseded by D56`), so the decision is auditable and not a bare "looked stale". List separately any entries KEPT-as-unverified because their referent could not be fetched this run.
+
+↓ Anything below is MY emphasis for this run — honor it as a priority. It does NOT replace the routine above. (Empty = standard aggressive trim.)
+$ARGUMENTS
