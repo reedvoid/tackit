@@ -1334,6 +1334,23 @@ D213 already established this and applied it to link ops (link_add/link_rm carry
 SCOPE: the delta-bearing ops remain edit / edit_append / edit_replace_substring / reclassify (all cascade-firing). wont_do / retire drop the required delta; `reason` stays required and non-placeholder. This is a fold-back correction to T117, which over-applied delta to non-cascading ops — the same correction D213 made for edge ops, now completed for status verbs.
 
 RATIONALE beyond consistency: requiring TWO prose fields (reason + delta) on one terminal call is an ergonomic hazard — it invites front-loading one and dropping the other. Carrying only `reason` removes it.', 'spec', 0, '2026-07-20T03:52:06.056461+00:00', '2026-07-20T03:52:06.056461+00:00', 'design', NULL);
+INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (306, 'The workflow command set ships as plain files, installed by the agent on request', 'Decision: tackit ships its maintainer''s workflow as plain files inside the package, beside the tackit skill, and an agent copies them on the human''s request. Origin: most of the commands operate entirely on tackit''s metas, slices and production tasks, so they are only useful with it, and shipping them keeps tracker and workflow in step.
+
+The set: the /diagnose, /firmup, /graduate, /build, /orient, /handoff and /trim commands, and the test-audit skill with its reference files, which /firmup, /graduate, /build and /orient depend on. /handoff, /orient and /trim are in the set even though they mainly serve the agent''s memory file, because they carry tracker state between sessions and /handoff and /orient are two halves of one loop. Commands with no tracker coupling, such as /plain, stay out.
+
+Plain files, not a plugin. The commands already run as plain files from the agent''s user-level commands and skills folders, so a plugin adds packaging and no behavior. The accepted cost is no namespace: /build keeps its generic name.
+
+Claude Code only. The commands use its argument syntax, its context command and its memory file. /diagnose depends on the superpowers plugin''s systematic-debugging skill; a plain-file install cannot enforce that, so the install instructions name it.
+
+The opinions stay. Billed-eval gates, the context cutoff and the rest are the point of the set and are not softened for a wider audience. Being optional is how a tracker-only user is protected: the tracker install is unchanged, and the set is installed only when the human asks.
+
+Install. The setup emission prints the step and edits nothing, as it does for the rest of the install. The destination is user level, `~/.claude/commands/` and `~/.claude/skills/test-audit/`, because the commands apply across projects. A destination file that exists and differs is never silently overwritten: the agent shows the human the diff and asks, because these files drive every session and get edited locally. An upgrade does not refresh installed copies; re-running setup restates the step so they can be compared.
+
+Self-contained text. Shipped text does not cite the maintainer''s personal configuration: it states each rule it relies on. The memory layout is defined by /trim, so nothing extra ships for it. Each project supplies its own test, deploy and billed-eval commands in its CLAUDE.md, which /build reads. Citations of tackit''s own slices by id stay, because those specs ship publicly.
+
+The repo holds the master copy, and copies in `~/.claude` are deployed from it. An edit made only in a deployed copy drifts and never ships.
+
+Public by default. Everything shipped goes to a public package, so private project names, vocabulary, store ids and dated personal rulings stay out. A repo test checks only generic patterns, since a list of private names in a public test would itself leak them; checking names is the release scan''s job.', 'spec', 0, '2026-11-04T03:25:44.769116+00:00', '2026-11-04T03:26:26.464012+00:00', 'design', NULL);
 INSERT INTO task_labels (task_id, label) VALUES (37, 'core');
 INSERT INTO task_labels (task_id, label) VALUES (37, 'schema');
 INSERT INTO task_labels (task_id, label) VALUES (38, 'schema');
@@ -1548,6 +1565,11 @@ INSERT INTO links (id, task_a, task_b, because) VALUES (521, 59, 283, 'extends D
 INSERT INTO links (id, task_a, task_b, because) VALUES (522, 111, 283, 'D27 surfaces link candidates deterministically for the agent to judge; this slice is the same read-and-judge principle applied to search/edit/aggregation — if D27''s judge-not-enumerate stance changes, re-check this');
 INSERT INTO links (id, task_a, task_b, because) VALUES (523, 213, 284, 'extends D213''s ''a non-cascading op produces a delta nobody reads'' principle from link ops to the terminal status verbs wont_do/retire; if D213''s cascade-reader rationale changes, this extension re-checks');
 INSERT INTO links (id, task_a, task_b, because) VALUES (531, 165, 211, 'D211''s lean projection decides when D34''s because and last_edit_delta are returned, so changing either rule''s obligation-bearing stale condition forces re-checking the other.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (552, 245, 306, '/graduate cites and restates this rule by id, so changing where a decision homes means re-checking the shipped text.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (553, 250, 306, '/graduate tells the agent to rewrite a slice rather than append, citing this rule by id, so changing it means re-checking the shipped text.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (554, 256, 306, '/graduate and /build rely on the production creation gate by id, so changing the gate means re-checking the shipped text.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (555, 172, 306, '/graduate and /build require impl-ready bodies, citing this rule by id, so changing it means re-checking the shipped text.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (556, 257, 306, '/graduate''s bridge rule depends on the meta island, so changing the island means re-checking the shipped text.');
 INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (80, 37, NULL, 'open', '2026-05-31T04:11:47.873715+00:00');
 INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (81, 38, NULL, 'open', '2026-05-31T04:11:47.876334+00:00');
 INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (82, 39, NULL, 'open', '2026-05-31T04:11:47.876420+00:00');
@@ -1714,4 +1736,5 @@ INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at)
 INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (613, 280, NULL, 'spec', '2026-07-08T22:44:01.789685+00:00');
 INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (625, 283, NULL, 'spec', '2026-07-20T03:51:50.818565+00:00');
 INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (626, 284, NULL, 'spec', '2026-07-20T03:52:06.056675+00:00');
+INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (663, 306, NULL, 'spec', '2026-11-04T03:25:44.770106+00:00');
 COMMIT;
