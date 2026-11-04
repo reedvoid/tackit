@@ -5,8 +5,8 @@ config; it *emits* the post-install steps with contextualized paths -- the
 install-time analog of the tool-result obligation emission. The driving agent
 reads these and wires the MCP server into its own config (it knows its own
 location). It emits: a portable, committable MCP registration snippet, where to
-drop SKILL.md, the always-on discipline to add to the agent's own config (T22), and
-the `tackit init` step.
+drop SKILL.md, the always-on discipline to add to the agent's own config (T22), the
+`tackit init` step, and the optional workflow-commands step (T308, D306).
 """
 
 from __future__ import annotations
@@ -28,11 +28,27 @@ def skill_source() -> Path | None:
     return None
 
 
+def workflow_source() -> Path | None:
+    """T308 / D306: locate the packaged workflow commands and test-audit skill."""
+    try:
+        res = resources.files("tackit").joinpath("data/workflow")
+        if res.is_dir():
+            return Path(str(res))
+    except (ModuleNotFoundError, FileNotFoundError):
+        pass
+    return None
+
+
 def render_setup(cwd: Path) -> str:
     """Build the contextualized post-install instructions for ``cwd``."""
     python = sys.executable
     skill = skill_source()
     skill_loc = str(skill) if skill else "(packaged SKILL.md - see tackit/data/SKILL.md)"
+    workflow = workflow_source()
+    workflow_loc = "(packaged workflow files - see tackit/data/workflow)"
+    if workflow:
+        workflow_loc = str(workflow)
+    claude_home = Path.home() / ".claude"
 
     # Portable command (T23): rely on the `tackit` console script being on PATH so the
     # resulting .mcp.json is committable + shareable, not a machine-specific absolute
@@ -51,7 +67,7 @@ def render_setup(cwd: Path) -> str:
 
     return "\n".join(
         [
-            "tackit is installed. Four post-install steps remain — I (the driving",
+            "tackit is installed. Four post-install steps remain, plus one optional — I (the driving",
             "agent) should carry these out, since I know my own config location:",
             "",
             "1. REGISTER THE MCP SERVER into my own agent config. The stdio server",
@@ -74,6 +90,19 @@ def render_setup(cwd: Path) -> str:
             "",
             "4. CREATE THE STORE in this project:",
             "     tackit init",
+            "",
+            "5. OPTIONAL: INSTALL THE WORKFLOW COMMANDS, only if the human asks for them.",
+            "   They are an opinionated Claude Code workflow (/diagnose, /firmup, /graduate,",
+            "   /build, /orient, /handoff, /trim) plus the test-audit skill they rely on.",
+            f"   Copy from {workflow_loc}:",
+            f"     - commands/*.md to {claude_home / 'commands'}/",
+            f"     - skills/test-audit/ to {claude_home / 'skills' / 'test-audit'}/",
+            "   If a destination file already exists and differs, show the human the diff",
+            "   and ask. Never overwrite it silently.",
+            "   /diagnose also needs the superpowers plugin",
+            "   (superpowers@claude-plugins-official). /build reads a project's test, deploy",
+            "   and billed-eval commands from its CLAUDE.md. An upgrade does not refresh",
+            "   copied files; re-run `tackit setup` to compare.",
             "",
             "After that, `tackit.sql.gz` is the committed source of truth and the MCP",
             "tools are the primary door. The portable .mcp.json above and tackit.sql.gz",
