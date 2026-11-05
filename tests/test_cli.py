@@ -82,8 +82,9 @@ def test_cli_add_json_output(cli, capsys):
         "add", "json task", "--kind", "production", "--json",
         "--dep", "1::realizes the anchor decision",
     ]) == 0
-    data = json.loads(capsys.readouterr().out)
-    assert data["task"]["name"] == "json task"
+    assert json.loads(capsys.readouterr().out) == {"id": 2}
+    assert main(["show", "2", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["task"]["name"] == "json task"
 
 
 def test_cli_ls_name_prefix(cli, capsys):

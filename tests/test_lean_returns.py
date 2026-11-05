@@ -546,3 +546,253 @@ def test_after_an_edit_then_an_append_show_reports_the_append_delta(store):
     for revision in _call("history", {"id": 1})["description_revisions"]:
         deltas.append(revision["delta"])
     assert deltas == ["the edit delta", "the append delta"]
+
+
+# --- D211's write-result table, on both adapters --------------------------------
+
+
+def _seed_spec_and_task():
+    def seed(core):
+        core.add("spec", kind="design", description="spec body")  # 1
+        core.add("task", kind="production", description="task body",
+                 deps={1: "task realizes spec"})  # 2
+
+    _core_call(seed)
+
+
+def _seed_closed_task():
+    _seed_spec_and_task()
+    _core_call(lambda core: core.close(2))
+
+
+def _seed_labelled_task():
+    _seed_spec_and_task()
+    _core_call(lambda core: core.label_add(2, "alpha"))
+
+
+def _seed_lone_spec():
+    _core_call(lambda core: core.add("lone spec", kind="design"))
+
+
+RESULT_TABLE = [
+    ("close", _seed_spec_and_task, "close", {"id": 2},
+     ["close", "2"], {"id": 2, "status": "closed"}),
+    ("close, already closed (D20)", _seed_closed_task, "close", {"id": 2},
+     ["close", "2"], {"id": 2, "status": "closed"}),
+    ("wont_do", _seed_spec_and_task, "wont_do", {"id": 2, "reason": "dropped it"},
+     ["wont-do", "2", "--reason", "dropped it"], {"id": 2, "status": "wont_do"}),
+    ("retire", _seed_lone_spec, "retire", {"id": 1, "reason": "premise is gone"},
+     ["retire", "1", "--reason", "premise is gone"], {"id": 1, "status": "retired"}),
+    ("reopen", _seed_closed_task, "reopen", {"id": 2},
+     ["reopen", "2"], {"id": 2, "status": "open"}),
+    ("reopen, already open (D20)", _seed_spec_and_task, "reopen", {"id": 2},
+     ["reopen", "2"], {"id": 2, "status": "open"}),
+    ("reopen, a spec (D20)", _seed_spec_and_task, "reopen", {"id": 1},
+     ["reopen", "1"], {"id": 1, "status": "spec"}),
+    ("add", _seed_spec_and_task, "add", {"name": "new", "kind": "meta"},
+     ["add", "new", "--kind", "meta"], {"id": 3}),
+    ("label_add", _seed_labelled_task, "label_add", {"id": 2, "label": "beta"},
+     ["label", "add", "2", "beta"], {"id": 2, "labels": ["alpha", "beta"]}),
+    ("label_add, already on it (D20)", _seed_labelled_task, "label_add",
+     {"id": 2, "label": "alpha"},
+     ["label", "add", "2", "alpha"], {"id": 2, "labels": ["alpha"]}),
+    ("label_rm", _seed_labelled_task, "label_rm", {"id": 2, "label": "alpha"},
+     ["label", "rm", "2", "alpha"], {"id": 2, "labels": []}),
+    ("label_rm, not on it (D20)", _seed_labelled_task, "label_rm",
+     {"id": 2, "label": "nope"},
+     ["label", "rm", "2", "nope"], {"id": 2, "labels": ["alpha"]}),
+]
+
+
+def _table_id(row):
+    return row[0]
+
+
+@pytest.mark.parametrize("row", RESULT_TABLE, ids=_table_id)
+def test_mcp_write_results_match_the_table(store, row):
+    _label, seed, tool, args, _argv, expected = row
+    seed()
+    assert _call(tool, args) == expected
+
+
+@pytest.mark.parametrize("row", RESULT_TABLE, ids=_table_id)
+def test_cli_json_write_results_match_the_table(store, capsys, row):
+    _label, seed, _tool, _args, argv, expected = row
+    seed()
+    assert _cli_json(capsys, argv + ["--json"]) == expected
+
+
+@pytest.mark.parametrize(
+    "args,expected",
+    [
+        ({"a": 2, "b": 3}, {"unlinked": {"a": 2, "b": 3}}),
+        ({"a": 3, "b": 2}, {"unlinked": {"a": 3, "b": 2}}),
+        ({"a": 1, "b": 3}, {"unlinked": {"a": 1, "b": 3}}),  # never linked (D20)
+    ],
+)
+def test_mcp_link_rm_returns_the_pair_and_removes_the_edge(store, args, expected):
+    def seed(core):
+        core.add("spec", kind="design")  # 1
+        core.add("a", kind="production", deps={1: "a realizes spec"})  # 2
+        core.add("b", kind="design")  # 3
+        core.link_add(2, 3, because="a calls b")
+
+    _core_call(seed)
+    assert _call("link_rm", args) == expected
+    if expected["unlinked"]["a"] != 1:
+        neighbors = []
+        for entry in _core_call(lambda core: core.show(2)).links:
+            neighbors.append(entry.id)
+        assert neighbors == [1]
+
+
+def test_add_still_stores_what_it_no_longer_returns(store):
+    _call("add", {"name": "spec", "kind": "design"})
+    assert _call("add", {
+        "name": "task", "kind": "production", "description": "the body",
+        "labels": ["alpha"], "deps": {1: "task realizes spec"},
+    }) == {"id": 2}
+    shown = _call("show", {"id": 2})
+    assert shown["task"]["description"] == "the body"
+    assert shown["labels"] == ["alpha"]
+    assert shown["links"][0]["id"] == 1
+
+
+def test_retire_and_wont_do_still_store_their_reason(store):
+    _seed_spec_and_task()
+    _call("wont_do", {"id": 2, "reason": "dropped it"})
+    _call("add", {"name": "lone", "kind": "design"})
+    _call("retire", {"id": 3, "reason": "premise is gone"})
+    assert _core_call(lambda core: core.get(2).wont_do_reason) == "dropped it"
+    assert _core_call(lambda core: core.get(3).wont_do_reason) == "premise is gone"
+
+
+def test_the_label_nudge_still_rides_the_envelope_on_a_lean_result(store):
+    _seed_spec_and_task()
+
+    async def scenario(session):
+        return await session.call_tool("label_add", {"id": 2, "label": "brandnew"})
+
+    envelope = json.loads(_mcp(scenario).content[0].text)
+    assert envelope["result"] == {"id": 2, "labels": ["brandnew"]}
+    assert "brandnew" in envelope["label_nudge"]
+
+
+# --- `stale`: short rows, no bodies, no opt-in (D211, D11) ----------------------
+
+
+SHORT_ROW_KEYS = {"id", "prefixed_name", "kind", "status", "stale", "wont_do_reason"}
+LONG_BODY = "a long body line " * 500
+
+
+def _seed_stale_task_with_a_long_body():
+    def seed(core):
+        core.add("spec", kind="design")  # 1
+        core.add("task", kind="production", description=LONG_BODY,
+                 deps={1: "task realizes spec"})  # 2
+        core.edit(1, description="changed", delta="flags the task")
+
+    _core_call(seed)
+
+
+def _assert_short_worklist(rows):
+    assert len(rows) == 1
+    assert set(rows[0]) == SHORT_ROW_KEYS
+    assert rows[0]["id"] == 2
+    assert rows[0]["stale"] is True
+    assert rows[0]["prefixed_name"] == "T2 — task"
+    assert "a long body line" not in json.dumps(rows)
+
+
+def test_mcp_stale_returns_short_rows(store):
+    _seed_stale_task_with_a_long_body()
+    _assert_short_worklist(_call("stale", {}))
+
+
+def test_cli_json_stale_returns_short_rows(store, capsys):
+    _seed_stale_task_with_a_long_body()
+    _assert_short_worklist(_cli_json(capsys, ["stale", "--json"]))
+
+
+def test_mcp_stale_takes_no_opt_in(store):
+    async def scenario(session):
+        return await session.call_tool("stale", {"include_description": True})
+
+    response = _mcp(scenario)
+    assert response.isError is True
+    assert "include_description" in response.content[0].text
+
+
+# --- the close gate is untouched by the lean return (D14, D12) ------------------
+
+
+def _seed_task_with_stale_neighbor():
+    def seed(core):
+        core.add("spec", kind="design")  # 1
+        core.add("task", kind="production", deps={1: "task realizes spec"})  # 2
+        core.edit(2, description="changed", delta="flags the spec")
+
+    _core_call(seed)
+
+
+def test_mcp_close_gate_still_refuses_a_stale_neighbor(store):
+    _seed_task_with_stale_neighbor()
+
+    async def scenario(session):
+        return await session.call_tool("close", {"id": 2})
+
+    response = _mcp(scenario)
+    assert response.isError is True
+    assert "REFUSED" in response.content[0].text
+    assert _core_call(lambda core: core.get(2).status) == "open"
+
+
+def test_cli_close_gate_still_refuses_a_stale_neighbor(store, capsys):
+    _seed_task_with_stale_neighbor()
+    capsys.readouterr()
+    assert main(["close", "2", "--json"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "REFUSED" in captured.err
+    assert _core_call(lambda core: core.get(2).status) == "open"
+
+
+# --- CLI text for the same verbs (D211) -----------------------------------------
+
+
+def test_cli_text_close_prints_the_task_and_no_neighbors(store, capsys):
+    _seed_spec_and_task()
+    assert _cli_lines(capsys, ["close", "2"]) == ["closed T2 [closed] task"]
+
+
+def test_cli_text_wont_do_keeps_its_reason_and_drops_neighbors(store, capsys):
+    _seed_spec_and_task()
+    assert _cli_lines(capsys, ["wont-do", "2", "--reason", "dropped it"]) == [
+        "marked wont_do T2 [wont_do] task",
+        "  reason: dropped it",
+    ]
+
+
+def test_cli_text_retire_keeps_its_reason_and_drops_neighbors(store, capsys):
+    def seed(core):
+        core.add("spec", kind="design")  # 1
+        core.add("task", kind="production", deps={1: "task realizes spec"})  # 2
+        core.close(2)
+
+    _core_call(seed)
+    lines = _cli_lines(capsys, ["retire", "1", "--reason", "premise is gone"])
+    assert len(lines) == 2
+    assert lines[0].startswith("retired ") and "[retired] spec" in lines[0]
+    assert lines[1] == "  reason: premise is gone"
+
+
+def test_cli_text_add_still_prints_the_created_slice(store, capsys):
+    _seed_spec_and_task()
+    lines = _cli_lines(capsys, ["add", "new one", "--kind", "production",
+                                "--desc", "the body", "--dep",
+                                "1::new realizes spec", "--label", "alpha"])
+    text = "\n".join(lines)
+    assert lines[0] == "created T3 [open] new one"
+    assert "the body" in text
+    assert "labels: alpha" in text
+    assert "spec" in text

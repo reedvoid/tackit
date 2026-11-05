@@ -26,9 +26,12 @@ from .db import init_store, require_store
 from .errors import TackitError
 from .models import (
     prefixed_id,
+    project_add_result,
     project_change_result,
+    project_label_result,
     project_show_slice,
     project_slice,
+    project_status_result,
     project_task,
 )
 from .plan import parse_plan
@@ -222,10 +225,9 @@ def _cmd_add(args) -> int:
             labels=args.label,
             deps=deps_dict,
         )
-        s = core.show(task.id)
         _emit(
-            "created " + _fmt_slice(s),
-            project_show_slice(s, include_neighbor_because=False),
+            "created " + _fmt_slice(core.show(task.id)),
+            project_add_result(task),
             args.json,
         )
     return 0
@@ -377,9 +379,11 @@ def _cmd_edit_replace(args) -> int:
 def _cmd_close(args) -> int:
     with _core_session() as core:
         result = core.close(args.id)
-        text = ["closed " + _fmt_task(result.task), "  review obligations (one hop):"]
-        text += _fmt_neighbors("links", result.links)
-        _emit("\n".join(text), _dump(result), args.json)
+        _emit(
+            "closed " + _fmt_task(result.task),
+            project_status_result(result.task),
+            args.json,
+        )
     return 0
 
 
@@ -389,10 +393,8 @@ def _cmd_wont_do(args) -> int:
         text = [
             f"marked wont_do " + _fmt_task(result.task),
             f"  reason: {result.task.wont_do_reason}",
-            "  review obligations (one hop):",
         ]
-        text += _fmt_neighbors("links", result.links)
-        _emit("\n".join(text), _dump(result), args.json)
+        _emit("\n".join(text), project_status_result(result.task), args.json)
     return 0
 
 
@@ -402,17 +404,15 @@ def _cmd_retire(args) -> int:
         text = [
             f"retired " + _fmt_task(result.task),
             f"  reason: {result.task.wont_do_reason}",
-            "  review obligations (one hop):",
         ]
-        text += _fmt_neighbors("links", result.links)
-        _emit("\n".join(text), _dump(result), args.json)
+        _emit("\n".join(text), project_status_result(result.task), args.json)
     return 0
 
 
 def _cmd_reopen(args) -> int:
     with _core_session() as core:
         t = core.reopen(args.id)
-        _emit("reopened " + _fmt_task(t), _dump(t), args.json)
+        _emit("reopened " + _fmt_task(t), project_status_result(t), args.json)
     return 0
 
 
@@ -471,7 +471,11 @@ def _cmd_label(args) -> int:
         else:
             t = core.label_rm(args.id, args.label)
             verb = "removed"
-        _emit(f"{verb} label '{args.label}' on " + _fmt_task(t), _dump(t), args.json)
+        _emit(
+            f"{verb} label '{args.label}' on " + _fmt_task(t),
+            project_label_result(args.id, core.labels_of(args.id)),
+            args.json,
+        )
     return 0
 
 
@@ -518,7 +522,10 @@ def _cmd_stale(args) -> int:
             )
         else:
             text = "stale worklist empty — reconciliation complete."
-        _emit(text, [_dump(t) for t in tasks], args.json)
+        rows = []
+        for t in tasks:
+            rows.append(project_task(t, include_description=False))
+        _emit(text, rows, args.json)
     return 0
 
 
@@ -887,7 +894,7 @@ def build_parser() -> argparse.ArgumentParser:
         "close",
         _cmd_close,
         "close (refused if stale/linked-stale, on status='spec', or already "
-        "closed/wont_do -- no double-decide) + print neighbors "
+        "closed/wont_do -- no double-decide) "
         "(D12 / D14 / D36). For production+meta only. Use edit() to refine "
         "a design/schema decision; retire() if completely abandoned.",
     )

@@ -339,14 +339,17 @@ def test_mcp_retire_smoke(tmp_path, monkeypatch):
     Verifies status spec->retired + reason persisted + envelope shape."""
     async def scenario(s):
         await s.call_tool("add", {"name": "d1 living spec", "kind": "design"})
-        return _envelope(await s.call_tool(
+        retired = _envelope(await s.call_tool(
             "retire",
             {"id": 1, "reason": "premise replaced by D99"},
         ))
+        shown = _envelope(await s.call_tool("show", {"id": 1}))
+        return retired, shown
 
-    env = _drive(tmp_path, monkeypatch, scenario)
-    assert env["result"]["task"]["status"] == "retired"
-    assert env["result"]["task"]["wont_do_reason"] == "premise replaced by D99"
+    retired, shown = _drive(tmp_path, monkeypatch, scenario)
+    assert retired["result"] == {"id": 1, "status": "retired"}
+    assert shown["result"]["task"]["status"] == "retired"
+    assert shown["result"]["task"]["wont_do_reason"] == "premise replaced by D99"
 
 
 def test_mcp_summary_smoke(tmp_path, monkeypatch):

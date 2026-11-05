@@ -405,6 +405,28 @@ def project_change_result(result: "ChangeResult", *, include_description: bool) 
     return {"task": task, "newly_stale": newly_stale}
 
 
+def project_status_result(task: "Task") -> dict:
+    """D211 + D12 + D36 + T317: what `close`, `wont_do`, `retire` and `reopen`
+    return. A close-type verb creates no obligation: the close gate already refused
+    any live stale neighbor, and these verbs do not cascade."""
+    return {"id": task.id, "status": task.status}
+
+
+def project_add_result(task: "Task") -> dict:
+    """D211 + T317: `add` returns the id; the caller wrote the rest."""
+    return {"id": task.id}
+
+
+def project_label_result(task_id: int, labels: list[str]) -> dict:
+    """D211 + T317: a label verb returns the task's labels after the change."""
+    return {"id": task_id, "labels": labels}
+
+
+def project_link_rm_result(a: int, b: int) -> dict:
+    """D211 + T317: `link_rm` mirrors `link_add`'s compact form (D39)."""
+    return {"unlinked": {"a": a, "b": b}}
+
+
 def obligation_stale(item: "Task | NeighborRef") -> bool:
     """D28 + D36: stale AND status IN ('open','spec'), the worklist predicate.
     A stale flag on any other status is record-only (D7)."""

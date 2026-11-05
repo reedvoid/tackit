@@ -20,9 +20,13 @@ from pydantic import ValidationError as _PydanticValidationError
 
 from .core import Core, stale_alert_payload
 from .models import (
+    project_add_result,
     project_change_result,
+    project_label_result,
+    project_link_rm_result,
     project_show_slice,
     project_slice,
+    project_status_result,
     project_task,
 )
 from .plan import parse_plan
@@ -217,12 +221,11 @@ def build_server() -> FastMCP:
         scope already covers this? yes -> edit that one; no -> add() this. See
         SKILL.md "File side-door work the moment it appears".
 
-        Returns the new task's slice plus any ``stale_alert``."""
+        Returns ``{id}`` (D211) plus any ``stale_alert``; use `show` to read
+        the task back."""
         with _core() as c:
             t = c.add(name, kind=kind, description=description, labels=labels, deps=deps)
-            return _wrap(
-                c, project_show_slice(c.show(t.id), include_neighbor_because=False)
-            )
+            return _wrap(c, project_add_result(t))
 
     @mcp.tool()
     def show(id: int, include_neighbor_because: bool = False) -> dict:
@@ -441,8 +444,9 @@ def build_server() -> FastMCP:
         status='spec' -- design/schema slices are living spec, not work
         items. Use edit() to refine a decision; retire() if 100% abandoned
         with no replacement (D36). REFUSED on wont_do / retired (no double-
-        decide). On success returns the task's `links` (the single symmetric
-        neighbour set, T239) to review.
+        decide). On success returns ``{id, status}`` (D12, D211): the gate
+        already refused any live stale neighbor, so no review is owed. `show`
+        returns the neighbors if you want them.
 
         close() records "done" and does NOT cascade -- so DON'T first edit the
         body with a bookkeeping note ("done", "committed <hash>"); that fires a
@@ -450,16 +454,17 @@ def build_server() -> FastMCP:
         fold-back (a discovered constraint/decision a reader needs) earns a
         pre-close edit. See SKILL.md "Edits aren't free"."""
         with _core() as c:
-            return _wrap(c, c.close(id).model_dump(mode="json"))
+            return _wrap(c, project_status_result(c.close(id).task))
 
     @mcp.tool()
     def reopen(id: int) -> dict:
         """Move a closed task back to open (D7/D8, logged). REFUSED on
         wont_do tasks (T132: terminal forever; change-of-mind path is a
         fresh task with the new direction). REFUSED on retired (D36: same
-        terminal rationale -- file a fresh D# if the decision returned)."""
+        terminal rationale -- file a fresh D# if the decision returned).
+        Returns ``{id, status}`` (D211)."""
         with _core() as c:
-            return _wrap(c, c.reopen(id).model_dump(mode="json"))
+            return _wrap(c, project_status_result(c.reopen(id)))
 
     @mcp.tool()
     def wont_do(id: int, reason: str) -> dict:
@@ -475,10 +480,10 @@ def build_server() -> FastMCP:
         neighbor (D14 / D56 close-gate). REFUSED on already-wont_do / closed / retired tasks (no
         double-decide). REFUSED if status='spec' (D36: design/schema can't
         be 'not done' -- use edit() to refine, or retire() if 100%
-        abandoned). Does not fire the staling cascade -- returns one-hop
-        neighbors for migrate-or-stay review like close."""
+        abandoned). Does not fire the staling cascade. Returns
+        ``{id, status}`` (D211); `show` returns the neighbors."""
         with _core() as c:
-            return _wrap(c, c.wont_do(id, reason=reason).model_dump(mode="json"))
+            return _wrap(c, project_status_result(c.wont_do(id, reason=reason).task))
 
     @mcp.tool()
     def retire(id: int, reason: str) -> dict:
@@ -507,10 +512,10 @@ def build_server() -> FastMCP:
         Terminal-state semantics: retired is forever per T132 generalized.
         reopen / close / wont_do / retire all refused on retired rows.
         edit() IS still allowed (D29 audit-table backstop). link_add
-        refused if either endpoint has status='retired'. Returns one-hop
-        neighbors for migrate-or-stay review like wont_do/close."""
+        refused if either endpoint has status='retired'. Returns
+        ``{id, status}`` (D211); `show` returns the neighbors."""
         with _core() as c:
-            return _wrap(c, c.retire(id, reason=reason).model_dump(mode="json"))
+            return _wrap(c, project_status_result(c.retire(id, reason=reason).task))
 
     @mcp.tool()
     def reconcile(ids: list[int]) -> dict:
@@ -610,11 +615,10 @@ def build_server() -> FastMCP:
     def link_rm(a: int, b: int) -> dict:
         """Remove the symmetric link between ``a`` and ``b`` (D5/T93). Link ops
         do NOT cascade and carry NO ``delta`` (D213). Argument order doesn't
-        matter (canonical lookup)."""
+        matter (canonical lookup). Returns ``{"unlinked": {"a", "b"}}`` (D211)."""
         with _core() as c:
-            return _wrap(
-                c, project_show_slice(c.link_rm(a, b), include_neighbor_because=False)
-            )
+            c.link_rm(a, b)
+            return _wrap(c, project_link_rm_result(a, b))
 
     @mcp.tool()
     def links_add(edges: list[dict]) -> dict:
@@ -641,15 +645,19 @@ def build_server() -> FastMCP:
 
     @mcp.tool()
     def label_add(id: int, label: str) -> dict:
-        """Attach a freeform label to a task (D4)."""
+        """Attach a freeform label to a task (D4). Returns ``{id, labels}``,
+        the task's labels after the change (D211)."""
         with _core() as c:
-            return _wrap(c, c.label_add(id, label).model_dump(mode="json"))
+            c.label_add(id, label)
+            return _wrap(c, project_label_result(id, c.labels_of(id)))
 
     @mcp.tool()
     def label_rm(id: int, label: str) -> dict:
-        """Remove a label from a task (D4)."""
+        """Remove a label from a task (D4). Returns ``{id, labels}``, the task's
+        labels after the change (D211)."""
         with _core() as c:
-            return _wrap(c, c.label_rm(id, label).model_dump(mode="json"))
+            c.label_rm(id, label)
+            return _wrap(c, project_label_result(id, c.labels_of(id)))
 
     @mcp.tool()
     def ls(
@@ -698,11 +706,12 @@ def build_server() -> FastMCP:
 
     @mcp.tool()
     def stale() -> dict:
-        """The reconciliation worklist (D11): all stale tasks. Empty == done."""
+        """The reconciliation worklist (D11): all stale open/spec tasks, as short
+        rows with no bodies (D211); `show` opens one. Empty == done."""
         with _core() as c:
             tasks = []
             for t in c.stale_worklist():
-                tasks.append(t.model_dump(mode="json"))
+                tasks.append(project_task(t, include_description=False))
             return _wrap(c, tasks, short_alert=True)
 
     @mcp.tool()

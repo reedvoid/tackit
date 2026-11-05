@@ -391,7 +391,7 @@ def test_mcp_show_record_only_stale_stays_listed_lean_without_reminder(tmp_path,
 # --- MCP: the other slice returns --------------------------------------------
 
 
-def test_mcp_add_returns_lean_links(tmp_path, monkeypatch):
+def test_mcp_add_returns_only_the_id(tmp_path, monkeypatch):
     async def scenario(s):
         await s.call_tool("add", {"name": "spec", "kind": "design"})
         return _envelope(await s.call_tool(
@@ -399,12 +399,10 @@ def test_mcp_add_returns_lean_links(tmp_path, monkeypatch):
                     "description": "the body",
                     "deps": {1: "task realizes spec"}}))
 
-    result = _drive(tmp_path, monkeypatch, scenario)["result"]
-    assert set(result["links"][0]) == LEAN_KEYS
-    assert result["task"]["description"] == "the body"
+    assert _drive(tmp_path, monkeypatch, scenario)["result"] == {"id": 2}
 
 
-def test_mcp_link_rm_returns_lean_links(tmp_path, monkeypatch):
+def test_mcp_link_rm_returns_the_pair(tmp_path, monkeypatch):
     async def scenario(s):
         await s.call_tool("add", {"name": "spec", "kind": "design"})
         await s.call_tool("add", {"name": "a", "kind": "production",
@@ -412,11 +410,13 @@ def test_mcp_link_rm_returns_lean_links(tmp_path, monkeypatch):
         await s.call_tool("add", {"name": "b", "kind": "production",
                                   "deps": {1: "b realizes spec"}})
         await s.call_tool("link_add", {"a": 2, "b": 3, "because": "a calls b"})
-        return _envelope(await s.call_tool("link_rm", {"a": 2, "b": 3}))
+        removed = _envelope(await s.call_tool("link_rm", {"a": 2, "b": 3}))
+        shown = _envelope(await s.call_tool("show", {"id": 2}))
+        return removed["result"], shown["result"]
 
-    result = _drive(tmp_path, monkeypatch, scenario)["result"]
-    assert [entry["id"] for entry in result["links"]] == [1]
-    assert set(result["links"][0]) == LEAN_KEYS
+    removed, shown = _drive(tmp_path, monkeypatch, scenario)
+    assert removed == {"unlinked": {"a": 2, "b": 3}}
+    assert [entry["id"] for entry in shown["links"]] == [1]
 
 
 @pytest.mark.parametrize(
@@ -526,13 +526,12 @@ def test_cli_reconcile_read_keeps_fields(cli, capsys):
     assert entry["last_edit_delta"] == "changed b"
 
 
-def test_cli_add_json_is_lean(cli, capsys):
+def test_cli_add_json_returns_only_the_id(cli, capsys):
     main(["add", "spec", "--kind", "design"])
     capsys.readouterr()
     assert main(["add", "task", "--kind", "production", "--json",
                  "--dep", "1::task realizes spec"]) == 0
-    data = json.loads(capsys.readouterr().out)
-    assert set(data["links"][0]) == LEAN_KEYS
+    assert json.loads(capsys.readouterr().out) == {"id": 2}
 
 
 @pytest.mark.parametrize(
