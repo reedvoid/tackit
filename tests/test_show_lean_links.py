@@ -535,13 +535,14 @@ def test_cli_add_json_returns_only_the_id(cli, capsys):
 
 
 @pytest.mark.parametrize(
-    "argv",
+    "argv,expected",
     [
-        ["link", "add", "2", "3", "--because", "a calls b", "--json"],
-        ["link", "rm", "2", "3", "--json"],
+        (["link", "add", "2", "3", "--because", "a calls b", "--json"],
+         {"linked": {"a": 2, "b": 3, "because": "a calls b"}}),
+        (["link", "rm", "2", "3", "--json"], {"unlinked": {"a": 2, "b": 3}}),
     ],
 )
-def test_cli_link_json_is_lean(cli, capsys, argv):
+def test_cli_link_json_is_compact(cli, capsys, argv, expected):
     main(["add", "spec", "--kind", "design"])
     main(["add", "a", "--kind", "production", "--dep", "1::a realizes spec"])
     main(["add", "b", "--kind", "production", "--dep", "1::b realizes spec"])
@@ -549,10 +550,7 @@ def test_cli_link_json_is_lean(cli, capsys, argv):
         main(["link", "add", "2", "3", "--because", "a calls b"])
     capsys.readouterr()
     assert main(argv) == 0
-    data = json.loads(capsys.readouterr().out)
-    assert len(data["links"]) >= 1
-    for entry in data["links"]:
-        assert set(entry) == LEAN_KEYS
+    assert json.loads(capsys.readouterr().out) == expected
 
 
 def test_cli_text_output_still_prints_neighbor_names(cli, capsys):

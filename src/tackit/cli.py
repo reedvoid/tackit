@@ -29,6 +29,7 @@ from .models import (
     project_add_result,
     project_change_result,
     project_label_result,
+    project_link_rm_result,
     project_show_slice,
     project_slice,
     project_status_result,
@@ -452,12 +453,14 @@ def _cmd_link(args) -> int:
         if args.link_action == "add":
             s = core.link_add(args.a, args.b, because=args.because)
             verb = "added"
+            payload = {"linked": {"a": args.a, "b": args.b, "because": args.because}}
         else:
             s = core.link_rm(args.a, args.b)
             verb = "removed"
+            payload = project_link_rm_result(args.a, args.b)
         _emit(
             f"{verb} link T{args.a} <-> T{args.b}\n" + _fmt_slice(s),
-            project_show_slice(s, include_neighbor_because=False),
+            payload,
             args.json,
         )
     return 0
@@ -532,7 +535,7 @@ def _cmd_stale(args) -> int:
 def _cmd_render(args) -> int:
     with _core_session() as core:
         md = core.render(args.label)
-        _emit(md, {"label": args.label, "markdown": md}, args.json)
+        _emit(md, md, args.json)  # D211: the bare string, as MCP returns it
     return 0
 
 

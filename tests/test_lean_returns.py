@@ -796,3 +796,183 @@ def test_cli_text_add_still_prints_the_created_slice(store, capsys):
     assert "the body" in text
     assert "labels: alpha" in text
     assert "spec" in text
+
+
+# --- D211: MCP result and CLI --json match for every registered tool -----------
+
+
+TIMESTAMP_KEYS = {"created_at", "updated_at", "changed_at", "edited_at"}
+
+
+def _seed_parity_store():
+    """The same store for each adapter, so a difference can only come from the
+    adapter. Ids are fixed by creation order; rows below rely on them."""
+
+    def seed(core):
+        core.add("alpha spec", kind="design", description="spec body")  # 1
+        core.add("alpha task", kind="production", description="task body",
+                 labels=["tag"], deps={1: "task realizes spec"})  # 2
+        core.add("second task", kind="production",
+                 deps={1: "second realizes spec"})  # 3
+        core.add("a note", kind="meta", description="note body")  # 4
+        core.add("lone spec", kind="design")  # 5
+        core.add("flagging spec", kind="design")  # 6
+        core.add("flagged task", kind="production",
+                 deps={6: "flagged realizes spec six"})  # 7
+        core.close(3)
+        core.edit(6, description="changed", delta="flags task seven")
+
+    _core_call(seed)
+
+
+PARITY_PLAN = "[fresh] fresh note\n  kind: meta\n"
+PARITY_EDGES = "T2 T3 :: second builds on alpha\n"
+
+# (case name, MCP tool, MCP args, CLI argv). `{dir}` in an argv is the store dir.
+PARITY_ROWS = [
+    ("add", "add", {"name": "new", "kind": "meta"}, ["add", "new", "--kind", "meta"]),
+    ("show", "show", {"id": 2}, ["show", "2"]),
+    ("show with notes", "show", {"id": 2, "include_neighbor_because": True},
+     ["show", "2", "--include-neighbor-because"]),
+    ("search", "search", {"terms": "alpha"}, ["search", "alpha"]),
+    ("links, anchor layer", "links", {}, ["links"]),
+    ("links, from ids", "links", {"ids": [1]}, ["links", "1"]),
+    ("edit", "edit", {"id": 2, "description": "new", "delta": "d"},
+     ["edit", "2", "--desc", "new", "--delta", "d"]),
+    ("edit with body", "edit",
+     {"id": 2, "description": "new", "delta": "d", "include_description": True},
+     ["edit", "2", "--desc", "new", "--delta", "d", "--include-description"]),
+    ("edit_append", "edit_append", {"id": 4, "content": " more", "delta": "d"},
+     ["edit-append", "4", "--content", " more", "--delta", "d"]),
+    ("edit_replace_substring", "edit_replace_substring",
+     {"id": 2, "old_string": "task", "new_string": "work", "delta": "d"},
+     ["edit-replace", "2", "--old", "task", "--new", "work", "--delta", "d"]),
+    ("close", "close", {"id": 2}, ["close", "2"]),
+    ("reopen", "reopen", {"id": 3}, ["reopen", "3"]),
+    ("wont_do", "wont_do", {"id": 2, "reason": "dropped"},
+     ["wont-do", "2", "--reason", "dropped"]),
+    ("retire", "retire", {"id": 5, "reason": "premise gone"},
+     ["retire", "5", "--reason", "premise gone"]),
+    ("reconcile", "reconcile", {"ids": [7]}, ["reconcile", "7"]),
+    ("reclassify", "reclassify", {"id": 5, "kind": "schema", "delta": "d"},
+     ["reclassify", "5", "--kind", "schema", "--delta", "d"]),
+    ("link_add", "link_add", {"a": 2, "b": 3, "because": "second builds on alpha"},
+     ["link", "add", "2", "3", "--because", "second builds on alpha"]),
+    ("link_rm", "link_rm", {"a": 1, "b": 2}, ["link", "rm", "1", "2"]),
+    ("links_add", "links_add",
+     {"edges": [{"a": "T2", "b": "T3", "because": "second builds on alpha"}]},
+     ["links-add", "{dir}/edges.txt"]),
+    ("label_add", "label_add", {"id": 2, "label": "beta"},
+     ["label", "add", "2", "beta"]),
+    ("label_rm", "label_rm", {"id": 2, "label": "tag"}, ["label", "rm", "2", "tag"]),
+    ("ls", "ls", {}, ["ls"]),
+    ("ls with bodies", "ls", {"include_description": True},
+     ["ls", "--include-description"]),
+    ("summary", "summary", {}, ["summary"]),
+    ("stale", "stale", {}, ["stale"]),
+    ("labels", "labels", {}, ["labels"]),
+    ("render", "render", {"label": "tag"}, ["render", "--label", "tag"]),
+    ("history", "history", {"id": 6}, ["history", "6"]),
+    ("load", "load", {"plan": PARITY_PLAN}, ["load", "{dir}/plan.txt"]),
+    ("board", "board", {}, ["board"]),
+    ("board, everything", "board",
+     {"include_description": True, "include_neighbor_because": True},
+     ["board", "--include-description", "--include-neighbor-because"]),
+]
+
+
+def _parity_row_id(row):
+    return row[0]
+
+
+def _without_timestamps(value):
+    if isinstance(value, dict):
+        out = {}
+        for key, item in value.items():
+            if key not in TIMESTAMP_KEYS:
+                out[key] = _without_timestamps(item)
+        return out
+    if isinstance(value, list):
+        out = []
+        for item in value:
+            out.append(_without_timestamps(item))
+        return out
+    return value
+
+
+def _fresh_parity_store(path, monkeypatch):
+    path.mkdir()
+    monkeypatch.chdir(path)
+    init_store(path)
+    _seed_parity_store()
+    (path / "plan.txt").write_text(PARITY_PLAN)
+    (path / "edges.txt").write_text(PARITY_EDGES)
+
+
+@pytest.mark.parametrize("row", PARITY_ROWS, ids=_parity_row_id)
+def test_mcp_result_and_cli_json_are_identical(tmp_path, monkeypatch, capsys, row):
+    _name, tool, args, argv = row
+
+    _fresh_parity_store(tmp_path / "mcp", monkeypatch)
+    from_mcp = _call(tool, args)
+
+    cli_dir = tmp_path / "cli"
+    _fresh_parity_store(cli_dir, monkeypatch)
+    resolved = []
+    for part in argv:
+        resolved.append(part.replace("{dir}", str(cli_dir)))
+    from_cli = _cli_json(capsys, resolved + ["--json"])
+
+    assert _without_timestamps(from_cli) == _without_timestamps(from_mcp)
+
+
+def _tools_without_a_parity_row(rows):
+    covered = set()
+    for row in rows:
+        covered.add(row[1])
+    missing = set()
+    for tool in mcp_server.build_server()._tool_manager.list_tools():
+        if tool.name not in covered:
+            missing.add(tool.name)
+    return missing
+
+
+def test_every_registered_tool_has_a_parity_row():
+    """A new tool cannot escape the rule: it fails here until it has a row."""
+    assert _tools_without_a_parity_row(PARITY_ROWS) == set()
+
+
+def test_the_parity_coverage_check_can_fail():
+    """The check above reads the real tool list, so dropping a real row must show."""
+    without_close = []
+    for row in PARITY_ROWS:
+        if row[1] != "close":
+            without_close.append(row)
+    assert _tools_without_a_parity_row(without_close) == {"close"}
+
+
+def test_cli_json_link_add_and_rm_return_the_compact_forms(store, capsys):
+    _seed_spec_and_task()
+    _core_call(lambda core: core.add("other", kind="design"))
+    assert _cli_json(capsys, ["link", "add", "2", "3", "--because", "a reason",
+                              "--json"]) == {
+        "linked": {"a": 2, "b": 3, "because": "a reason"}
+    }
+    assert _cli_json(capsys, ["link", "rm", "2", "3", "--json"]) == {
+        "unlinked": {"a": 2, "b": 3}
+    }
+
+
+def test_cli_json_render_is_the_bare_markdown(store, capsys):
+    _core_call(lambda core: core.add("note", kind="meta", labels=["tag"]))
+    rendered = _cli_json(capsys, ["render", "--label", "tag", "--json"])
+    assert type(rendered) is str
+    assert "note" in rendered
+
+
+def test_cli_text_link_still_prints_the_slice(store, capsys):
+    _seed_spec_and_task()
+    _core_call(lambda core: core.add("other", kind="design"))
+    lines = _cli_lines(capsys, ["link", "add", "2", "3", "--because", "a reason"])
+    assert lines[0].startswith("added link ")
+    assert "other" in "\n".join(lines)
