@@ -134,6 +134,12 @@ def _core_session():
             print(f"delta: {core.last_delta}", file=sys.stderr)
         if core.last_code_check_reminder:  # D31 v0.4 design/schema edit nudge
             print(core.last_code_check_reminder, file=sys.stderr)
+        if core.last_coherence_nudge:  # D250 spec body reads as a changelog
+            print(core.last_coherence_nudge, file=sys.stderr)
+        for suggestion in core.last_deadref_suggestions or []:  # D249
+            print(suggestion, file=sys.stderr)
+        for suggestion in core.last_missing_edge_suggestions or []:  # D280
+            print(suggestion, file=sys.stderr)
         core.close_conn()
 
 
@@ -163,7 +169,12 @@ def _render_board(core, tasks) -> str:
             s = core.show(t.id)
             bar = STALE if t.stale else base
             tid = _board_paint(f"T{t.id}", [bar, BOLD])
-            name_color = STALE if t.stale else (DIM if t.status == "closed" else TXT)
+            if t.stale:
+                name_color = STALE
+            elif t.status in ("closed", "wont_do", "retired"):
+                name_color = DIM
+            else:
+                name_color = TXT
             name = _board_paint(t.name, [name_color])
             tag = _board_paint(" [STALE]", [STALE, BOLD]) if t.stale else ""
             labs = ("  " + _board_paint(" ".join(s.labels), [LAB])) if s.labels else ""
@@ -173,10 +184,20 @@ def _render_board(core, tasks) -> str:
                 edge = _board_paint("links→ ", [DIM]) + " ".join(f"T{n.id}" for n in s.links)
                 lines.append("     " + edge)
 
-    opens = [t for t in tasks if t.status == "open"]
-    dones = [t for t in tasks if t.status == "closed"]
-    section("IN FLIGHT", opens, ACC)
-    section("DONE", dones, DIM)
+    # D22: every status has a section, so a matching task can never vanish.
+    board_sections = (
+        ("IN FLIGHT", "open", ACC),
+        ("SPEC", "spec", ACC),
+        ("DONE", "closed", DIM),
+        ("WON'T DO", "wont_do", DIM),
+        ("RETIRED", "retired", DIM),
+    )
+    for title, status, color in board_sections:
+        group = []
+        for t in tasks:
+            if t.status == status:
+                group.append(t)
+        section(title, group, color)
     return "\n".join(lines).lstrip("\n")
 
 
@@ -563,10 +584,15 @@ def _cmd_board(args) -> int:
         s = core.summary()
         by_status = s["by_status"]
         n_open = by_status.get("open", 0)
+        n_spec = by_status.get("spec", 0)
         n_done = by_status.get("closed", 0)
         n_wont = by_status.get("wont_do", 0)
+        n_retired = by_status.get("retired", 0)
         n_stale = s["stale_open_spec"]
-        head = _board_paint("tackit", ["38;5;154", "1"]) + f"   {n_open} open · {n_done} done · {n_wont} wont_do · {n_stale} stale"
+        head = _board_paint("tackit", ["38;5;154", "1"]) + (
+            f"   {n_open} open · {n_spec} spec · {n_done} done · {n_wont} wont_do · "
+            f"{n_retired} retired · {n_stale} stale"
+        )
         body = _render_board(core, tasks)
         print(head + ("\n" + body if body else "\n(no matching tasks)"))
     return 0

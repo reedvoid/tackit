@@ -656,3 +656,145 @@ def test_cli_board_header_stale_is_obligation_bearing(cli, capsys):
     assert main(["board"]) == 0
     head = capsys.readouterr().out.splitlines()[0]
     assert "1 stale" in head  # only T2 (open-stale); T3 closed-stale is record-only
+
+
+# --- D22 (D64): board text renders every status, grouped ---------------------
+
+
+def _seed_one_task_per_status():
+    main(["add", "living spec", "--kind", "design"])  # 1
+    main(["add", "dead spec", "--kind", "design"])  # 2
+    main(["add", "open work", "--kind", "production", "--dep", "1::realizes"])  # 3
+    main(["add", "done work", "--kind", "production", "--dep", "1::realizes"])  # 4
+    main(["add", "dropped work", "--kind", "production", "--dep", "1::realizes"])  # 5
+    main(["retire", "2", "--reason", "premise replaced in this fixture"])
+    main(["close", "4"])
+    main(["wont-do", "5", "--reason", "dropped in this fixture"])
+
+
+def _board_sections(text):
+    """Map each section title to the task lines under it. A task line carries the
+    bar glyph; edge lines and the header do not."""
+    sections = {}
+    current = None
+    for line in text.splitlines()[1:]:
+        if not line.strip():
+            continue
+        if "▌" in line:
+            sections[current].append(line)
+        elif not line.startswith(" "):
+            current = line
+            sections[current] = []
+    return sections
+
+
+def test_board_text_groups_every_status_under_its_own_section(cli, capsys):
+    _seed_one_task_per_status()
+    capsys.readouterr()
+    assert main(["board"]) == 0
+    sections = _board_sections(capsys.readouterr().out)
+    assert list(sections) == [
+        "IN FLIGHT (1)", "SPEC (1)", "DONE (1)", "WON'T DO (1)", "RETIRED (1)",
+    ]
+    assert "open work" in sections["IN FLIGHT (1)"][0]
+    assert "living spec" in sections["SPEC (1)"][0]
+    assert "done work" in sections["DONE (1)"][0]
+    assert "dropped work" in sections["WON'T DO (1)"][0]
+    assert "dead spec" in sections["RETIRED (1)"][0]
+
+
+def test_board_header_counts_every_status(cli, capsys):
+    _seed_one_task_per_status()
+    capsys.readouterr()
+    assert main(["board"]) == 0
+    header = capsys.readouterr().out.splitlines()[0]
+    assert header.endswith(
+        "1 open · 1 spec · 1 done · 1 wont_do · 1 retired · 0 stale"
+    )
+
+
+@pytest.mark.parametrize(
+    "status,title,name",
+    [
+        ("spec", "SPEC (1)", "living spec"),
+        ("retired", "RETIRED (1)", "dead spec"),
+        ("wont_do", "WON'T DO (1)", "dropped work"),
+    ],
+)
+def test_board_status_filter_lists_what_used_to_vanish(cli, capsys, status, title, name):
+    _seed_one_task_per_status()
+    capsys.readouterr()
+    assert main(["board", "--status", status]) == 0
+    out = capsys.readouterr().out
+    assert "no matching tasks" not in out
+    sections = _board_sections(out)
+    assert list(sections) == [title]
+    assert name in sections[title][0]
+
+
+def test_board_still_says_no_matching_tasks_when_none_match(cli, capsys):
+    main(["add", "living spec", "--kind", "design"])
+    capsys.readouterr()
+    assert main(["board", "--status", "open"]) == 0
+    assert "(no matching tasks)" in capsys.readouterr().out
+
+
+# --- D211: the CLI prints the envelope's nudges to stderr --------------------
+
+
+D250_BODY = "dated 2026-01-01 and again 2026-01-02"
+
+
+def test_cli_prints_the_coherence_nudge_to_stderr_and_keeps_stdout_clean(cli, capsys):
+    main(["add", "spec", "--kind", "design"])
+    capsys.readouterr()
+    assert main(["edit", "1", "--desc", D250_BODY, "--delta", "d", "--json"]) == 0
+    captured = capsys.readouterr()
+    assert "D250: D1 still reads as an append/changelog" in captured.err
+    assert json.loads(captured.out)["task"]["id"] == 1
+
+
+def test_cli_prints_the_dead_reference_suggestion_to_stderr(cli, capsys):
+    main(["add", "dying spec", "--kind", "design"])  # 1
+    main(["add", "citing spec", "--kind", "design", "--desc", "builds on D1",
+          "--dep", "1::two builds on one"])  # 2
+    capsys.readouterr()
+    assert main(["retire", "1", "--reason", "premise replaced here", "--json"]) == 0
+    captured = capsys.readouterr()
+    assert "D2 still references D1" in captured.err
+    assert "(D249, advisory.)" in captured.err
+    assert json.loads(captured.out) == {"id": 1, "status": "retired"}
+
+
+def test_cli_prints_each_missing_edge_suggestion_on_its_own_line(cli, capsys):
+    main(["add", "spec one", "--kind", "design"])  # 1
+    main(["add", "spec two", "--kind", "design"])  # 2
+    main(["add", "spec three", "--kind", "design"])  # 3
+    capsys.readouterr()
+    assert main(["edit", "1", "--desc", "uses D2 and D3", "--delta", "d", "--json"]) == 0
+    captured = capsys.readouterr()
+    suggestions = []
+    for line in captured.err.splitlines():
+        if "(D280, advisory.)" in line:
+            suggestions.append(line)
+    assert len(suggestions) == 2
+    assert "D2" in suggestions[0] and "D3" in suggestions[1]
+    assert json.loads(captured.out)["task"]["id"] == 1
+
+
+def test_cli_prints_missing_edge_suggestions_on_append_too(cli, capsys):
+    main(["add", "note one", "--kind", "meta"])  # 1
+    main(["add", "note two", "--kind", "meta"])  # 2
+    capsys.readouterr()
+    assert main(["edit-append", "1", "--content", " see M2", "--delta", "d"]) == 0
+    assert "(D280, advisory.)" in capsys.readouterr().err
+
+
+def test_cli_prints_none_of_the_nudges_when_none_fired(cli, capsys):
+    main(["add", "spec", "--kind", "design"])
+    capsys.readouterr()
+    assert main(["edit", "1", "--desc", "a plain body", "--delta", "d"]) == 0
+    err = capsys.readouterr().err
+    assert "D250:" not in err
+    assert "D249" not in err
+    assert "D280" not in err
