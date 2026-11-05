@@ -1378,15 +1378,23 @@ class Core:
         Symmetric since T86: fires for both endpoints of any link, bounded by
         the meta-island constraint (D26). Closed neighbors stay closed +
         stale=True per T123's relaxed D7. Under v0.4 (D28) closed/wont_do
-        stale is record only -- the worklist filter excludes it."""
+        stale is record only -- the worklist filter excludes it.
+
+        D13 + D211 + T315: the flag is written on every neighbor, but only the
+        neighbors this call moved from clear to set AND that are live
+        (status IN ('open','spec')) are returned: that is the new obligation.
+        ``_linked_with`` reads before the UPDATE, so each entry still holds its
+        prior ``stale`` and its link's ``because``."""
         linked = self._linked_with(task_id)
+        newly_flagged: list[NeighborRef] = []
         for n in linked:
             self.conn.execute(
                 "UPDATE tasks SET stale = 1, updated_at = ? WHERE id = ?",
                 (_now(), n.id),
             )
-        # re-read so the returned refs show stale=True
-        return [self._neighbor_from_row(self._require_row(n.id)) for n in linked]
+            if not n.stale and n.status in ("open", "spec"):
+                newly_flagged.append(n.model_copy(update={"stale": True}))
+        return newly_flagged
 
     def stale_worklist(self) -> list[Task]:
         """D11 + D28 (v0.4) + D36 (v0.5) - the resumable reconciliation
@@ -1931,7 +1939,8 @@ class Core:
     ) -> ChangeResult:
         """D13 + T117 + D29 - edit a task: first mark its direct linked tasks
         stale (D10), record the prior name+description as a description_revisions
-        audit row (D29 / S7), then apply the edit, then return the now-stale set.
+        audit row (D29 / S7), then apply the edit, then return the neighbors it
+        newly flagged that are live (D13, D211).
         ``delta`` (T117) is required and surfaces in the stale_alert envelope so
         reconcilers compare it against each link's `because` rationale.
 

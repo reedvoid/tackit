@@ -246,13 +246,14 @@ class WontDoResult(BaseModel):
 
 
 class ChangeResult(BaseModel):
-    """D13 - change cascade-entry payload. Editing a task that others depend on
-    marks those dependents stale+open (D10) and returns the now-stale set."""
+    """D13 - change cascade-entry payload. Editing a task marks its direct
+    neighbors stale (D10) and returns the ones this op newly flagged that are
+    live: the new obligation (D13, D211)."""
 
     model_config = ConfigDict(extra="forbid")
 
     task: Task
-    newly_stale: list[NeighborRef]  # direct dependents just marked stale
+    newly_stale: list[NeighborRef]  # neighbors moved clear->set, status open/spec
 
 
 class StatusTransition(BaseModel):
@@ -387,6 +388,21 @@ def project_slice(
     if not include_neighbor_because:
         payload["because_reminder"] = None
     return payload
+
+
+def project_change_result(result: "ChangeResult", *, include_description: bool) -> dict:
+    """D211 + D13 + T315: lean projection of an edit result, shared by both
+    adapters. The focal task's scalars, its `description` only on request (the
+    caller just wrote it), and `newly_stale` as exactly `{id, because}` entries:
+    `because` is what decides how much attention a flagged task needs, and the
+    caller knows its own delta."""
+    task = result.task.model_dump(mode="json")
+    if not include_description:
+        del task["description"]
+    newly_stale = []
+    for neighbor in result.newly_stale:
+        newly_stale.append({"id": neighbor.id, "because": neighbor.because})
+    return {"task": task, "newly_stale": newly_stale}
 
 
 def obligation_stale(item: "Task | NeighborRef") -> bool:

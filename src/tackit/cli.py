@@ -24,7 +24,13 @@ from . import __version__, sync
 from .core import Core, stale_alert_text
 from .db import init_store, require_store
 from .errors import TackitError
-from .models import project_show_slice, project_slice, project_task
+from .models import (
+    prefixed_id,
+    project_change_result,
+    project_show_slice,
+    project_slice,
+    project_task,
+)
 from .plan import parse_plan
 
 
@@ -56,6 +62,18 @@ def _fmt_slice(s) -> str:
     lines.append(f"  labels: {', '.join(s.labels) if s.labels else '(none)'}")
     lines += _fmt_neighbors("links", s.links)
     return "\n".join(lines)
+
+
+def _fmt_newly_stale(newly_stale) -> list[str]:
+    """D211 + T315: the CLI wording for what an edit newly flagged, single-sourced
+    for every edit verb. The list is first-time live flags only, so the empty
+    wording must not claim the task has no neighbors."""
+    if not newly_stale:
+        return ["  no newly flagged neighbors."]
+    lines = ["  ⚠ newly STALE (review/reconcile):"]
+    for n in newly_stale:
+        lines.append(f"    - {prefixed_id(n.kind, n.id)}: {n.because}")
+    return lines
 
 
 def _emit(obj_text: str, json_obj, as_json: bool) -> None:
@@ -315,27 +333,26 @@ def _cmd_links(args) -> int:
 def _cmd_edit(args) -> int:
     with _core_session() as core:
         result = core.edit(args.id, delta=args.delta, name=args.name, description=args.desc)
-        text = ["edited " + _fmt_task(result.task)]
-        if result.newly_stale:
-            text.append("  ⚠ now STALE (review/reconcile these linked neighbors):")
-            text += [f"    - T{n.id} {n.name}" for n in result.newly_stale]
-        else:
-            text.append("  no linked neighbors to review.")
-        _emit("\n".join(text), _dump(result), args.json)
+        text = ["edited " + _fmt_task(result.task, args.include_description)]
+        text += _fmt_newly_stale(result.newly_stale)
+        _emit(
+            "\n".join(text),
+            project_change_result(result, include_description=args.include_description),
+            args.json,
+        )
     return 0
 
 
 def _cmd_edit_append(args) -> int:
     with _core_session() as core:
         result = core.edit_append(args.id, content=args.content, delta=args.delta)
-        text = ["appended to " + _fmt_task(result.task)]
-        if result.newly_stale:
-            text.append("  ⚠ now STALE (review/reconcile these linked neighbors):")
-            for n in result.newly_stale:
-                text.append(f"    - T{n.id} {n.name}")
-        else:
-            text.append("  no linked neighbors to review.")
-        _emit("\n".join(text), _dump(result), args.json)
+        text = ["appended to " + _fmt_task(result.task, args.include_description)]
+        text += _fmt_newly_stale(result.newly_stale)
+        _emit(
+            "\n".join(text),
+            project_change_result(result, include_description=args.include_description),
+            args.json,
+        )
     return 0
 
 
@@ -347,14 +364,13 @@ def _cmd_edit_replace(args) -> int:
             new_string=args.new,
             delta=args.delta,
         )
-        text = ["replaced in " + _fmt_task(result.task)]
-        if result.newly_stale:
-            text.append("  ⚠ now STALE (review/reconcile these linked neighbors):")
-            for n in result.newly_stale:
-                text.append(f"    - T{n.id} {n.name}")
-        else:
-            text.append("  no linked neighbors to review.")
-        _emit("\n".join(text), _dump(result), args.json)
+        text = ["replaced in " + _fmt_task(result.task, args.include_description)]
+        text += _fmt_newly_stale(result.newly_stale)
+        _emit(
+            "\n".join(text),
+            project_change_result(result, include_description=args.include_description),
+            args.json,
+        )
     return 0
 
 
@@ -404,12 +420,12 @@ def _cmd_reclassify(args) -> int:
     with _core_session() as core:
         result = core.reclassify(args.id, args.kind, delta=args.delta)
         text = [f"reclassified " + _fmt_task(result.task) + f" -> kind={result.task.kind}"]
-        if result.newly_stale:
-            text.append("  ⚠ now STALE (review/reconcile these linked neighbors):")
-            text += [f"    - T{n.id} {n.name}" for n in result.newly_stale]
-        else:
-            text.append("  no linked neighbors to review.")
-        _emit("\n".join(text), _dump(result), args.json)
+        text += _fmt_newly_stale(result.newly_stale)
+        _emit(
+            "\n".join(text),
+            project_change_result(result, include_description=False),
+            args.json,
+        )
     return 0
 
 
@@ -795,6 +811,11 @@ def build_parser() -> argparse.ArgumentParser:
         "you reads it to decide what's relevant. Describe the SHIFT, not "
         "the bytes.",
     )
+    sp.add_argument(
+        "--include-description",
+        action="store_true",
+        help="include the full task body in the result (D211; default lean)",
+    )
 
     sp = add(
         "edit-append",
@@ -819,6 +840,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--delta",
         required=True,
         help="One-sentence semantic-change description (T117).",
+    )
+    sp.add_argument(
+        "--include-description",
+        action="store_true",
+        help="include the full task body in the result (D211; default lean)",
     )
 
     sp = add(
@@ -849,6 +875,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--delta",
         required=True,
         help="One-sentence semantic-change description (T117).",
+    )
+    sp.add_argument(
+        "--include-description",
+        action="store_true",
+        help="include the full task body in the result (D211; default lean)",
     )
 
     sp = add(

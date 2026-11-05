@@ -19,7 +19,12 @@ from mcp.server.fastmcp.utilities import func_metadata as _func_metadata
 from pydantic import ValidationError as _PydanticValidationError
 
 from .core import Core, stale_alert_payload
-from .models import project_show_slice, project_slice, project_task
+from .models import (
+    project_change_result,
+    project_show_slice,
+    project_slice,
+    project_task,
+)
 from .plan import parse_plan
 
 
@@ -61,24 +66,6 @@ def _wrap(core: Core, result, short_alert: bool = False):
         "missing_edge_suggestions": core.last_missing_edge_suggestions,
         "result": result,
     }
-
-
-def _change_result_payload(result, *, include_description: bool) -> dict:
-    """T242: lean-by-default return for the edit ops (edit / edit_append /
-    edit_replace_substring). Drops the focal task's reconstructed
-    ``description`` body UNLESS ``include_description`` -- the caller just
-    wrote that body, so echoing a multi-KB slice back on every edit is pure
-    context tax (the response-side twin of T179's input-side cost cut).
-
-    Keeps ``newly_stale`` in FULL: unlike link_add's structural neighborhood
-    echo (D39 #2), that set is the actionable cascade obligation the caller
-    must reconcile, not noise -- which is also why the edit ops keep the full
-    obligation paragraph (not short_alert). Mirrors D211's include_description
-    opt-in on ls/board, applied to the write return."""
-    payload = result.model_dump(mode="json")
-    if not include_description:
-        payload["task"].pop("description", None)
-    return payload
 
 
 def _enforce_strict_param_gate() -> None:
@@ -294,8 +281,8 @@ def build_server() -> FastMCP:
     @mcp.tool()
     def edit(id: int, delta: str, name: str | None = None, description: str | None = None, include_description: bool = False) -> dict:
         """Edit a task (D13 + T117 + D29 + D36 + D37). First marks its direct
-        linked tasks stale (D10); returns the task plus the now-stale set you
-        must review.
+        linked tasks stale (D10); returns the task plus the neighbors this edit
+        newly flagged that are open or spec, each as `{id, because}`.
 
         Required ``delta`` -- one short sentence describing what changed
         semantically. The reconciler compares this against each stale link's
@@ -327,15 +314,18 @@ def build_server() -> FastMCP:
         consequential and necessary and the delta a substantive impact,
         not cosmetic (see SKILL "Edits aren't free").
 
-        T242 -- the return is LEAN by default: the focal task's
-        ``description`` (the body you just wrote) is NOT echoed back; the
-        actionable ``newly_stale`` set always is. Pass
+        D211 -- the return is LEAN by default: the focal task's
+        ``description`` (the body you just wrote) is NOT echoed back.
+        ``newly_stale`` lists each neighbor this edit moved from clear to
+        flagged that is open or spec, as ``{id, because}``. Terminal and
+        already-flagged neighbors still get the flag but are not listed; the
+        latter stay on the worklist and in the alert. Pass
         ``include_description=True`` to get the full reconstructed body
         (e.g. to verify the edit landed as intended)."""
         with _core() as c:
             return _wrap(
                 c,
-                _change_result_payload(
+                project_change_result(
                     c.edit(id, delta=delta, name=name, description=description),
                     include_description=include_description,
                 ),
@@ -373,14 +363,15 @@ def build_server() -> FastMCP:
         substantive impact; diff-shape cuts transmission, not cascade cost
         (see SKILL "Edits aren't free").
 
-        T242 -- lean-by-default return: the focal body is NOT echoed (you
-        just appended to it); ``newly_stale`` always is. Pass
+        D211 -- lean-by-default return: the focal body is NOT echoed (you
+        just appended to it); ``newly_stale`` lists first-time open or spec
+        flags as ``{id, because}``. Pass
         ``include_description=True`` to see the full reconstructed body and
         verify the append landed where intended / didn't duplicate."""
         with _core() as c:
             return _wrap(
                 c,
-                _change_result_payload(
+                project_change_result(
                     c.edit_append(id, content=content, delta=delta),
                     include_description=include_description,
                 ),
@@ -419,13 +410,14 @@ def build_server() -> FastMCP:
         substantive impact; diff-shape cuts transmission, not cascade cost
         (see SKILL "Edits aren't free").
 
-        T242 -- lean-by-default return: the focal body is NOT echoed;
-        ``newly_stale`` always is. Pass ``include_description=True`` to see
+        D211 -- lean-by-default return: the focal body is NOT echoed;
+        ``newly_stale`` lists first-time open or spec flags as
+        ``{id, because}``. Pass ``include_description=True`` to see
         the full reconstructed body and verify the replacement landed."""
         with _core() as c:
             return _wrap(
                 c,
-                _change_result_payload(
+                project_change_result(
                     c.edit_replace_substring(
                         id,
                         old_string=old_string,
@@ -562,9 +554,17 @@ def build_server() -> FastMCP:
 
         Fires the staling cascade on linked neighbors (kind is a semantic
         property; the link relationship may need re-review). Closed/wont_do/
-        retired neighbors stay terminal + stale per D28 (record only)."""
+        retired neighbors stay terminal + stale per D28 (record only).
+
+        D211 -- returns the task's scalars without its body, plus
+        ``newly_stale``: first-time open or spec flags as ``{id, because}``."""
         with _core() as c:
-            return _wrap(c, c.reclassify(id, kind, delta=delta).model_dump(mode="json"))
+            return _wrap(
+                c,
+                project_change_result(
+                    c.reclassify(id, kind, delta=delta), include_description=False
+                ),
+            )
 
     @mcp.tool()
     def link_add(a: int, b: int, because: str) -> dict:

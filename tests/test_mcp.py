@@ -179,7 +179,10 @@ def test_mcp_edit_return_is_lean_by_default(tmp_path, monkeypatch):
     assert env["result"]["task"]["id"] == 2
     # obligation kept: dep(3) AND the anchor(1) -- both are base's direct link
     # neighbors (D256 gate cascade caution).
-    assert [n["id"] for n in env["result"]["newly_stale"]] == [1, 3]
+    assert env["result"]["newly_stale"] == [
+        {"id": 1, "because": "realizes the anchor"},
+        {"id": 3, "because": "test fixture"},
+    ]
 
 
 def test_mcp_edit_include_description_restores_body(tmp_path, monkeypatch):
