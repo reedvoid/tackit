@@ -12,12 +12,14 @@ Expected values are written out by hand from D211's rules, never recomputed.
 
 import asyncio
 import json
+import shlex
+from pathlib import Path
 
 import pytest
 from mcp.shared.memory import create_connected_server_and_client_session as connect
 
 from tackit import mcp_server
-from tackit.cli import main
+from tackit.cli import build_parser, main
 from tackit.core import Core
 from tackit.db import init_store
 from tackit.models import project_link_add_result
@@ -1024,3 +1026,119 @@ def test_project_link_add_result_fails_loud_when_the_link_is_absent(core):
     core.add("two", kind="design")
     with pytest.raises(ValueError, match="no link"):
         project_link_add_result(core.show(1), 1, 2)
+
+
+# --- the docs describe what was built (T320, D211, D10) -------------------------
+
+
+REPO = Path(__file__).resolve().parent.parent
+
+
+def _readme_cli_examples():
+    """Every `tackit ...` command in the README's CLI code block, comments dropped
+    and `\\` continuations joined."""
+    readme = (REPO / "README.md").read_text(encoding="utf-8")
+    block = readme.split("## For humans: the CLI", 1)[1].split("```bash", 1)[1]
+    block = block.split("```", 1)[0]
+    block = block.replace("\\\n", " ")
+    commands = []
+    for line in block.splitlines():
+        if line.strip():
+            commands.append(shlex.split(line, comments=True))
+    return commands
+
+
+def test_every_cli_example_in_the_readme_parses():
+    commands = _readme_cli_examples()
+    subcommands = set()
+    for command in commands:
+        assert command[0] == "tackit"
+        subcommands.add(command[1])
+        build_parser().parse_args(command[1:])  # SystemExit fails the test
+    # Non-empty, and holding the two verbs whose examples went stale before.
+    assert {"add", "edit", "wont-do", "retire"} <= subcommands
+
+
+def test_the_parser_really_refuses_a_stale_status_verb_flag():
+    """Negative control for the check above: D284 removed --delta from wont-do."""
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["wont-do", "3", "--reason", "x", "--delta", "y"])
+
+
+def test_the_readme_names_every_registered_tool():
+    readme = (REPO / "README.md").read_text(encoding="utf-8")
+    section = readme.split("### MCP tools", 1)[1].split("## Examples", 1)[0]
+    names = []
+    for tool in mcp_server.build_server()._tool_manager.list_tools():
+        names.append(tool.name)
+    assert len(names) == 26
+    for name in names:
+        assert f"`{name}`" in section, f"README's MCP tool list misses {name}"
+
+
+def test_the_readme_lists_every_envelope_field(store):
+    readme = (REPO / "README.md").read_text(encoding="utf-8")
+    section = " ".join(readme.split("### MCP tools", 1)[1].split("## Examples", 1)[0].split())
+
+    async def scenario(session):
+        return await session.call_tool("summary", {})
+
+    envelope = json.loads(_mcp(scenario).content[0].text)
+    assert len(envelope) == 8
+    for key in envelope:
+        assert key in section, f"README's envelope list misses {key}"
+
+
+def test_the_skill_states_what_edit_append_does():
+    skill = (REPO / "src" / "tackit" / "data" / "SKILL.md").read_text(encoding="utf-8")
+    assert "`edit_append` does not (D10)" in skill
+    assert "An `edit_append`'s list is always empty." in skill
+    assert "a concession to reality" in skill
+    assert "as `{id, because}`" in skill
+
+
+# --- regression: what an edit flags stays governed by the old rules (D28, D14) ---
+
+
+def test_a_terminal_neighbor_flagged_but_unlisted_still_cannot_be_reconciled(store):
+    """Not listing it must not change what it is: record-only, refused, off the
+    worklist, and no block on closing its neighbors."""
+
+    def seed(core):
+        core.add("hub", kind="design")  # 1
+        core.add("finished", kind="production", deps={1: "finished realized hub"})  # 2
+        core.close(2)
+
+    _core_call(seed)
+    assert _call("edit", {"id": 1, "description": "new", "delta": "d"})["newly_stale"] == []
+    assert _stale_flag(2) is True
+
+    async def scenario(session):
+        return await session.call_tool("reconcile", {"ids": [2]})
+
+    response = _mcp(scenario)
+    assert response.isError is True
+    assert "REFUSED" in response.content[0].text
+    assert _stale_flag(2) is True
+    assert _worklist_ids() == []
+
+
+def test_an_unlisted_already_stale_neighbor_still_blocks_the_close_gate(store):
+    def seed(core):
+        core.add("hub", kind="design")  # 1
+        core.add("other", kind="design")  # 2
+        core.add("flagged", kind="production",
+                 deps={1: "flagged realizes hub", 2: "flagged realizes other"})  # 3
+        core.add("work", kind="production", deps={1: "work realizes hub"})  # 4
+        core.link_add(3, 4, because="work builds on flagged")
+        core.edit(2, description="changed", delta="flags task three")
+
+    _core_call(seed)
+    assert _worklist_ids() == [3]
+
+    async def scenario(session):
+        return await session.call_tool("close", {"id": 4})
+
+    response = _mcp(scenario)
+    assert response.isError is True
+    assert "T3" in response.content[0].text

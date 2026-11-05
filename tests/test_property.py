@@ -107,6 +107,60 @@ class TackitMachine(RuleBasedStateMachine):
             # Other refusals (bad text, etc.) may also arise; all expected.
             pass
 
+    def _stale_flags(self) -> dict[int, bool]:
+        flags = {}
+        for row in self.core.conn.execute("SELECT id, stale FROM tasks"):
+            flags[row["id"]] = bool(row["stale"])
+        return flags
+
+    @precondition(lambda self: self.ids)
+    @rule(i=_pick, content=_names)
+    def edit_append(self, i, content):
+        """D10: an append changes no stale flag, set or clear, anywhere. Refused
+        on non-meta (D255) and terminal (D259) rows, which is expected here."""
+        before = self._stale_flags()
+        try:
+            result = self.core.edit_append(
+                self._id(i), content=content, delta="property test"
+            )
+        except ValidationError:
+            assert self._stale_flags() == before
+            return
+        assert result.newly_stale == []
+        assert self._stale_flags() == before
+
+    @precondition(lambda self: self.ids)
+    @rule(i=_pick, body=_names)
+    def edit_body(self, i, body):
+        """D13 + D211: an edit returns exactly the neighbors it moved from clear to
+        flagged that are open or spec, and flags every neighbor regardless."""
+        task_id = self._id(i)
+        before = self._stale_flags()
+        prior_body = self.core.get(task_id).description
+        neighbors = self.core._linked_with(task_id)
+        try:
+            result = self.core.edit(task_id, description=body, delta="property test")
+        except ValidationError:
+            assert self._stale_flags() == before
+            return
+        expected = []
+        flagged = set()
+        if body != prior_body:
+            for neighbor in neighbors:
+                flagged.add(neighbor.id)
+                if not before[neighbor.id] and neighbor.status in ("open", "spec"):
+                    expected.append(neighbor.id)
+        listed = []
+        for ref in result.newly_stale:
+            listed.append(ref.id)
+        assert listed == expected
+        after = self._stale_flags()
+        for task, flag in after.items():
+            if task in flagged:
+                assert flag is True
+            else:
+                assert flag == before[task]
+
     @precondition(lambda self: self.ids)
     @rule(i=_pick)
     def close(self, i):
