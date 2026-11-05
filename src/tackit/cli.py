@@ -3,9 +3,8 @@
 A thin adapter over :mod:`tackit.core` exposing the same operation surface as a
 command line, for debugging / scripting / agent-fallback (the agent's default
 door is MCP). No logic lives here. Output is verbose natural-language-with-ids by
-default, ``--json`` for structured parsing; every mutating op prints its
-obligations inline (same payload as the MCP results). The command<->slice mapping
-matches the table in design.md.
+default, ``--json`` for structured parsing, identical to the MCP result (D211); alerts
+and nudges go to stderr. The command<->slice mapping matches the table in design.md.
 
 This module is also the single ``[project.scripts]`` entry point: ``tackit mcp``
 launches the stdio MCP server (design.md "Installation"); ``tackit setup`` emits

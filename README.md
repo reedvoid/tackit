@@ -11,7 +11,7 @@ traceable to everything that depends on it. A typed boundary refuses malformed d
 and a reconcile-on-change discipline surfaces what each change invalidates.
 
 > **Status: alpha (0.9.3).** The data model, interfaces, and sync design are
-> settled and implemented, with 660+ tests across unit / CLI / MCP / Hypothesis
+> settled and implemented, with 1,000+ tests across unit / CLI / MCP / Hypothesis
 > property suites. The core shape — a kind/status partition (design/schema slices
 > live at `spec`/`retired`; production/meta at `open`/`closed`/`wont_do`) and the
 > `edit` / `close` / `wont_do` / `retire` verb taxonomy — is laid out under
@@ -43,7 +43,7 @@ single-source-of-truth store:
 - **Fail loud.** Malformed data and illegal transitions are refused at the boundary,
   not silently absorbed.
 - **Traceable change.** Editing a task flags its directly-linked neighbors (depth-1,
-  symmetric — not transitive; the close-gate is the transitive check) stale for review,
+  symmetric — not transitive; the close-gate checks the same one hop) stale for review,
   so a change can't silently leave the rest of the plan wrong.
 
 ## Install
@@ -131,7 +131,7 @@ Concrete loops, so the discipline reads as habits, not rules:
   (The whole point, if your "plan" is a 4000-line file today.)
 - **A change ripples.** *"Update the auth-token task — the format changed."* → the agent
   edits it; tackit marks its directly-linked neighbors **stale** (depth-1, symmetric —
-  the transitive check is the close-gate), and you walk each one against what changed and
+  the close-gate checks the same one hop), and you walk each one against what changed and
   either fix or reconcile it. You can't leave a directly-coupled task quietly wrong —
   that's the core guarantee.
 - **Wrap up.** Nothing is "done" while the worklist `stale` (filtered to live
@@ -160,9 +160,8 @@ tackit edit 1 --desc "tokenized MATCH contract" \
 tackit stale                                                             # the reconciliation worklist
 tackit reconcile 2                                                       # reviewed-OK; clear stale
 tackit close 2                                                           # refused while stale (or atop stale deps)
-tackit wont-do 3 --reason "redundant with T2" --delta "dropping scope"   # decided NOT to do (production/meta)
-tackit retire 1 --reason "premise replaced by D99" \
-  --delta "retiring D1"                                                  # design/schema spec 100% abandoned
+tackit wont-do 3 --reason "redundant with T2"                            # decided NOT to do (production/meta)
+tackit retire 1 --reason "premise replaced by D99"                       # design/schema spec 100% abandoned
 tackit ls --status open                                                  # query/board; --status accepts open/closed/wont_do/spec/retired
 ```
 
@@ -239,7 +238,8 @@ that routes around broken things), at different moments.
   markdown or TODO comments. If it isn't in tackit, it isn't tracked. It is *not* a
   knowledge base; durable learnings live in your memory.
 - **Reconcile on change (bounded by partition).** A change marks the
-  task's directly linked neighbors **stale**. tackit surfaces the outstanding
+  task's directly linked neighbors **stale** (an `edit_append` on a meta note does
+  not, D10). tackit surfaces the outstanding
   worklist on *every* call (deterministically — it's code in the app, not a
   reminder you can skip). The worklist is status-derived: only stale tasks with
   `status IN ('open', 'spec')` carry an obligation. Closed / wont_do / retired
@@ -294,7 +294,7 @@ that routes around broken things), at different moments.
 
 ### Read-path and wiring refinements
 
-Two refinements on top of [the model](#the-model-kinds-status-and-verbs) below affect
+Three refinements on top of [the model](#the-model-kinds-status-and-verbs) below affect
 which op you reach for (the partition and verb taxonomy are unchanged):
 
 - **Lean reads by default (D211).** `ls` and `board` return a *lean* projection —
@@ -305,7 +305,16 @@ which op you reach for (the partition and verb taxonomy are unchanged):
   for one full body, use `show`. `show` returns the full task with lean links, keeping
   `because` / `last_edit_delta` only on open/spec stale reads;
   `include_neighbor_because=True` returns them on every link. `ls`/`board` also gained a `name_prefix` filter
-  (T220) to scope a query to a single name prefix.
+  (T220) to scope a query to a single name prefix. `stale` returns the same short rows.
+- **Lean writes too (D211).** A write returns what your next step needs and nothing
+  you already have, identically on MCP and CLI `--json`. An edit returns the task's
+  scalars plus `newly_stale`: each neighbor it moved from clear to flagged that is open
+  or spec, as `{id, because}`. A neighbor already flagged stays on the worklist and in
+  the alert; a terminal neighbor gets the flag as a record only. `close`, `wont_do`,
+  `retire` and `reopen` return `{id, status}`; `add` returns `{id}`; `label_add` and
+  `label_rm` return `{id, labels}`; `link_add` returns `{linked: {a, b, because}}` with
+  the stored rationale; `link_rm` returns `{unlinked: {a, b}}`. `show` is the path to
+  anything else.
 - **Bulk-link existing tasks with `links_add` (D213).** Where `load` creates *new*
   tasks with their edges in one atomic import, `links_add` wires edges between tasks
   that **already exist** — the pass `load` can't cover. It takes a flat list of
@@ -360,7 +369,7 @@ partition:
 
 | Verb     | When                                   | Partition  | Cascade? | Reversible?       |
 |----------|----------------------------------------|------------|----------|--------------------|
-| `edit`   | content change (NOT on closed/wont_do — D259) | spec or open (+retired) | **yes**  | n/a                |
+| `edit`   | content change (NOT on closed/wont_do — D259) | spec or open (+retired) | **yes** (`edit_append`: no, D10) | n/a                |
 | `close`  | production/meta work shipped           | open / etc.| no       | `reopen`           |
 | `wont_do`| production/meta work dropped           | open / etc.| no       | terminal forever   |
 | `retire` | design/schema spec 100% abandoned      | spec / retired | no   | terminal forever   |
@@ -449,7 +458,8 @@ point:
   in a description — the cascade can't see prose. Never create a hub task (one whose purpose
   is to be linked-to) or a rollup task (a body that re-types other tasks' status); coverage
   is a `board`/`ls`-by-label query, not a hand-typed ledger (D38).
-- Reconcile on change: a change marks linked neighbors stale. The worklist filter is
+- Reconcile on change: a change marks linked neighbors stale; an `edit_append` note does
+  not, so use `edit` when a note really changes what a neighbor should say. The worklist filter is
   `status IN ('open','spec')` — stale on terminal-status rows
   (closed/wont_do/retired) is record-only archaeology and does NOT pressure the
   worklist or the close-gate. Review each obligation-bearing stale task against its
@@ -541,14 +551,16 @@ hallucinate a flag that doesn't exist). Tool names are the bare verbs — `add`,
 `show`, `search`, `edit`, `edit_append`, `edit_replace_substring`, `close`,
 `reopen`, `reconcile`, `wont_do`, `retire`, `reclassify`, `links`,
 `link_add`, `link_rm`, `links_add`, `label_add`, `label_rm`, `ls`,
-`board`, `stale`, `labels`, `render`, `history`, `load`. (T179: the two `edit_*` ops are diff-shaped
+`board`, `summary`, `stale`, `labels`, `render`, `history`, `load`. (T179: the two `edit_*` ops are diff-shaped
 variants of `edit` — only the snippet or the `(old, new)` pair crosses the
 wire — for appending to a meta notepad or fixing one phrase in place
-without round-tripping a large body. `edit_append` is meta-only (D255);
-same cascade, same audit row, same delta requirement.) Input schemas are generated
+without round-tripping a large body. `edit_append` is meta-only (D255) and flags
+no neighbor (D10); both keep the same audit row and delta requirement, and
+`edit_replace_substring` fires the same cascade as `edit`.) Input schemas are generated
 from the Python type hints, so they can't drift from the real interface. Every
 result is wrapped as `{stale_alert, label_nudge, delta, code_check_reminder,
-result}` so the outstanding stale set + per-op nudges ride along on every call;
+coherence_nudge, deadref_suggestions, missing_edge_suggestions, result}` so the
+outstanding stale set + per-op nudges ride along on every call;
 refusals (e.g. closing a stale task, retiring with an open neighbor, link_add
 to a retired endpoint, editing a closed / wont_do task — D259) come back as
 errors that state the reason and — where relevant — the resolve path inline.
@@ -638,7 +650,7 @@ Honest notes:
 
 ## Testing
 
-890+ tests: unit, adapter integration (CLI and MCP driven end-to-end), and
+1,000+ tests: unit, adapter integration (CLI and MCP driven end-to-end), and
 **property-based** (Hypothesis stateful testing). The property machine fuzzes
 random operation sequences against the always-true invariants — including
 **kind/status partition holds** (D36), worklist filter

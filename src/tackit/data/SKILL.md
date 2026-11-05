@@ -106,6 +106,7 @@ The partition invariant: `kind ∈ {production,meta} ⟹ status ∈ {open,closed
 
 ### Meta is a notepad; the island bounds the cascade (D257)
 - why: meta is the THINKING layer — experiments, investigations, brainstorming, release bookkeeping. The island keeps that churn out of the spec/production graph: meta work must not drag spec/production tasks into stale review, or vice versa.
+- do: an append flags nobody (D10). That is a concession to reality, not necessarily the optimal decision: agents clear flags unread, and a cleared flag reads as a review that did not happen. The known cost is that an appended ruling can leave a neighbor wrong with nobody told, so when a note really changes what a neighbor should say, use `edit` or `edit_replace_substring`, which do flag.
 - do: link meta tasks only to other meta tasks (meta↔meta is fine — a multi-part note may cross-reference itself). Reach a decision in the notepad, then distill it OUT: author a design/schema slice, then a production task that links the slice.
 - don't-do: `link_add` between a meta and a non-meta task (refused); attach a kind name (`design`/`schema`/`production`/`meta`) as a label (refused — kind already encodes it). **Never ship code straight from a meta task** — code flows `meta → spec → production → code`, never a shortcut. Meta is where you decide, not where you build.
 
@@ -119,17 +120,17 @@ lives in its MCP docstring**.
 
 | Verb                     | When                                   | Partition    | Cascade? | Reversible?      |
 |--------------------------|----------------------------------------|--------------|----------|------------------|
-| `edit` (+ append / replace_substring) | content change (NOT on closed/wont_do — D259; append is meta-only — D255) | spec or open (+retired) | **yes**  | n/a              |
+| `edit` (+ append / replace_substring) | content change (NOT on closed/wont_do — D259; append is meta-only — D255) | spec or open (+retired) | **yes** (append: no, D10) | n/a              |
 | `close`                  | production/meta work shipped           | open/etc.    | no       | `reopen`         |
 | `wont_do`                | production/meta work dropped           | open/etc.    | no       | terminal forever |
 | `retire`                 | design/schema spec 100% abandoned      | spec/retired | no       | terminal forever |
 
-The three edit variants share the cascade, the S7 audit row, and the `delta` requirement; they differ in how the new description is computed **and in partition** (append is meta-only — D255):
+The three edit variants share the S7 audit row and the `delta` requirement; `edit` and `edit_replace_substring` fire the cascade, `edit_append` does not (D10). They also differ in how the new description is computed **and in partition** (append is meta-only — D255):
 - `edit(description=…)` — full new body; for sweeping rewrites or small bodies.
-- `edit_append(content, delta)` — append; **META-ONLY (D255)**: refused on design/schema (a coherent current-state body, D250) and on production (a forecast-then-record that must not accrete) — only meta, the notepad, appends. Only the snippet crosses the wire.
+- `edit_append(content, delta)` — append; **META-ONLY (D255)**: refused on design/schema (a coherent current-state body, D250) and on production (a forecast-then-record that must not accrete) — only meta, the notepad, appends. Flags no neighbor (D10). Only the snippet crosses the wire.
 - `edit_replace_substring(old, new, delta)` — replace an exact UNIQUE substring (non-unique refused with the count; empty `new` = deletion; `old == new` = no-op). Allowed on production (a rewrite, for correction / scope-shrink).
-- do: prefer the diff ops for large bodies — the transmission cost compounds over a session (see T179). They cut transmission, not cascade.
-- return is lean by default (T242): all three echo back the now-stale neighbor set (your reconcile obligation) but NOT the focal body you just wrote — pass `include_description=True` only when you need to re-read the reconstructed body to verify the edit landed.
+- do: prefer the diff ops for large bodies — the transmission cost compounds over a session (see T179). They cut transmission; `edit_replace_substring` still cascades.
+- return is lean by default (D211): the focal task's scalars but NOT the body you just wrote, plus `newly_stale`, your new reconcile obligation: each neighbor this op moved from clear to flagged that is open or spec, as `{id, because}`. A neighbor already flagged is not relisted; it stays on the worklist and in the alert. Terminal neighbors get the flag as a record and are not listed. An `edit_append`'s list is always empty. Pass `include_description=True` only when you need to re-read the reconstructed body to verify the edit landed.
 
 ### edit vs retire — the all-or-nothing rule (D36)
 - why: edit's cascade IS the partial-change re-evaluation mechanism; retire's no-cascade + open-neighbor refusal + immutable reason embodies a "100% gone" contract.
@@ -143,7 +144,7 @@ The three edit variants share the cascade, the S7 audit row, and the `delta` req
 
 ### close — production/meta work shipped
 - why: close means "we did this" (distinct from wont_do = "we decided not to").
-- do: close a production/meta task when its deliverable shipped — that records "done" and does NOT cascade, so don't *also* edit the body with a completion note (`"done"` / `"committed <hash>"`); git carries the commit. Only a **fold-back** (a decision/constraint a future reader needs, not in git or the closed status) earns a pre-close edit.
+- do: close a production/meta task when its deliverable shipped — that records "done", returns `{id, status}`, and does NOT cascade, so don't *also* edit the body with a completion note (`"done"` / `"committed <hash>"`); git carries the commit. Only a **fold-back** (a decision/constraint a future reader needs, not in git or the closed status) earns a pre-close edit.
 - don't-do: close a design/schema spec (refused — `edit` to refine, `retire` if 100% gone) or a stale / linked-stale task (the close-gate — reconcile the upstream first). Full refusal matrix: `close()` docstring.
 
 ### reopen — resume closed work
@@ -153,12 +154,12 @@ The three edit variants share the cascade, the S7 audit row, and the `delta` req
 
 ### wont_do — scope dropped
 - why: distinct from close; records a durable decision *not* to do something.
-- do: `wont_do` a production/meta task whose scope is dropped, with a durable `reason`.
+- do: `wont_do` a production/meta task whose scope is dropped, with a durable `reason`. It returns `{id, status}`; `show` returns the neighbors.
 - don't-do: `wont_do` a spec (refused — `edit` or `retire`) or an already-terminal task (no double-decide). Change-of-mind path is a fresh task; the wont_do row stays as record.
 
 ### retire — design/schema spec 100% abandoned
 - why: a terminal "this decision is dead and nothing replaces it" (see edit-vs-retire).
-- do: retire a design/schema spec only when 100% gone with no replacement, with a durable non-placeholder `reason`. Clear the open-neighbor gate first — `link_rm` + `wont_do` the neighbor if its work is also dead, or `link_rm` alone if it has other live specs.
+- do: retire a design/schema spec only when 100% gone with no replacement, with a durable non-placeholder `reason`. It returns `{id, status}`. Clear the open-neighbor gate first — `link_rm` + `wont_do` the neighbor if its work is also dead, or `link_rm` alone if it has other live specs.
 - don't-do: retire when any partial replacement exists (`edit` instead). Full refusal matrix (6 checks) + the (i)/(ii) decision tree: `retire()` docstring. A worked retire: see D25.
 
 ### Decision tree (reference)
@@ -175,16 +176,16 @@ The three edit variants share the cascade, the S7 audit row, and the `delta` req
 
 ## Edits aren't free (FORCEFUL)
 
-- why: every edit fires the cascade depth-1; open/spec neighbors land on the worklist and pressure the close-gate. Low-quality edits grow the worklist → pressure to bulk-reconcile → eroded per-row review → the `delta × because` filter becomes a rubber stamp, and then a *real* edit's cascade gets reconciled away the same way. The discipline that catches genuine drift dies by being **trained on noise**; the cascade is only as useful as the signal you feed it.
+- why: every `edit` and `edit_replace_substring` fires the cascade depth-1 (an `edit_append` flags nobody, D10, but stays in the note's audit trail for its next reader); open/spec neighbors land on the worklist and pressure the close-gate. Low-quality edits grow the worklist → pressure to bulk-reconcile → eroded per-row review → the `delta × because` filter becomes a rubber stamp, and then a *real* edit's cascade gets reconciled away the same way. The discipline that catches genuine drift dies by being **trained on noise**; the cascade is only as useful as the signal you feed it.
 - do: make every edit **consequential and necessary**; the `delta` must name a **substantive impact** — a real semantic shift (corrected fact, refined contract, fold-back finding, fixed stale reference). The test before editing: "what would a downstream reader, FAST-filtering this stale flag against the link's `because`, learn that justifies opening their task?" If "nothing" — don't edit.
 - don't-do: cosmetic polish (tone/flow, meaning unchanged); "while I'm here" cleanup (file a separate task); stylistic alignment to a neighbor; defensive elaboration with no observed misread; vague deltas (`"small fix"` / `"updated for clarity"` — same cascade cost, zero filter signal). Typo fix only if the wrong character impedes meaning. (Recording that work shipped is a `close()`, not an edit — see the `### close` rule.)
 
 ## Reconciliation — keep the plan in sync
 
-**Reference.** Cascade-firing ops are the edit family (`edit` / `edit_append` /
-`edit_replace_substring`) and `reclassify`; they mark directly-linked neighbors
-stale and record the `delta`. `close` / `wont_do` / `reopen` / `reconcile` and
-the link ops do NOT cascade. The cascade is symmetric — editing either endpoint
+**Reference.** Cascade-firing ops are `edit`, `edit_replace_substring` and
+`reclassify`; they mark directly-linked neighbors stale and record the `delta`.
+`edit_append` / `close` / `wont_do` / `reopen` / `reconcile` and the link ops do
+NOT cascade. The cascade is symmetric — editing either endpoint
 stales the other. The app surfaces the stale worklist on every call; that's the
 tool telling you the plan is currently inconsistent.
 
@@ -266,7 +267,7 @@ Every task displays a synthesized `<kind-letter><id>` prefix (design→**D**, sc
 - do: one sentence naming why the two tasks must be reviewed together when one changes — e.g. "citations' FK references `documents.id`; a column rename breaks the join."
 - don't-do: describe the implementation or work order (`"test fixture"`, `"setup"`); write a because that just restates a shared label — that's membership, attach a label, not a link (see *Links are coupling*).
 
-**`ls` vs `board` (reference):** `ls` for a quick filtered id/title list; `board` for each matching task as a slice (the single symmetric `links` set + labels) in one call. Both are **lean by default** (D211): no `description`, and `board` shows the neighbor graph SHAPE without `because`/`last_edit_delta`. Both take a `kind` filter. Opt into bodies with `include_description` (and `board`'s `include_neighbor_because` for edge rationales); for ONE full body use `show`. Projection is include-or-omit — never truncated.
+**`ls` vs `board` (reference):** `ls` for a quick filtered id/title list; `board` for each matching task as a slice (the single symmetric `links` set + labels) in one call. Both are **lean by default** (D211): no `description`, and `board` shows the neighbor graph SHAPE without `because`/`last_edit_delta`. Both take a `kind` filter. Opt into bodies with `include_description` (and `board`'s `include_neighbor_because` for edge rationales); for ONE full body use `show`. `stale` returns the same short rows, with no opt-in. Projection is include-or-omit — never truncated.
 
 **Aggregation + sort (reference, D283):** `summary` returns counts by status / kind / (status × kind) + the obligation-bearing stale count — the end-of-turn state line in one call, no hand-counting. `ls`/`board` take `order_by` over a **structured column only** (`id`/`kind`/`status`/`created_at`/`updated_at`/`stale`/`degree` — `degree` surfaces hubs first). The surface is **read-and-judge, not pattern-and-mutate**: there is deliberately no regex/content-query over bodies and no bulk `replace_all` — aggregation and sort work over metadata (they tell you *which* bodies to read); a body is read and judged, never pattern-scanned. A one-off content audit is a conscious admin query outside the loop, not a tackit op.
 

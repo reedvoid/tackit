@@ -219,8 +219,8 @@ class Slice(BaseModel):
 
 
 class CloseResult(BaseModel):
-    """D12 - close obligation payload. Closing returns the one-hop set the agent
-    is obliged to review, riding in the operation's own result.
+    """D12 - core's close result: the closed task and its one-hop set. Adapters
+    project it to `{id, status}` (D211); a successful close owes no review.
 
     T239 (2026-06-23): the one-hop set is a single symmetric `links` list (D5),
     not duplicated dependencies/dependents (mirrors the Slice collapse, T237)."""
@@ -232,10 +232,10 @@ class CloseResult(BaseModel):
 
 
 class WontDoResult(BaseModel):
-    """T132 / 2026-06-01 - wont_do obligation payload. Mirrors CloseResult
-    shape (task + one-hop neighbors) since both are terminal-status verbs
-    returning the same review obligation. wont_do does NOT fire the staling
-    cascade (status change, not content edit; symmetric with close).
+    """T132 / 2026-06-01 - core's wont_do and retire result. Mirrors CloseResult
+    shape (task + one-hop neighbors), and adapters project it the same way (D211).
+    These verbs do NOT fire the staling cascade (status change, not content
+    edit; symmetric with close).
 
     T239 (2026-06-23): single symmetric `links` list (D5), like CloseResult."""
 

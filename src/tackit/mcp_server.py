@@ -1,7 +1,8 @@
 """Interface - MCP (design.md "Interface - MCP", the agent's primary door).
 
 A thin MCP server: each tool calls the same :mod:`tackit.core` op the CLI command
-does and returns the same obligation payload in its result. No logic lives here.
+does and returns the same result, projected in :mod:`tackit.models` (D211). No logic
+lives here.
 Tool names are the bare verbs (``add``, ``show``, ``search``, ``close``,
 ``reconcile``, ``link_add``, ...). The input schema is **auto-generated from the
 Python type hints / Pydantic models** by FastMCP, so it cannot drift from the real
