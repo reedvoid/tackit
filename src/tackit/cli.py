@@ -46,7 +46,7 @@ def _flags(status: str, stale: bool) -> str:
 
 
 def _fmt_task(t, include_description: bool = False) -> str:
-    line = f"T{t.id} [{_flags(t.status, t.stale)}] {t.name}"
+    line = f"{prefixed_id(t.kind, t.id)} [{_flags(t.status, t.stale)}] {t.name}"
     if include_description and t.description.strip():
         line += f"\n  {t.description.strip()}"
     return line
@@ -55,9 +55,12 @@ def _fmt_task(t, include_description: bool = False) -> str:
 def _fmt_neighbors(label: str, neighbors) -> list[str]:
     if not neighbors:
         return [f"  {label}: (none)"]
-    return [f"  {label}:"] + [
-        f"    - T{n.id} [{_flags(n.status, n.stale)}] {n.name}" for n in neighbors
-    ]
+    lines = [f"  {label}:"]
+    for n in neighbors:
+        lines.append(
+            f"    - {prefixed_id(n.kind, n.id)} [{_flags(n.status, n.stale)}] {n.name}"
+        )
+    return lines
 
 
 def _fmt_slice(s) -> str:
@@ -168,7 +171,7 @@ def _render_board(core, tasks) -> str:
         for t in group:
             s = core.show(t.id)
             bar = STALE if t.stale else base
-            tid = _board_paint(f"T{t.id}", [bar, BOLD])
+            tid = _board_paint(prefixed_id(t.kind, t.id), [bar, BOLD])
             if t.stale:
                 name_color = STALE
             elif t.status in ("closed", "wont_do", "retired"):
@@ -181,7 +184,10 @@ def _render_board(core, tasks) -> str:
             lines.append(f" {_board_paint('▌', [bar])} {tid}  {name}{tag}{labs}")
             # T237: symmetric links -> one edge list, not duplicated needs/unblocks
             if s.links:
-                edge = _board_paint("links→ ", [DIM]) + " ".join(f"T{n.id}" for n in s.links)
+                edge_ids = []
+                for n in s.links:
+                    edge_ids.append(prefixed_id(n.kind, n.id))
+                edge = _board_paint("links→ ", [DIM]) + " ".join(edge_ids)
                 lines.append("     " + edge)
 
     # D22: every status has a section, so a matching task can never vanish.
@@ -276,7 +282,7 @@ def _cmd_load(args) -> int:
         keymap = core.load(specs)
         lines = [f"loaded {len(keymap)} task(s):"]
         for key, tid in keymap.items():
-            lines.append(f"  {key} → T{tid}")
+            lines.append(f"  {key} → {prefixed_id(core.get(tid).kind, tid)}")
         _emit("\n".join(lines), {"loaded": keymap}, args.json)
     return 0
 
@@ -321,11 +327,13 @@ def _cmd_links_add(args) -> int:
 def _cmd_search(args) -> int:
     with _core_session() as core:
         hits = core.search(args.terms, name_only=args.name_only)
-        text = (
-            "\n".join(f"T{h.id}  ({h.score:+.3f})  {h.name}" for h in hits)
-            if hits
-            else "(no matches)"
-        )
+        if hits:
+            lines = []
+            for h in hits:
+                lines.append(f"{prefixed_id(h.kind, h.id)}  ({h.score:+.3f})  {h.name}")
+            text = "\n".join(lines)
+        else:
+            text = "(no matches)"
         _emit(text, [_dump(h) for h in hits], args.json)
     return 0
 
@@ -480,11 +488,9 @@ def _cmd_link(args) -> int:
             s = core.link_rm(args.a, args.b)
             verb = "removed"
             payload = project_link_rm_result(args.a, args.b)
-        _emit(
-            f"{verb} link T{args.a} <-> T{args.b}\n" + _fmt_slice(s),
-            payload,
-            args.json,
-        )
+        a_id = prefixed_id(core.get(args.a).kind, args.a)
+        b_id = prefixed_id(core.get(args.b).kind, args.b)
+        _emit(f"{verb} link {a_id} <-> {b_id}\n" + _fmt_slice(s), payload, args.json)
     return 0
 
 
@@ -625,7 +631,7 @@ def _cmd_history(args) -> int:
             for r in hist.description_revisions
         ) or "  (no description revisions)"
         text = (
-            f"T{args.id} history:\n"
+            f"{prefixed_id(core.get(args.id).kind, args.id)} history:\n"
             f"status transitions:\n{st_text}\n"
             f"description revisions (D29):\n{rev_text}"
         )
@@ -716,8 +722,19 @@ def _cmd_mcp(args) -> int:
 # --- argument parser (self-documenting via --help, design.md) ----------------
 
 def build_parser() -> argparse.ArgumentParser:
+    # D2 + T319: --json is honored before or after a subcommand. The top level owns
+    # the False default; a subcommand's copy adds no default, because a subparser
+    # copies every attribute it holds onto the parent namespace, so a False there
+    # would silently overwrite a top-level True.
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--json", action="store_true", help="emit structured JSON output")
+    sub_common = argparse.ArgumentParser(add_help=False)
+    sub_common.add_argument(
+        "--json",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="emit structured JSON output",
+    )
 
     p = argparse.ArgumentParser(
         prog="tackit",
@@ -734,7 +751,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = p.add_subparsers(dest="command", required=True)
 
-    def add(name, handler, help_text, parents=(common,)):
+    def add(name, handler, help_text, parents=(sub_common,)):
         # Pass help_text as BOTH the short help (shown in parent --help) AND
         # the subcommand's description (shown by `tackit <name> --help`).
         # Without description=, the subcommand-level --help drops the prose.
@@ -1011,7 +1028,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     link_sub = sp.add_subparsers(dest="link_action", required=True)
     for act in ("add", "rm"):
-        lsp = link_sub.add_parser(act, parents=[common])
+        lsp = link_sub.add_parser(act, parents=[sub_common])
         lsp.add_argument("a", type=int, metavar="A")
         lsp.add_argument("b", type=int, metavar="B")
         if act == "add":
@@ -1025,7 +1042,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp = add("label", _cmd_label, "tag/untag a task (D4)")
     label_sub = sp.add_subparsers(dest="label_action", required=True)
     for act in ("add", "rm"):
-        lsp = label_sub.add_parser(act, parents=[common])
+        lsp = label_sub.add_parser(act, parents=[sub_common])
         lsp.add_argument("id", type=int)
         lsp.add_argument("label")
         lsp.set_defaults(func=_cmd_label)

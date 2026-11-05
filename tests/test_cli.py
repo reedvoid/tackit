@@ -798,3 +798,144 @@ def test_cli_prints_none_of_the_nudges_when_none_fired(cli, capsys):
     assert "D250:" not in err
     assert "D249" not in err
     assert "D280" not in err
+
+
+# --- D32 (T319): CLI text names every kind by its own prefix -----------------
+
+
+def _seed_one_task_per_kind():
+    main(["add", "spec alpha", "--kind", "design"])  # D1
+    main(["add", "schema alpha", "--kind", "schema"])  # S2
+    main(["add", "work alpha", "--kind", "production", "--dep", "1::realizes"])  # T3
+    main(["add", "note alpha", "--kind", "meta"])  # M4
+
+
+KIND_PREFIXES = [("1", "D1"), ("2", "S2"), ("3", "T3"), ("4", "M4")]
+
+
+@pytest.mark.parametrize("task_id,prefix", KIND_PREFIXES)
+def test_cli_show_prefixes_each_kind(cli, capsys, task_id, prefix):
+    _seed_one_task_per_kind()
+    capsys.readouterr()
+    assert main(["show", task_id]) == 0
+    assert capsys.readouterr().out.startswith(f"{prefix} [")
+
+
+def test_cli_show_prefixes_neighbors_by_their_own_kind(cli, capsys):
+    _seed_one_task_per_kind()
+    capsys.readouterr()
+    assert main(["show", "3"]) == 0
+    assert "    - D1 [spec] spec alpha" in capsys.readouterr().out.splitlines()
+
+
+def test_cli_ls_prefixes_each_kind(cli, capsys):
+    _seed_one_task_per_kind()
+    capsys.readouterr()
+    assert main(["ls"]) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        "D1 [spec] spec alpha",
+        "S2 [spec] schema alpha",
+        "T3 [open] work alpha",
+        "M4 [open] note alpha",
+    ]
+
+
+def test_cli_board_prefixes_rows_and_edges_by_kind(cli, capsys):
+    _seed_one_task_per_kind()
+    capsys.readouterr()
+    assert main(["board"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    for expected in (" ▌ D1  spec alpha", " ▌ S2  schema alpha", " ▌ T3  work alpha",
+                     " ▌ M4  note alpha", "     links→ D1", "     links→ T3"):
+        assert expected in lines
+
+
+def test_cli_search_prefixes_each_kind(cli, capsys):
+    _seed_one_task_per_kind()
+    capsys.readouterr()
+    assert main(["search", "alpha"]) == 0
+    prefixes = []
+    for line in capsys.readouterr().out.splitlines():
+        prefixes.append(line.split()[0])
+    assert sorted(prefixes) == ["D1", "M4", "S2", "T3"]
+
+
+def test_cli_load_prefixes_each_kind(cli, tmp_path, capsys):
+    plan = tmp_path / "plan.txt"
+    plan.write_text(
+        "[d] a spec\n  kind: design\n"
+        "[s] a schema\n  kind: schema\n"
+        "[t] a task\n  kind: production\n  depends_on:\n    d :: realizes\n"
+        "[m] a note\n  kind: meta\n"
+    )
+    capsys.readouterr()
+    assert main(["load", str(plan)]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    for expected in ("  d → D1", "  s → S2", "  t → T3", "  m → M4"):
+        assert expected in lines
+
+
+def test_cli_link_prefixes_each_kind(cli, capsys):
+    _seed_one_task_per_kind()
+    capsys.readouterr()
+    assert main(["link", "add", "2", "3", "--because", "a reason"]) == 0
+    assert capsys.readouterr().out.startswith("added link S2 <-> T3\n")
+    assert main(["link", "rm", "3", "2"]) == 0
+    assert capsys.readouterr().out.startswith("removed link T3 <-> S2\n")
+
+
+@pytest.mark.parametrize("task_id,prefix", KIND_PREFIXES)
+def test_cli_history_prefixes_each_kind(cli, capsys, task_id, prefix):
+    _seed_one_task_per_kind()
+    capsys.readouterr()
+    assert main(["history", task_id]) == 0
+    assert capsys.readouterr().out.startswith(f"{prefix} history:\n")
+
+
+# --- D2 (T319): --json works in every position, nothing silently ignored ------
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--json", "show", "1"],
+        ["show", "1", "--json"],
+        ["--json", "ls"],
+        ["--json", "stale"],
+        ["--json", "summary"],
+        ["--json", "labels"],
+        ["--json", "board"],
+        ["--json", "search", "alpha"],
+        ["--json", "links"],
+        ["--json", "history", "1"],
+        ["--json", "export"],
+        ["--json", "link", "add", "1", "2", "--because", "a reason"],
+        ["link", "--json", "add", "1", "2", "--because", "a reason"],
+        ["link", "add", "1", "2", "--because", "a reason", "--json"],
+        ["--json", "label", "add", "1", "tag"],
+        ["label", "--json", "add", "1", "tag"],
+        ["label", "add", "1", "tag", "--json"],
+    ],
+)
+def test_cli_json_flag_is_honored_in_every_position(cli, capsys, argv):
+    _seed_one_task_per_kind()
+    capsys.readouterr()
+    assert main(argv) == 0
+    json.loads(capsys.readouterr().out)  # raises on text output
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["show", "1"],
+        ["ls"],
+        ["link", "add", "1", "2", "--because", "a reason"],
+        ["label", "add", "1", "tag"],
+    ],
+)
+def test_cli_prints_text_when_the_json_flag_is_absent(cli, capsys, argv):
+    _seed_one_task_per_kind()
+    capsys.readouterr()
+    assert main(argv) == 0
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(capsys.readouterr().out)
