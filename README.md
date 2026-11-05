@@ -10,12 +10,17 @@ survives across sessions and context-window compaction, and a change to one task
 traceable to everything that depends on it. A typed boundary refuses malformed data,
 and a reconcile-on-change discipline surfaces what each change invalidates.
 
-> **Status: alpha (0.9.3).** The data model, interfaces, and sync design are
+> **Status: alpha (0.9.4).** The data model, interfaces, and sync design are
 > settled and implemented, with 1,000+ tests across unit / CLI / MCP / Hypothesis
 > property suites. The core shape — a kind/status partition (design/schema slices
 > live at `spec`/`retired`; production/meta at `open`/`closed`/`wont_do`) and the
 > `edit` / `close` / `wont_do` / `retire` verb taxonomy — is laid out under
 > [The model](#the-model-kinds-status-and-verbs) below. Expect rough edges.
+>
+> **Upgrading to 0.9.4: JSON results changed.** Writes return less, on MCP and in CLI
+> `--json`; see [Lean writes](#read-path-and-wiring-refinements). `edit_append` no longer
+> flags neighbors. Anything that reads a `close`, `add`, `edit` or `stale` result needs
+> checking; `show` returns what they used to carry. The store format is unchanged.
 
 ## Contents
 
@@ -144,6 +149,8 @@ Concrete loops, so the discipline reads as habits, not rules:
 
 The CLI is the human door — debugging, scripting, and a fallback for the agent.
 `tackit --help` (and `tackit <cmd> --help`) is the full, self-documenting surface.
+`--json`, before or after the subcommand, prints the same result the MCP tool returns;
+alerts and nudges go to stderr, so stdout stays parseable.
 
 ```bash
 tackit init                                                              # create .tackit/ in this project
