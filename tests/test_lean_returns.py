@@ -393,3 +393,156 @@ def test_cli_text_honors_the_body_opt_in(store, capsys):
     assert "  the new body" in lines
     lines = _cli_lines(capsys, ["edit", "1", "--desc", "another body", "--delta", "d"])
     assert "  another body" not in lines
+
+
+# --- D10: edit_append flags nobody; it keeps its delta and audit row ------------
+
+
+def _seed_linked_notes():
+    """Note 1 links notes 2 (unflagged) and 3 (flagged earlier through note 4)."""
+
+    def seed(core):
+        core.add("note one", kind="meta", description="body")  # 1
+        core.add("note two", kind="meta", deps={1: "two reads one"})  # 2
+        core.add("note three", kind="meta", deps={1: "three reads one"})  # 3
+        core.add("note four", kind="meta", deps={3: "three reads four"})  # 4
+        core.edit(4, description="changed", delta="flags note three")
+
+    _core_call(seed)
+
+
+def test_mcp_edit_append_flags_nobody_and_leaves_flags_alone(store):
+    _seed_linked_notes()
+    result = _call("edit_append", {"id": 1, "content": " more", "delta": "noted"})
+    assert result["newly_stale"] == []
+    assert _stale_flag(2) is False
+    assert _stale_flag(3) is True  # an append clears nothing either
+    assert _worklist_ids() == [3]
+
+
+def test_cli_edit_append_flags_nobody_and_leaves_flags_alone(store, capsys):
+    _seed_linked_notes()
+    result = _cli_json(capsys, ["edit-append", "1", "--content", " more",
+                                "--delta", "noted", "--json"])
+    assert result["newly_stale"] == []
+    assert _stale_flag(2) is False
+    assert _stale_flag(3) is True
+    assert _worklist_ids() == [3]
+
+
+def test_cli_edit_append_text_says_nobody_was_flagged(store, capsys):
+    _seed_linked_notes()
+    lines = _cli_lines(capsys, ["edit-append", "1", "--content", " more",
+                                "--delta", "noted"])
+    assert "  no newly flagged neighbors." in lines
+
+
+@pytest.mark.parametrize(
+    "tool,args",
+    [
+        ("edit", {"id": 1, "description": "rewritten", "delta": "ruled"}),
+        ("edit_replace_substring",
+         {"id": 1, "old_string": "body", "new_string": "text", "delta": "ruled"}),
+    ],
+)
+def test_the_other_edit_verbs_still_flag_on_a_meta(store, tool, args):
+    """The way to tell a neighbor when a note really changes what it should say."""
+    _seed_linked_notes()
+    result = _call(tool, args)
+    assert result["newly_stale"] == [{"id": 2, "because": "two reads one"}]
+    assert _stale_flag(2) is True
+    assert _worklist_ids() == [2, 3]
+
+
+def test_an_append_does_not_block_closing_a_neighbor(store):
+    """The converse of the close gate: no flag was written, so nothing blocks."""
+    _core_call(lambda core: core.add("note one", kind="meta", description="body"))
+    _core_call(lambda core: core.add("note two", kind="meta",
+                                     deps={1: "two reads one"}))
+    _call("edit_append", {"id": 1, "content": " more", "delta": "noted"})
+    assert _call("close", {"id": 2}) is not None
+    assert _core_call(lambda core: core.get(2).status) == "closed"
+
+
+def test_an_append_still_writes_its_audit_row_with_its_delta(store):
+    _seed_linked_notes()
+    _call("edit_append", {"id": 1, "content": " more", "delta": "noted a thing"})
+    revisions = _call("history", {"id": 1})["description_revisions"]
+    assert len(revisions) == 1
+    assert revisions[0]["delta"] == "noted a thing"
+    assert revisions[0]["prev_description"] == "body"
+    assert _core_call(lambda core: core.get(1).description) == "body more"
+
+
+@pytest.mark.parametrize("delta", ["", "   "])
+def test_an_append_with_no_delta_is_refused_and_changes_nothing(store, delta):
+    _seed_linked_notes()
+
+    async def scenario(session):
+        return await session.call_tool(
+            "edit_append", {"id": 1, "content": " more", "delta": delta}
+        )
+
+    response = _mcp(scenario)
+    assert response.isError is True
+    assert "edit_append requires a non-empty `delta`" in response.content[0].text
+    assert _core_call(lambda core: core.get(1).description) == "body"
+
+
+def test_the_delta_refusal_for_append_makes_no_cascade_claim(store):
+    """D284: an append's delta is read from the audit row; no reconcile compares it
+    against a neighbor's because, so its refusal must not say one does."""
+    _seed_linked_notes()
+
+    async def scenario(session):
+        return await session.call_tool(
+            "edit_append", {"id": 1, "content": " more", "delta": ""}
+        )
+
+    text = _mcp(scenario).content[0].text
+    assert "history" in text
+    assert "because" not in text
+
+
+def test_the_delta_refusal_for_edit_still_explains_the_reconcile_read(store):
+    _seed_linked_notes()
+
+    async def scenario(session):
+        return await session.call_tool(
+            "edit", {"id": 1, "description": "x", "delta": ""}
+        )
+
+    text = _mcp(scenario).content[0].text
+    assert "edit requires a non-empty `delta`" in text
+    assert "because" in text
+
+
+def test_missing_edge_suggestions_still_fire_on_an_append(store):
+    _core_call(lambda core: core.add("note one", kind="meta"))
+    _core_call(lambda core: core.add("note two", kind="meta"))
+
+    async def scenario(session):
+        return await session.call_tool(
+            "edit_append", {"id": 1, "content": " see M2", "delta": "noted"}
+        )
+
+    envelope = json.loads(_mcp(scenario).content[0].text)
+    assert len(envelope["missing_edge_suggestions"]) == 1
+    assert "M2" in envelope["missing_edge_suggestions"][0]
+
+
+def test_after_an_edit_then_an_append_show_reports_the_append_delta(store):
+    """D34's accepted partial coverage: the entry shows the newest revision's delta,
+    and `history` keeps both."""
+    _core_call(lambda core: core.add("note one", kind="meta", description="body"))
+    _core_call(lambda core: core.add("note two", kind="meta",
+                                     deps={1: "two reads one"}))
+    _call("edit", {"id": 1, "description": "ruled", "delta": "the edit delta"})
+    _call("edit_append", {"id": 1, "content": " more", "delta": "the append delta"})
+    entry = _call("show", {"id": 2})["links"][0]
+    assert entry["id"] == 1
+    assert entry["last_edit_delta"] == "the append delta"
+    deltas = []
+    for revision in _call("history", {"id": 1})["description_revisions"]:
+        deltas.append(revision["delta"])
+    assert deltas == ["the edit delta", "the append delta"]

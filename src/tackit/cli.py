@@ -821,13 +821,14 @@ def build_parser() -> argparse.ArgumentParser:
         "edit-append",
         _cmd_edit_append,
         "T179: diff-shaped edit -- append `content` to a task's description "
-        "without retransmitting the whole body. Fires the cascade depth-1 "
-        "and writes the description_revisions audit row exactly like edit(). "
-        "META-ONLY: refused on design/schema (D250) and production (D255) -- only meta appends; also refused on closed/wont_do (D259). Refused on empty / whitespace-only content. Cuts large-body edit"
-        "cost ~10x. **Edits aren't free** -- fires the cascade depth-1 + "
-        "pressures the close-gate; make edits consequential and necessary "
-        "(substantive impact). Diff-shape cuts transmission cost, not "
-        "cascade cost. See SKILL.md \"Edits aren't free\" for the discipline.",
+        "without retransmitting the whole body. Flags no neighbor (D10) and "
+        "writes the description_revisions audit row; use edit or edit-replace "
+        "when a note really changes what a neighbor should say. "
+        "META-ONLY: refused on design/schema (D250) and production (D255) -- only meta appends; also refused on closed/wont_do (D259). Refused on empty / whitespace-only content. Cuts large-body edit "
+        "cost ~10x. **Edits aren't free** -- each append stays in the note's "
+        "audit trail for its next reader; make edits consequential and necessary "
+        "(substantive impact). See SKILL.md \"Edits aren't free\" for the "
+        "discipline.",
     )
     sp.add_argument("id", type=int)
     sp.add_argument(

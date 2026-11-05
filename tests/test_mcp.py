@@ -210,7 +210,7 @@ def test_mcp_edit_append_return_is_lean_by_default(tmp_path, monkeypatch):
 
     env = _envelope(_drive(tmp_path, monkeypatch, scenario))
     assert "description" not in env["result"]["task"]
-    assert env["result"]["newly_stale"][0]["id"] == 2
+    assert env["result"]["newly_stale"] == []  # D10: an append flags nobody
 
 
 def test_mcp_edit_append_include_description_restores_body(tmp_path, monkeypatch):

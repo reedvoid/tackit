@@ -337,13 +337,19 @@ def build_server() -> FastMCP:
         variant of edit(): only the snippet crosses the wire, not the full
         new description. Cuts large-body edit cost ~10x.
 
-        Fires the cascade depth-1 like edit() and writes the description_
-        revisions audit row (D29 / S7) preserving the prior verbatim
-        name+description+delta.
+        D10 -- flags NO neighbor, a concession to reality, not necessarily the
+        optimal decision: agents clear flags unread, and a cleared flag reads
+        as a review that did not happen. So an appended ruling can make a
+        neighbor wrong with nobody told. When a note really changes what a
+        neighbor should say, use edit() or edit_replace_substring(), which do
+        flag.
 
-        Required ``delta`` (T117) -- one short sentence describing what
-        changed semantically. The reconciler compares it against each
-        stale link's `because` rationale to filter relevance.
+        Writes the description_revisions audit row (D29 / S7) preserving the
+        prior verbatim name+description+delta.
+
+        Required ``delta`` (D284) -- one short sentence describing what
+        changed semantically. `history` and a neighbor's `last_edit_delta`
+        read it back as the record of this note.
 
         edit_append is META-ONLY. REFUSED on design/schema (D250 -- a spec
         slice is a coherent current-state body, not an append log; use edit()
@@ -358,14 +364,13 @@ def build_server() -> FastMCP:
         is the cheap fold-back mechanism BEFORE close; on production/spec the
         append is refused, so use the edit-family to fold detail back.
 
-        **Edits aren't free** -- fires the cascade depth-1 exactly like
-        edit(); make edits consequential and necessary and the delta a
-        substantive impact; diff-shape cuts transmission, not cascade cost
-        (see SKILL "Edits aren't free").
+        **Edits aren't free** -- every append stays in this note's audit trail
+        and is read by whoever opens it next; make edits consequential and
+        necessary and the delta a substantive impact (see SKILL "Edits aren't
+        free").
 
         D211 -- lean-by-default return: the focal body is NOT echoed (you
-        just appended to it); ``newly_stale`` lists first-time open or spec
-        flags as ``{id, because}``. Pass
+        just appended to it). ``newly_stale`` is always empty. Pass
         ``include_description=True`` to see the full reconstructed body and
         verify the append landed where intended / didn't duplicate."""
         with _core() as c:

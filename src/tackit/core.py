@@ -100,19 +100,27 @@ def _is_section_query(query: str) -> bool:
 
 
 def _require_delta(delta: str | None, op: str) -> None:
-    """T117 / cascade-ergonomics B - every mutating op that fires the cascade
-    (edit, reclassify, link_add, link_rm) requires the agent to provide a short
-    semantic delta. Empty / whitespace / missing is refused loudly so the agent
-    can't slip past the rationale-comparison discipline. Keep it one sentence;
-    "shifted D5 from directed to symmetric link" is the right shape -- you are
-    writing it for future-you to compare against every edge-rationale on the
-    stale list, so don't write a treatise."""
+    """T117 + D284 - a delta is required on every op that fires the cascade or
+    writes an edit-history row (edit, edit_append, edit_replace_substring,
+    reclassify). Empty / whitespace / missing is refused loudly. Keep it one
+    sentence: "shifted D5 from directed to symmetric link" is the right shape.
+    Its readers differ, so the refusal names the right one: edit_append flags
+    nobody (D10), so only `history` and `last_edit_delta` read its delta."""
     if delta is None or not delta.strip():
+        if op == "edit_append":
+            reader = (
+                "`history` and a neighbor's `last_edit_delta` read it back as "
+                "the record of this note."
+            )
+        else:
+            reader = (
+                "Future-you will compare this against every linked task's "
+                "`because` rationale to decide relevance."
+            )
         raise ValidationError(
             f"{op} requires a non-empty `delta` describing what changed "
             f"semantically (T117). One sentence; describe the semantic shift, "
-            f"not the field bytes. Future-you will compare this against every "
-            f"linked task's `because` rationale to decide relevance."
+            f"not the field bytes. {reader}"
         )
     _validate_text(delta, f"{op} delta")
 
@@ -375,10 +383,9 @@ class Core:
         # adapters can surface the anti-sprawl nudge (CLI stderr / MCP envelope).
         # Lives for the single op's lifetime (each command/tool call is a fresh Core).
         self.last_label_nudge: str | None = None
-        # T117 / cascade-ergonomics B: set by the mutating ops that fire the
-        # cascade (edit, reclassify, link_add, link_rm) so adapters can surface
-        # the agent's semantic-delta string alongside the stale_alert. Ephemeral
-        # -- one op's lifetime only; not stored anywhere.
+        # T117 / cascade-ergonomics B: set by the delta-bearing ops (D284) so
+        # adapters can surface the agent's semantic-delta string alongside the
+        # stale_alert. This field is ephemeral -- one op's lifetime only.
         self.last_delta: str | None = None
         # D31 (v0.4): set when edit() succeeds on a design or schema task, so
         # the adapter can surface a "this slice's number (D#/S#) is referenced
@@ -404,12 +411,13 @@ class Core:
     def _record_delta(self, delta: str, op_name: str) -> None:
         """T117/T124 shared prelude - validate the required delta and record
         it on self for envelope surfacing. Used by every op that takes a
-        required ``delta`` -- the cascade-firing ops: edit, edit_append,
-        edit_replace_substring, reclassify. Non-cascading ops are NOT in this
-        list: link ops (D213) and the terminal status verbs wont_do / retire
-        (D284) carry no delta, because an op that stales no neighbor produces
-        a delta with no reader. Naming the helper makes "this op carries a
-        delta" explicit at the call site."""
+        required ``delta`` (D284): the cascade-firing ops edit,
+        edit_replace_substring and reclassify, plus edit_append, which flags
+        nobody (D10) but writes an audit row that `history` and
+        `last_edit_delta` read. Link ops (D213) and the terminal status verbs
+        wont_do / retire (D284) carry no delta, because an op with neither a
+        cascade nor an audit row produces a delta with no reader. Naming the
+        helper makes "this op carries a delta" explicit at the call site."""
         _require_delta(delta, op_name)
         self.last_delta = delta.strip()
 
@@ -2036,15 +2044,21 @@ class Core:
     # snippet being added or the (old, new) substring pair crosses the wire.
     #
     # Both ops share ``_commit_description_edit`` for the post-validation tail
-    # (no-op short-circuit, cascade depth-1, audit row, UPDATE, D31 reminder),
-    # so the contract -- one cascade per real change, one audit row per real
-    # change, identical D31 wording -- is enforced in one place.
+    # (no-op short-circuit, optional cascade, audit row, UPDATE, D31 reminder),
+    # so the contract -- one audit row per real change, identical D31 wording --
+    # is enforced in one place. They differ on the cascade: replace fires it;
+    # append does not (D10), a concession to reality, not necessarily the optimal
+    # decision. Agents clear flags unread, and a cleared flag reads as a review
+    # that did not happen, so flagging on every saved note bought little and
+    # misled. Reopen if agents start reading flags.
 
     def _commit_description_edit(
         self,
         row: sqlite3.Row,
         new_description: str,
         delta: str,
+        *,
+        cascade: bool,
     ) -> ChangeResult:
         """T179 shared tail for description-only edits (edit_append +
         edit_replace_substring). Caller has: validated ``delta`` via
@@ -2052,16 +2066,18 @@ class Core:
         and validated it via ``_validate_text``.
 
         Handles: no-op short-circuit (D20 -- equal description -> no cascade,
-        no audit row, no version bump), cascade depth-1 (D10), description_
-        revisions audit row preserving prior verbatim name+description+delta
-        (D29 / S7), UPDATE description+updated_at, D31 code-check reminder on
-        design/schema edits."""
+        no audit row, no version bump), cascade depth-1 when ``cascade`` (D10),
+        description_revisions audit row preserving prior verbatim
+        name+description+delta (D29 / S7), UPDATE description+updated_at, D31
+        code-check reminder on design/schema edits."""
         task_id = row["id"]
         self.last_missing_edge_suggestions = None  # D280: reflect only this op
         if new_description == row["description"]:
             return ChangeResult(task=self.get(task_id), newly_stale=[])
+        newly_stale: list[NeighborRef] = []
         with self._mutate():
-            newly_stale = self._mark_linked_stale(task_id)
+            if cascade:
+                newly_stale = self._mark_linked_stale(task_id)
             self.conn.execute(
                 "INSERT INTO description_revisions("
                 "  task_id, prev_name, prev_description, delta, edited_at"
@@ -2091,9 +2107,12 @@ class Core:
     def edit_append(
         self, task_id: int, content: str, delta: str
     ) -> ChangeResult:
-        """T179 - append ``content`` to the task's description. Fires the
-        cascade depth-1 like ``edit()``; writes a description_revisions
-        audit row preserving the prior verbatim name+description+delta.
+        """T179 + D10 - append ``content`` to the task's description. Flags no
+        neighbor, unlike ``edit()``: a concession to reality, not necessarily
+        the optimal decision (D10). Writes a description_revisions audit row
+        preserving the prior verbatim name+description+delta, so ``delta`` stays
+        required (D284). A note that really changes what a neighbor should say
+        belongs in ``edit`` or ``edit_replace_substring``, which do flag.
 
         Diff-shaped vs ``edit()``: only ``content`` crosses the wire, not
         the full new description. Cuts large-body edit cost ~10x.
@@ -2131,7 +2150,7 @@ class Core:
         _validate_text(content, "edit_append content")
         new_description = (row["description"] or "") + content
         _validate_text(new_description, "task description")
-        return self._commit_description_edit(row, new_description, delta)
+        return self._commit_description_edit(row, new_description, delta, cascade=False)
 
     def edit_replace_substring(
         self,
@@ -2191,7 +2210,7 @@ class Core:
             )
         new_description = current.replace(old_string, new_string, 1)
         _validate_text(new_description, "task description")
-        return self._commit_description_edit(row, new_description, delta)
+        return self._commit_description_edit(row, new_description, delta, cascade=True)
 
     # ====================================================================
     # D15 - query / board (derived views)

@@ -9,10 +9,10 @@ description, per fold-back. These two diff-shaped ops cut that ~10x:
   the exact ``old_string`` substring (must be unique -- non-unique matches
   refused loudly, mirroring the filesystem Edit tool's old/new pattern).
 
-Both fire the cascade depth-1 like ``edit()`` and write a description_revisions
-audit row preserving the prior verbatim name+description+delta. Both share the
-underlying mutation block so cascade + audit + version-bump + D31 reminder
-logic stays in one place.
+Both write a description_revisions audit row preserving the prior verbatim
+name+description+delta, and share the underlying mutation block so audit +
+version-bump + D31 reminder logic stays in one place. ``edit_replace_substring``
+fires the cascade depth-1 like ``edit()``; ``edit_append`` flags nobody (D10).
 
 Tests are driven by the test-audit four-pass (skill: test-audit):
   Pass 1 -- invariant x code x test matrix (cascade, audit, no-op, code-check,
@@ -53,16 +53,13 @@ def test_edit_append_returns_change_result_with_full_task(core):
     assert isinstance(result.newly_stale, list)
 
 
-def test_edit_append_fires_cascade_depth_one(core):
+def test_edit_append_flags_no_neighbor(core):
     core.add("a", kind="meta", description="orig")  # T1
     core.add("b", kind="meta", description="dep")  # T2 (meta<->meta link ok)
     core.link_add(1, 2, because="T2 reviews T1's prose")
     result = core.edit_append(1, content=" + more", delta="extended scope")
-    stale_ids = []
-    for n in result.newly_stale:
-        stale_ids.append(n.id)
-    assert 2 in stale_ids
-    assert core.get(2).stale is True
+    assert result.newly_stale == []
+    assert core.get(2).stale is False
 
 
 def test_edit_append_writes_description_revisions_row(core):

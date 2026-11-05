@@ -354,7 +354,7 @@ def test_cli_edit_no_dependents(cli, capsys):
 # --- T179: edit-append + edit-replace CLI surface ------------------------
 
 
-def test_cli_edit_append_appends_and_surfaces_stale(cli, capsys):
+def test_cli_edit_append_appends_and_flags_nobody(cli, capsys):
     # D255: append is meta-only, so the edit-append fixtures use meta tasks.
     main(["add", "base", "--kind", "meta", "--desc", "original"])
     main(["add", "dep", "--kind", "meta"])
@@ -367,7 +367,7 @@ def test_cli_edit_append_appends_and_surfaces_stale(cli, capsys):
     ]) == 0
     out = capsys.readouterr()
     assert "appended to" in out.out
-    assert "STALE" in out.err.upper() and "M2" in out.err
+    assert "STALE" not in out.err.upper()  # D10: an append flags nobody
 
     capsys.readouterr()
     main(["show", "1"])
