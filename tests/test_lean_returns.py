@@ -20,6 +20,7 @@ from tackit import mcp_server
 from tackit.cli import main
 from tackit.core import Core
 from tackit.db import init_store
+from tackit.models import project_link_add_result
 
 
 @pytest.fixture
@@ -976,3 +977,50 @@ def test_cli_text_link_still_prints_the_slice(store, capsys):
     lines = _cli_lines(capsys, ["link", "add", "2", "3", "--because", "a reason"])
     assert lines[0].startswith("added link ")
     assert "other" in "\n".join(lines)
+
+
+# --- D39: link_add reports the rationale actually stored ------------------------
+
+
+def _seed_two_specs():
+    _core_call(lambda core: core.add("one", kind="design"))
+    _core_call(lambda core: core.add("two", kind="design"))
+
+
+def test_mcp_duplicate_link_add_reports_the_first_because(store):
+    _seed_two_specs()
+    _call("link_add", {"a": 1, "b": 2, "because": "the first reason"})
+    result = _call("link_add", {"a": 1, "b": 2, "because": "a second reason"})
+    assert result == {"linked": {"a": 1, "b": 2, "because": "the first reason"}}
+    assert _call("show", {"id": 1, "include_neighbor_because": True})["links"][0][
+        "because"
+    ] == "the first reason"
+
+
+def test_cli_duplicate_link_add_reports_the_first_because(store, capsys):
+    _seed_two_specs()
+    _cli_json(capsys, ["link", "add", "1", "2", "--because", "the first reason",
+                       "--json"])
+    result = _cli_json(capsys, ["link", "add", "1", "2", "--because",
+                                "a second reason", "--json"])
+    assert result == {"linked": {"a": 1, "b": 2, "because": "the first reason"}}
+
+
+def test_mcp_link_add_reports_the_stripped_because_it_stored(store):
+    _seed_two_specs()
+    result = _call("link_add", {"a": 2, "b": 1, "because": "  spaced reason  "})
+    assert result == {"linked": {"a": 2, "b": 1, "because": "spaced reason"}}
+
+
+def test_cli_link_add_reports_the_stripped_because_it_stored(store, capsys):
+    _seed_two_specs()
+    result = _cli_json(capsys, ["link", "add", "2", "1", "--because",
+                                "  spaced reason  ", "--json"])
+    assert result == {"linked": {"a": 2, "b": 1, "because": "spaced reason"}}
+
+
+def test_project_link_add_result_fails_loud_when_the_link_is_absent(core):
+    core.add("one", kind="design")
+    core.add("two", kind="design")
+    with pytest.raises(ValueError, match="no link"):
+        project_link_add_result(core.show(1), 1, 2)

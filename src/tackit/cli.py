@@ -29,6 +29,7 @@ from .models import (
     project_add_result,
     project_change_result,
     project_label_result,
+    project_link_add_result,
     project_link_rm_result,
     project_show_slice,
     project_slice,
@@ -453,7 +454,7 @@ def _cmd_link(args) -> int:
         if args.link_action == "add":
             s = core.link_add(args.a, args.b, because=args.because)
             verb = "added"
-            payload = {"linked": {"a": args.a, "b": args.b, "because": args.because}}
+            payload = project_link_add_result(s, args.a, args.b)
         else:
             s = core.link_rm(args.a, args.b)
             verb = "removed"

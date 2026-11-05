@@ -23,6 +23,7 @@ from .models import (
     project_add_result,
     project_change_result,
     project_label_result,
+    project_link_add_result,
     project_link_rm_result,
     project_show_slice,
     project_slice,
@@ -598,16 +599,16 @@ def build_server() -> FastMCP:
         cascade traverses links, never prose buried in a description.
 
         D39 #2 -- returns a COMPACT confirmation ``{"linked": {"a", "b",
-        "because"}}``, not ``a``'s full slice. link_add is structural (it
+        "because"}}``, not ``a``'s full slice; ``because`` is the stored
+        rationale, so a duplicate link reports its first one. link_add is structural (it
         does not fire the cascade), so the neighborhood echo carries no
         obligation the caller must act on; reprinting a high-degree node's
         whole neighborhood on every bulk edge was pure context tax. Use
         ``show(a)`` when you actually want the slice."""
         with _core() as c:
-            c.link_add(a, b, because=because)
             return _wrap(
                 c,
-                {"linked": {"a": a, "b": b, "because": because}},
+                project_link_add_result(c.link_add(a, b, because=because), a, b),
                 short_alert=True,
             )
 

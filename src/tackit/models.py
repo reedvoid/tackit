@@ -422,6 +422,18 @@ def project_label_result(task_id: int, labels: list[str]) -> dict:
     return {"id": task_id, "labels": labels}
 
 
+def project_link_add_result(slice_: "Slice", a: int, b: int) -> dict:
+    """D39 + D211 + T322: `link_add`'s compact return, reporting the rationale
+    actually stored. A duplicate link is a no-op that keeps its first rationale,
+    and a stored rationale is stripped, so echoing the argument could confirm text
+    that was never saved. ``slice_`` is ``a``'s slice after the op, so the entry
+    must exist; its absence means the op lied, and fails loud (D2)."""
+    for entry in slice_.links:
+        if entry.id == b:
+            return {"linked": {"a": a, "b": b, "because": entry.because}}
+    raise ValueError(f"no link from {a} to {b} in the slice after link_add.")
+
+
 def project_link_rm_result(a: int, b: int) -> dict:
     """D211 + T317: `link_rm` mirrors `link_add`'s compact form (D39)."""
     return {"unlinked": {"a": a, "b": b}}
