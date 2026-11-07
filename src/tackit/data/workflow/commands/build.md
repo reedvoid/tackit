@@ -1,5 +1,5 @@
 ---
-description: Build a graduated meta's production tasks as committed, verified TDD increments — uncertain piece first, mandatory test-audit per non-mechanical increment, liberal unit + full integration and a rule matrix at meta-end, drive to a runnable end state (context-budget-gated), billed evals user-gated. Executes what /graduate carved.
+description: Build a graduated meta's production tasks as committed, verified TDD increments — uncertain piece first, mandatory test-audit per non-mechanical increment, tests run at the level each diff reaches (full suites and a rule matrix at meta-end), drive to a runnable end state (context-budget-gated), billed evals user-gated. Executes what /graduate carved.
 argument-hint: <meta or production task id> [optional: which task / phase / emphasis]
 ---
 ⛔ PRECONDITION — the work must be GRADUATED (run /graduate first). Verify the target has: production task(s) with impl-ready bodies (tackit D37 — buildable from the body + linked slices alone), ≥1 design/schema slice link each (tackit D256), and a build order. If any body is pointer-only / TBD, or a design-grade decision is still open, STOP and say so — building from an unsettled plan bakes the wrong thing into code that is expensive to unwind. Do NOT invent decisions /graduate didn't carve.
@@ -17,9 +17,10 @@ Target (+ any emphasis): $ARGUMENTS
 
 2a. TEST-AUDIT — MANDATORY on every non-mechanical increment, run in-session; scope, exemption and routing are defined once in the `test-audit` skill ("When this audit is required"). Each finding is a FIX (real bug → change the code, resolve first) or a TEST (pin correct behavior). The increment's report carries the one `test-audit:` line that skill defines.
 
-3. TEST CADENCE — LIBERAL UNIT, FULL INTEGRATION AT META-END.
-   - Run the fast UNIT suite liberally — every increment, and MANDATORY on any prompt / LLM-call change.
-   - Reserve the FULL integration suite for the END of the meta's build, BEFORE any billed eval — EXCEPT: if a genuinely-uncertain load-bearing task has dependents, run integration ONCE to prove it before building on it (step 1). Rebuild the test image FIRST after any app-code / migration change when tests run against a built image — a stale image is a SILENT false pass/fail.
+3. TEST CADENCE — RUN THE LEVEL EACH INCREMENT'S DIFF REACHES, NO HIGHER AND NO LOWER (the project's CLAUDE.md says what each level runs and what counts as "shared").
+   - At each commit find the HIGHEST level the diff reaches and run that, once: (1) only new or changed test files → those files + every test file that imports a changed module (names-only search) + any repo-wide guard test (one that scans all files); (2) anything other tests depend on (app code, shared fixtures / conftest / factories, a helper other tests import, config or data that feeds prompts or schemas, migrations, requirements) → the full FAST (unit) suite; (3) app code, a migration / schema change, shared fixtures or a shared contract → also the full SLOW (integration) suite. A diff you cannot place → the higher level. Never re-run a suite no diff has touched since its last green run.
+   - Unit is MANDATORY on any prompt / LLM-call change (the slow suite misses the prompt-governance guards).
+   - Also run the full SLOW suite ONCE to prove a genuinely-uncertain load-bearing task that has dependents before building on it (step 1), and at the END of the meta's build, BEFORE any billed eval (with 3a). Rebuild the test image FIRST after any app-code / migration change when tests run against a built image — a stale image is a SILENT false pass/fail.
    - Run the LOCAL DEPLOY GATE (the e2e run against the deployed build) after any migration, constraint or fixture-affecting change — not only at the end; a new constraint breaks fixture replay that the integration suite never exercises.
    - Committed increments make an end-suite red git-bisectable.
 
