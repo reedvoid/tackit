@@ -1,10 +1,10 @@
 ---
-description: Aggressively consolidate a bloated MEMORY.md into a lean two-zone index — SOLO ONLY. Moves inline detail to topic files, cuts stale/superseded, merges per-session NEXT blocks. The destructive counterpart to add-only /handoff.
+description: Aggressively consolidate a bloated MEMORY.md into a lean two-zone index — SOLO ONLY. Moves inline detail to topic files, cuts stale/superseded, merges per-session NEXT blocks. /handoff runs it automatically when no other session is active; run it alone for a cleanup outside a handoff.
 argument-hint: [optional: any emphasis for this run]
 ---
 Aggressively trim + consolidate MEMORY.md. This is the DESTRUCTIVE, global-view counterpart to the add-only /handoff.
 
-⛔ SOLO ONLY. This command REWRITES MEMORY.md wholesale and DELETES content. If another session is active — or might run /handoff while this runs — STOP: a concurrent add-only handoff writes from its own stale copy and your rewrite would clobber it (and vice-versa). Confirm you are the only active session before proceeding. This is the ONE place a full MEMORY.md rewrite is legitimate, precisely because nothing else is writing.
+⛔ SOLO ONLY. This command REWRITES MEMORY.md wholesale and DELETES content. If another session is active — or might run /handoff while this runs — STOP: a concurrent add-only handoff writes from its own stale copy and your rewrite would clobber it (and vice-versa). Confirm you are the only active session before proceeding — with THE SOLO CHECK in `~/.claude/commands/handoff.md` step 4 (`ListAgents`, then re-checks ~60 s apart: a peer listed right after a git commit is usually the security-guidance plugin's commit reviewer, gone within ~3 minutes; only a peer still listed after the re-checks is a concurrent session). This is the ONE place a full MEMORY.md rewrite is legitimate, precisely because nothing else is writing.
 
 WHEN TO RUN — two triggers, SAME mechanics (both solo, both rebuild the file):
 - (a) BLOAT-GC: the /handoff bloat alert fired. The file is EXTREMELY bloated — cut HARD; shaving a few lines is pointless.

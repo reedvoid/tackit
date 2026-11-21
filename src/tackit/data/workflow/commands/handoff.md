@@ -1,10 +1,10 @@
 ---
-description: End-of-session handoff — ADD-ONLY. Commit your own work, append your session record + NEXT block to memory, alert if MEMORY.md is bloated. Never trims (that's /trim).
+description: End-of-session handoff — commit your own work, write your session record, add your NEXT to memory, THEN run the full /trim when no other session is active (add-only + a bloat alert when one is).
 argument-hint: [optional: any emphasis for this run]
 ---
 Run the end-of-session handoff. This is the WRITE side of the continuity loop — /orient reads back exactly what you record here, so write it for a cold session that has none of this conversation's context.
 
-⭐ ADD-ONLY — the load-bearing rule. This command may ONLY add, or edit content THIS session created. It must NEVER delete, rewrite, or trim content another (or a past) session wrote. WHY: MEMORY.md is loaded into context at each session's START, so your in-context copy is STALE the moment a concurrent session writes; a rewrite/trim built from your stale copy would silently clobber its work. Only add-only + re-read-before-write composes safely across simultaneous handoffs. Global trimming/consolidation is a SEPARATE, solo-only job — **/trim**.
+⭐ ADD-ONLY UNLESS SOLO — the load-bearing rule. Steps 1-3 may ONLY add, or edit content THIS session created; they never delete, rewrite or trim content another (or a past) session wrote. WHY: MEMORY.md is loaded into context at each session's START, so your in-context copy is STALE the moment a concurrent session writes; a rewrite/trim built from your stale copy would silently clobber its work. Only add-only + re-read-before-write composes safely across simultaneous handoffs. Step 4 runs the destructive /trim ONLY after confirming no other session is active (user ruling: "trim and handoff" are always run together, so /handoff includes the trim — guarded, never unconditional).
 
 1. RECONCILE + COMMIT your OWN work (never another session's):
    - Clear stale flags only on tasks YOU touched; close / wont_do only what YOU resolved. Do not reconcile or alter a concurrent session's in-flight tasks.
@@ -20,9 +20,16 @@ Run the end-of-session handoff. This is the WRITE side of the continuity loop �
    - A genuinely-new DO-NOT-RE-DERIVE rule → APPEND one line (the rule + a `[[file]]`/`D#` pointer); put the detail in a topic file. Do not rewrite existing durable lines.
    - New topic-file pointers → APPEND to the relevant index bucket.
 
-4. ⚠ BLOAT ALERT (measure + warn — NEVER trim here): `wc -l` MEMORY.md and estimate its tokens. Emit the number in your report every time so the trend is visible. If it exceeds budget — the always-on core (top `# ⬅ ACTIVE` zone) over ~40 lines / ~3k tokens, OR the whole file over ~120 lines — make this the FIRST line of your report: `⚠ MEMORY.md BLOATED (N lines / ~Xk tok) — run /trim (solo, no concurrent session active).` Trimming is NEVER done in /handoff.
+4. TRIM — ONLY IF SOLO. First check for other active sessions (`ListAgents`; any other running session on this project counts — when the check itself is unavailable, treat it as NOT solo). THE SOLO CHECK (the one home; /trim uses it too):
+   - A peer listed RIGHT AFTER a `git commit` / `git push` is usually NOT a session: the security-guidance plugin starts a background Agent SDK commit reviewer on every commit, and `ListAgents` lists it as a busy interactive peer (the user never opened it). Its runs last ~5 s to ~3 min.
+   - So when a peer is listed, do NOT decide yet: re-check with `ListAgents` up to 3 more times, ~60 s apart (wait with a Monitor until-loop or do step 5's measurement in between — a foreground `sleep` is blocked). A peer GONE by a re-check was the reviewer → treat as solo. A peer still listed after ~3 minutes is a real concurrent session → NOT solo.
+   - Name in the report each peer seen and what the re-checks showed.
+   - SOLO → read `~/.claude/commands/trim.md` IN FULL and run its whole procedure now, after steps 2-3 (so your own NEXT sub-block and RECENT SESSIONS line are part of what it merges and archives). Its VERIFY-AGAINST-THE-SOURCE rule applies in full. Report it as trim.md asks (BEFORE → AFTER, what moved where, what was cut with its source state, the merged NEXT).
+   - NOT SOLO → do NOT trim. Stay add-only and go to step 5; the report's FIRST line says: `Trim skipped — another session is active (<name>, still listed after the re-checks); run /trim when it has finished.`
 
-Report the task changes (added / closed / reconciled) + the bloat measurement at the end.
+5. ⚠ BLOAT MEASUREMENT (every time): `wc -l` MEMORY.md and estimate its tokens, AFTER step 4. Emit the number in your report so the trend is visible. If it still exceeds budget — the always-on core (top `# ⬅ ACTIVE` zone) over ~40 lines / ~3k tokens, OR the whole file over ~120 lines — make this the FIRST line of your report: `⚠ MEMORY.md BLOATED (N lines / ~Xk tok) — run /trim (solo, no concurrent session active).`
 
-↓ Anything below is MY emphasis for this run — honor it as a priority. It does NOT replace the routine above: still do all of it (add-only). (Empty = standard handoff.)
+Report the task changes (added / closed / reconciled), the trim report (or why it was skipped) + the bloat measurement at the end.
+
+↓ Anything below is MY emphasis for this run — honor it as a priority. It does NOT replace the routine above: still do all of it (add-only steps 1-3, the trim only if solo). (Empty = standard handoff.)
 $ARGUMENTS
