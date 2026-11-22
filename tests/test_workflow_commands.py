@@ -168,6 +168,71 @@ def test_no_size_check_is_lines_only(filename):
         assert phrase not in text, phrase
 
 
+# --- T332: the shape rules that keep MEMORY.md from regrowing ------------------
+
+MEMORY_SHAPE_LINE = (
+    "MEMORY.md SHAPE: each NEXT item ≤ 250 bytes and each session's NEXT block ≤ 600 bytes "
+    "(ids, the next action, open user calls with their first-raised date; status, numbers and "
+    "paths live in the task or a topic file); RECENT SESSIONS keeps the newest 3, each hook "
+    "≤ 150 bytes; a Zone 2 bucket over 10 entries becomes one pointer to an index topic file."
+)
+ADMISSION_TEST = (
+    "a line enters or stays only if no always-loaded CLAUDE.md, loaded command, the tracker "
+    "skill or a design/schema slice already carries it, and current or next work needs it"
+)
+
+
+@pytest.mark.parametrize("filename", ("commands/trim.md", "commands/handoff.md"))
+def test_memory_shape_line_is_identical_in_trim_and_handoff(filename):
+    """The writer and the cleaner hold one shape; a drifted copy fails by name."""
+    assert MEMORY_SHAPE_LINE in _shipped()[filename]
+
+
+@pytest.mark.parametrize("filename", ("commands/trim.md", "commands/handoff.md"))
+def test_do_not_rederive_admission_test_in_trim_and_handoff(filename):
+    assert ADMISSION_TEST in _shipped()[filename]
+
+
+def test_trim_cuts_terminal_entries_and_has_no_done_bucket():
+    """The converse of the old shape: no DONE bucket, no demote-to-DONE path."""
+    text = _shipped()["commands/trim.md"]
+    assert "cut: the tracker holds it" in text
+    assert "RECENT SESSIONS, DONE, LIVE FACTS" not in text
+    assert "one-line DONE pointer" not in text
+    assert "drops to a DONE pointer" not in text
+    assert "RECENT SESSIONS, LIVE FACTS, FEEDBACK, REFERENCE, ARCHIVE" in text
+
+
+def test_trim_keeps_one_pointer_per_file_and_replaces_long_forms():
+    text = _shipped()["commands/trim.md"]
+    assert "ARCHIVE is always one pointer to an archive index topic file" in text
+    assert "no Zone 2 line for a file Zone 1 already links" in text
+    assert "replaces the previous long form" in text
+
+
+@pytest.mark.parametrize(
+    "filename, phrase",
+    [
+        ("commands/trim.md", "`## ⚠ HAZARDS`"),
+        ("commands/trim.md", "only when the source shows the hazard is gone"),
+        ("commands/handoff.md", "under `## ⚠ HAZARDS`"),
+        ("commands/orient.md", "`## ⚠ HAZARDS`"),
+    ],
+)
+def test_zone1_hazards_are_written_read_and_only_trimmed_on_evidence(filename, phrase):
+    assert phrase in _shipped()[filename]
+
+
+def test_handoff_never_removes_a_hazard_line():
+    """The dangerous direction: an add-only writer deleting another session's live hazard."""
+    assert "Never remove a hazard line; /trim does that" in _shipped()["commands/handoff.md"]
+
+
+def test_handoff_keeps_tracker_action_lists_out_of_memory():
+    text = _shipped()["commands/handoff.md"]
+    assert "tracker-action lists stay in the session file, never MEMORY.md" in text
+
+
 def test_handoff_bloat_alert_reports_bytes_and_the_limit_hit():
     """The alert is the line a reader acts on; a revert to `~Xk tok` fails here."""
     text = _shipped()["commands/handoff.md"]

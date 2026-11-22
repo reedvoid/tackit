@@ -6,7 +6,7 @@ argument-hint: [optional: any emphasis for this run]
 
 Get oriented:
 1. Read MEMORY.md (two zones — the layout is defined in /trim):
-   - ZONE 1 — the top `# ⬅ ACTIVE` core: read IN FULL — the `⭐ NEXT` block(s) + the one-line DO-NOT-RE-DERIVE rules. ⚠ `⭐ NEXT` may hold SEVERAL `### [session: tag]` sub-blocks left by concurrent sessions — read ALL of them.
+   - ZONE 1 — the top `# ⬅ ACTIVE` core: read IN FULL — the `⭐ NEXT` block(s), the `## ⚠ HAZARDS` lines (each overrides any general rule it contradicts; report them first) + the one-line DO-NOT-RE-DERIVE rules. ⚠ `⭐ NEXT` may hold SEVERAL `### [session: tag]` sub-blocks left by concurrent sessions — read ALL of them.
    - ZONE 2 — the index buckets: a MENU of one-line pointers, NOT content. ⛔ Follow a Zone-2 (or `[[…]]`) pointer ONLY when the current next task needs that file (decided in step 2); a pointer the task doesn't touch stays UNREAD — "read everything linked" is a bug.
    - ⭐ THE MAP is the per-session `session-YYYY-MM-DD-<slug>.md` file(s) /handoff wrote: read the MOST-RECENT one(s) pointed to from `🗄 RECENT SESSIONS` (the latest, plus any newer than your last orient or that a `### [session: …]` NEXT block references) — what it DID, PROVENANCE, ORIENTATION, and its LEFT UNVERIFIED / UNBUILT list.
    - Load the tracker (the tackit skill; find the open / next tasks).

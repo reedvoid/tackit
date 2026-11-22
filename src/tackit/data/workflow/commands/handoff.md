@@ -12,13 +12,19 @@ Run the end-of-session handoff. This is the WRITE side of the continuity loop �
 
 2. WRITE YOUR SESSION RECORD to its OWN dated file in the project memory directory — NOT into MEMORY.md's body:
    - Create `session-YYYY-MM-DD-<slug>.md` (slug = this session's focus) holding the BULK of the handoff: what you DID (shipped + verified — commit hashes / task ids), PROVENANCE (how you got here + the ORIGINAL trigger), and the ORIENTATION detail (specs, tasks, code touchpoints, run-logs/fixtures, conventions a cold session must read). Per-session file ⇒ two sessions never write the same file.
-   - It ends with a fixed `## LEFT UNVERIFIED / UNBUILT` list (in place of free-form cautions): each item = what, why it is open, and its OPEN tracker id. Something a later session must act on gets a task now; a note on a closed task or a NEXT bullet does not count. An item with no task states why no action is needed. An empty list reads NONE. A caution with no open action (a hazard to remember) goes in a `## HAZARDS` list beside it, one line each.
+   - It ends with a fixed `## LEFT UNVERIFIED / UNBUILT` list (in place of free-form cautions): each item = what, why it is open, and its OPEN tracker id. Something a later session must act on gets a task now; a note on a closed task or a NEXT bullet does not count. An item with no task states why no action is needed. An empty list reads NONE. A caution with no open action (a hazard to remember) goes in a `## HAZARDS` list beside it, one line each. A hazard a cold session could trip right now (e.g. a deploy that must wait) is also copied to MEMORY.md in step 3.
 
 3. RE-READ MEMORY.md FROM DISK (do NOT trust your in-context copy — a concurrent session may have just written it), then make ONLY these ADDITIVE edits (append / your-own-lines-only; never a full-file rewrite):
-   - APPEND one pointer line to `🗄 RECENT SESSIONS`: `- YYYY-MM-DD [slug](session-YYYY-MM-DD-slug.md) — one-line hook`.
+   Every addition fits the shape /trim defines (/trim enforces it on old content):
+
+   MEMORY.md SHAPE: each NEXT item ≤ 250 bytes and each session's NEXT block ≤ 600 bytes (ids, the next action, open user calls with their first-raised date; status, numbers and paths live in the task or a topic file); RECENT SESSIONS keeps the newest 3, each hook ≤ 150 bytes; a Zone 2 bucket over 10 entries becomes one pointer to an index topic file.
+
+   - APPEND one pointer line to `🗄 RECENT SESSIONS`: `- YYYY-MM-DD [slug](session-YYYY-MM-DD-slug.md) — one-line hook` (hook ≤ 150 bytes: no hashes, costs or counts; the session file holds them).
    - Under `## ⭐ NEXT`, APPEND or edit ONLY YOUR OWN per-session sub-block: `### [session: <your-tag>] <immediate next + task ids>`. NEVER touch another session's `### [session: …]` block. (Merging the per-session NEXTs into one priority is /trim's or the next /orient's job — not yours.) Each open USER CALL in your block carries the date it was FIRST raised (carry the original date forward, never today's); a call first raised more than two sessions ago goes FIRST in the block, marked "ask now".
-   - A genuinely-new DO-NOT-RE-DERIVE rule → APPEND one line (the rule + a `[[file]]`/`D#` pointer); put the detail in a topic file. Do not rewrite existing durable lines.
-   - New topic-file pointers → APPEND to the relevant index bucket.
+   - A genuinely-new DO-NOT-RE-DERIVE rule → APPEND one line (the rule + a `[[file]]`/`D#` pointer); put the detail in a topic file. Do not rewrite existing durable lines. Apply the admission test first: a line enters or stays only if no always-loaded CLAUDE.md, loaded command, the tracker skill or a design/schema slice already carries it, and current or next work needs it. A decision a slice already holds gets nothing here.
+   - Each active hazard from your session file → APPEND one line under `## ⚠ HAZARDS` in Zone 1 (create the heading below `⭐ NEXT` if it is absent). Never remove a hazard line; /trim does that once the source shows it is gone.
+   - New topic-file pointers → APPEND to the relevant index bucket, or to the bucket's index topic file when MEMORY.md points to one.
+   - Never add task-change or done lists: tracker-action lists stay in the session file, never MEMORY.md.
 
 4. TRIM — ONLY IF SOLO. First check for other active sessions (`ListAgents`; any other running session on this project counts — when the check itself is unavailable, treat it as NOT solo). THE SOLO CHECK (the one home; /trim uses it too):
    - A peer listed RIGHT AFTER a `git commit` / `git push` is usually NOT a session: the security-guidance plugin starts a background Agent SDK commit reviewer on every commit, and `ListAgents` lists it as a busy interactive peer (the user never opened it). Its runs last ~5 s to ~3 min.
