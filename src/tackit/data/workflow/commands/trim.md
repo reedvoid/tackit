@@ -19,17 +19,22 @@ WHEN TO RUN — two triggers, SAME mechanics (both solo, both rebuild the file):
   - `D#`/`S#` slice, commit, run-log, `[[topic-file]]` → OPEN it and confirm it still says what the entry claims BEFORE you compress, move, or drop the entry.
 - don't-do: prune/demote/merge on the memory text's own say-so; assume "looks done" = done or "sounds active" = active; skip this check to save turns (skipping it IS the dangerous failure). If a referent cannot be fetched this run, do NOT delete on a guess — KEEP it and flag it in the report as unverified.
 
-TARGET SHAPE — TWO ZONES:
-- **ZONE 1 — ACTIVE CORE** (the top `# ⬅ ACTIVE` region; always-on, HARD CAP ~40 lines / ~3k tokens): ONLY what every cold session must hold WITHOUT a file read — the current `⭐ NEXT` (task ids + pointers, prose minimized) and the load-bearing DO-NOT-RE-DERIVE rules, ONE line each = the rule + a `[[file]]`/`D#` pointer to its detail. A line that isn't earning its always-on slot (not needed by current/next work, or safe to re-derive) gets DEMOTED to Zone 2.
+TARGET SHAPE — TWO ZONES, under one budget:
+
+MEMORY.md BUDGET: Zone 1 (above the index heading) ≤ 40 lines and ≤ 8 KB; the whole file ≤ 120 lines and ≤ 12 KB; every Zone 2 line ≤ 300 bytes. Measure with `wc -lc`, not by eye.
+
+Why bytes as well as lines: Claude Code loads only the first 200 lines or 25KB of MEMORY.md and drops the rest, and a file of few, very long lines passes any line count. A Zone 2 line over 300 bytes is prose in pointer form: move its detail to the topic file and keep a short hook.
+
+- **ZONE 1 — ACTIVE CORE** (the top `# ⬅ ACTIVE` region; always-on, within the Zone 1 budget): ONLY what every cold session must hold WITHOUT a file read — the current `⭐ NEXT` (task ids + pointers, prose minimized) and the load-bearing DO-NOT-RE-DERIVE rules, ONE line each = the rule + a `[[file]]`/`D#` pointer to its detail. A line that isn't earning its always-on slot (not needed by current/next work, or safe to re-derive) gets DEMOTED to Zone 2.
 - **ZONE 2 — INDEX** (pure one-line pointers, ZERO inline content): RECENT SESSIONS, DONE, LIVE FACTS, FEEDBACK, REFERENCE, ARCHIVE, and the durable-knowledge DETAIL files. Every entry is `- [Title](file.md) — hook`.
 
 STEPS:
-1. Read MEMORY.md IN FULL; record its size (lines + ~tokens) as the BEFORE.
+1. Read MEMORY.md IN FULL; record its size (lines and bytes, whole file and Zone 1, plus any Zone 2 line over 300 bytes) as the BEFORE.
 2. For every inline prose block (durable invariants / methods / negatives / lessons, session narratives, hub-status tables): MOVE the detail into a topic file (create it, or confirm it already exists) and REPLACE the block in MEMORY.md with a one-line pointer. Keep a load-bearing RULE as a Zone-1 one-liner ONLY if it is truly always-needed; else pointer-only in Zone 2.
 3. MERGE the per-session `### [session: …]` sub-blocks under `⭐ NEXT` into ONE coherent NEXT priority. ⭐ FIRST verify each sub-block's task ids against tackit (per the VERIFY-AGAINST-THE-SOURCE rule): a sub-block whose tasks are all terminal does not belong in the merged NEXT at all — it drops to a DONE pointer. Merge only the entries whose referents tackit confirms are still open + live. If two sessions' *still-open* nexts genuinely conflict (not just concatenate), surface it and ASK rather than silently picking one.
 4. DELETE ruthlessly — but EVERY deletion is JUSTIFIED BY THE SOURCE, never by the memory text (see the VERIFY-AGAINST-THE-SOURCE rule above; run the tackit/git/slice/file check FIRST for each entry you touch): stale / superseded / done-and-already-captured entries, confirmed terminal/stale AT THE SOURCE this run. Terminal/archived content is at most a one-line pointer, never prose. ⚠ Before deleting a fact that lives ONLY in MEMORY.md (no topic file, not in git/tackit/logs), MOVE it to a topic file first — trimming is RELOCATING detail + cutting what's already captured elsewhere, never LOSING a unique fact. An entry you could NOT verify at its source stays (flagged unverified), never cut on a guess.
-5. Enforce the Zone-1 hard cap. Over budget → demote more to Zone 2 pointers.
-6. Report: BEFORE→AFTER size (lines + ~tokens), what moved to which files, what was deleted, and the merged NEXT. ⭐ For each entry pruned or demoted, name the SOURCE STATE that justified it (e.g. `M12 → closed in tackit`, `D34 → superseded by D56`), so the decision is auditable and not a bare "looked stale". List separately any entries KEPT-as-unverified because their referent could not be fetched this run.
+5. Enforce every part of the budget, measured again with `wc -lc`. Zone 1 over → demote more to Zone 2 pointers. A Zone 2 line over 300 bytes → move its detail to its topic file and shorten the hook. Whole file over → move or cut more; an index bucket of many old entries can become one pointer to a topic file that lists them.
+6. Report: BEFORE→AFTER size (lines and bytes, whole file and Zone 1), what moved to which files, what was deleted, and the merged NEXT. ⭐ For each entry pruned or demoted, name the SOURCE STATE that justified it (e.g. `M12 → closed in tackit`, `D34 → superseded by D56`), so the decision is auditable and not a bare "looked stale". List separately any entries KEPT-as-unverified because their referent could not be fetched this run.
 
 ↓ Anything below is MY emphasis for this run — honor it as a priority. It does NOT replace the routine above. (Empty = standard aggressive trim.)
 $ARGUMENTS

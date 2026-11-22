@@ -10,7 +10,8 @@ Get oriented:
    - ZONE 2 — the index buckets: a MENU of one-line pointers, NOT content. ⛔ Follow a Zone-2 (or `[[…]]`) pointer ONLY when the current next task needs that file (decided in step 2); a pointer the task doesn't touch stays UNREAD — "read everything linked" is a bug.
    - ⭐ THE MAP is the per-session `session-YYYY-MM-DD-<slug>.md` file(s) /handoff wrote: read the MOST-RECENT one(s) pointed to from `🗄 RECENT SESSIONS` (the latest, plus any newer than your last orient or that a `### [session: …]` NEXT block references) — what it DID, PROVENANCE, ORIENTATION, and its LEFT UNVERIFIED / UNBUILT list.
    - Load the tracker (the tackit skill; find the open / next tasks).
-   - ⚠ If MEMORY.md looks over budget (active core >~40 lines, or the whole file >~120 lines — or the last handoff logged a bloat alert), NOTE it and recommend a SOLO /trim. Do NOT trim (read-only).
+   - ⚠ Check MEMORY.md against the budget /trim defines, or note that the last handoff logged a bloat alert. Over → NOTE it and recommend a SOLO /trim. Do NOT trim (read-only).
+     MEMORY.md BUDGET: Zone 1 (above the index heading) ≤ 40 lines and ≤ 8 KB; the whole file ≤ 120 lines and ≤ 12 KB; every Zone 2 line ≤ 300 bytes. Measure with `wc -lc`, not by eye.
 2. First BUILD THE READING LIST, then read every item on it IN FULL — this is the step I keep under-doing, so the list is explicit and each item gets checked off. A 40-line window around a cited line is NOT reading the file; grep is not reading. From the immediate next task(s) plus a layer or two UP (drawing on the session file + the Zone-2 pointers as your menu), enumerate and read:
    - every design/schema slice it links (D#/S#) — the WHOLE slice, not just the one rule referenced;
    - every memory topic-file it links (`[[…]]`) or that a Zone-2 pointer names as relevant;

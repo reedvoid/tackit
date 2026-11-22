@@ -143,6 +143,38 @@ def test_the_opinions_survive(filename, opinion):
     assert opinion in _shipped()[filename]
 
 
+# --- T330: one memory budget, in bytes as well as lines -----------------------
+
+MEMORY_BUDGET_LINE = (
+    "MEMORY.md BUDGET: Zone 1 (above the index heading) ≤ 40 lines and ≤ 8 KB; "
+    "the whole file ≤ 120 lines and ≤ 12 KB; every Zone 2 line ≤ 300 bytes. "
+    "Measure with `wc -lc`, not by eye."
+)
+MEMORY_SIZE_COMMANDS = ("commands/trim.md", "commands/handoff.md", "commands/orient.md")
+LINES_ONLY_PHRASES = ("whole file >~120 lines", "whole file over ~120 lines", "(lines + ~tokens)")
+
+
+@pytest.mark.parametrize("filename", MEMORY_SIZE_COMMANDS)
+def test_memory_budget_line_is_identical_in_each_size_check(filename):
+    """A copy that drifts, or a command that loses the byte limits, fails by name."""
+    assert MEMORY_BUDGET_LINE in _shipped()[filename]
+
+
+@pytest.mark.parametrize("filename", MEMORY_SIZE_COMMANDS)
+def test_no_size_check_is_lines_only(filename):
+    """The converse: the old lines-only checks let a short file of very long lines pass."""
+    text = _shipped()[filename]
+    for phrase in LINES_ONLY_PHRASES:
+        assert phrase not in text, phrase
+
+
+def test_handoff_bloat_alert_reports_bytes_and_the_limit_hit():
+    """The alert is the line a reader acts on; a revert to `~Xk tok` fails here."""
+    text = _shipped()["commands/handoff.md"]
+    assert "`⚠ MEMORY.md BLOATED (N lines / N bytes; <which limit>)" in text
+    assert "~Xk tok" not in text
+
+
 @pytest.mark.parametrize(
     "planted",
     ["run /plain next", "see /other", "`references/missing.md`"],

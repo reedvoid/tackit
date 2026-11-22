@@ -27,7 +27,11 @@ Run the end-of-session handoff. This is the WRITE side of the continuity loop �
    - SOLO → read `~/.claude/commands/trim.md` IN FULL and run its whole procedure now, after steps 2-3 (so your own NEXT sub-block and RECENT SESSIONS line are part of what it merges and archives). Its VERIFY-AGAINST-THE-SOURCE rule applies in full. Report it as trim.md asks (BEFORE → AFTER, what moved where, what was cut with its source state, the merged NEXT).
    - NOT SOLO → do NOT trim. Stay add-only and go to step 5; the report's FIRST line says: `Trim skipped — another session is active (<name>, still listed after the re-checks); run /trim when it has finished.`
 
-5. ⚠ BLOAT MEASUREMENT (every time): `wc -l` MEMORY.md and estimate its tokens, AFTER step 4. Emit the number in your report so the trend is visible. If it still exceeds budget — the always-on core (top `# ⬅ ACTIVE` zone) over ~40 lines / ~3k tokens, OR the whole file over ~120 lines — make this the FIRST line of your report: `⚠ MEMORY.md BLOATED (N lines / ~Xk tok) — run /trim (solo, no concurrent session active).`
+5. ⚠ BLOAT MEASUREMENT (every time), AFTER step 4, against the budget /trim defines:
+
+   MEMORY.md BUDGET: Zone 1 (above the index heading) ≤ 40 lines and ≤ 8 KB; the whole file ≤ 120 lines and ≤ 12 KB; every Zone 2 line ≤ 300 bytes. Measure with `wc -lc`, not by eye.
+
+   Emit the numbers in your report so the trend is visible. If any limit is exceeded, make this the FIRST line of your report: `⚠ MEMORY.md BLOATED (N lines / N bytes; <which limit>) — run /trim (solo, no concurrent session active).`
 
 Report the task changes (added / closed / reconciled), the trim report (or why it was skipped) + the bloat measurement at the end.
 
