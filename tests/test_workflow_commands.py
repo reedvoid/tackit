@@ -171,9 +171,10 @@ def test_no_size_check_is_lines_only(filename):
 # --- T332: the shape rules that keep MEMORY.md from regrowing ------------------
 
 MEMORY_SHAPE_LINE = (
-    "MEMORY.md SHAPE: each NEXT item ≤ 250 bytes and each session's NEXT block ≤ 600 bytes "
-    "(ids, the next action, open user calls with their first-raised date; status, numbers and "
-    "paths live in the task or a topic file); RECENT SESSIONS keeps the newest 3, each hook "
+    "MEMORY.md SHAPE: each NEXT item ≤ 250 bytes, each session's NEXT block ≤ 600 bytes, and "
+    "the merged NEXT a trim produces ≤ 1.5 KB (ids, the next action, open user calls with their "
+    "first-raised date; status, numbers and paths live in the task or a topic file; "
+    "lower-priority ids go on one Parked line); RECENT SESSIONS keeps the newest 3, each hook "
     "≤ 150 bytes; a Zone 2 bucket over 10 entries becomes one pointer to an index topic file."
 )
 ADMISSION_TEST = (
@@ -201,6 +202,11 @@ def test_trim_cuts_terminal_entries_and_has_no_done_bucket():
     assert "one-line DONE pointer" not in text
     assert "drops to a DONE pointer" not in text
     assert "RECENT SESSIONS, LIVE FACTS, FEEDBACK, REFERENCE, ARCHIVE" in text
+
+
+def test_trim_enforces_the_merged_next_cap():
+    """T333: the first live trim merged 9 items into 1,298 B with no stated target."""
+    assert "the merged NEXT within 1.5 KB" in _shipped()["commands/trim.md"]
 
 
 def test_trim_keeps_one_pointer_per_file_and_replaces_long_forms():
