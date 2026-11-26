@@ -15,13 +15,13 @@ narrower invariant under test stays isolated.
 
 import pytest
 
-from tackit.core import stale_alert_payload, stale_alert_text
+from tackit.core import stale_alert_for_call, stale_alert_text
 from tackit.errors import InvariantError
 
 
 def test_d19_alert_empty_when_nothing_stale():
     assert stale_alert_text([]) == ""
-    assert stale_alert_payload([]) is None
+    assert stale_alert_for_call(frozenset(), []) is None
 
 
 def test_d19_alert_names_tasks_and_required_action(core):
@@ -36,7 +36,7 @@ def test_d19_alert_names_tasks_and_required_action(core):
     assert "T3" in text
     assert "linked neighbors" in text  # instructs inspecting neighbors
     assert "STALE" in text.upper()
-    payload = stale_alert_payload(stale)
+    payload = stale_alert_for_call(frozenset(), stale)  # all newly added: full form
     assert payload["count"] == 1
     assert payload["stale_task_ids"] == [3]
     assert "T3" in payload["message"]
@@ -51,7 +51,7 @@ def test_d19_alert_lists_all_stale_in_id_order(core):
     core.link_add(4, 2, because="test fixture")
     core.edit(2, description="x", delta="test")  # stales T3, T4, and D1 (anchor, also a direct neighbor)
     core.reconcile(1)  # clear the anchor -- isolate T3/T4 as the id-ordered stale set under test
-    payload = stale_alert_payload(core.stale_worklist())
+    payload = stale_alert_for_call(frozenset(), core.stale_worklist())
     assert payload["stale_task_ids"] == [3, 4]
 
 

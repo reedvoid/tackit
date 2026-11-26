@@ -144,7 +144,9 @@ def test_mcp_stale_alert_rides_in_envelope(tmp_path, monkeypatch):
     env = _envelope(_drive(tmp_path, monkeypatch, scenario))
     assert env["stale_alert"]["count"] == 2
     assert env["stale_alert"]["stale_task_ids"] == [1, 3]
-    assert "STALE" in env["stale_alert"]["message"].upper()
+    # D61: this edit ADDED the stale ids, so it carries the full paragraph (the
+    # one-line form also contains "stale", so assert the paragraph itself).
+    assert "STALE TASKS OUTSTANDING" in env["stale_alert"]["message"]
 
 
 # -------------------------------------------------------------------------
@@ -519,29 +521,21 @@ def test_mcp_stale_alert_short_form_on_reads(tmp_path, monkeypatch):
     assert env["stale_alert"]["stale_task_ids"] == [1, 3]
 
 
-def test_mcp_stale_alert_full_form_on_writes(tmp_path, monkeypatch):
-    """M181 #8b: write MCP ops emit the FULL strongly-worded stale_alert
-    paragraph -- the at-cost teaching moment is preserved. Without this,
-    the discipline rule ("never end a turn with worklist non-empty")
-    loses its teeth at exactly the moment it's supposed to fire.
-    """
+def test_mcp_a_write_that_adds_no_stale_ids_gets_the_short_form(tmp_path, monkeypatch):
+    """D61 (replaces M181 #8b's every-write full paragraph): a write that adds no
+    stale ids -- here an `add` while work is already stale -- carries the one-line
+    form. The full paragraph rides only the call that created the obligation
+    (pinned in test_mcp_stale_alert_rides_in_envelope and test_stale_alert_form)."""
     async def scenario(s):
         for coro in _setup_stale_scenario(s):
             await coro
-        # Add another task -- write op -- envelope should carry full alert.
         return await s.call_tool("add", {"name": "c", "kind": "production",
                                           "deps": {1: "realizes the anchor"}})
 
     env = _envelope(_drive(tmp_path, monkeypatch, scenario))
-    assert env["stale_alert"] is not None
     msg = env["stale_alert"]["message"]
-    assert "STALE TASKS OUTSTANDING" in msg, (
-        f"Write op `add` must emit the FULL stale_alert form per M181 #8b. "
-        f"The discipline pressure ('never end a turn with worklist non-empty') "
-        f"belongs at the at-cost moment; got: {msg!r}"
-    )
-    # stale worklist = dep(3) AND the anchor(1) -- both are a's direct link
-    # neighbors (D256 gate cascade caution).
+    assert msg == "⚠ 2 stale — see `stale` for the list."
+    assert "STALE TASKS OUTSTANDING" not in msg
     assert env["stale_alert"]["count"] == 2
     assert env["stale_alert"]["stale_task_ids"] == [1, 3]
 

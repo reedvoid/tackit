@@ -20,7 +20,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.utilities import func_metadata as _func_metadata
 from pydantic import ValidationError as _PydanticValidationError
 
-from .core import Core, stale_alert_payload
+from .core import Core, stale_alert_for_call
 from .models import (
     project_add_result,
     project_change_result,
@@ -38,6 +38,7 @@ from .plan import parse_plan
 @contextmanager
 def _core():
     core = Core.open()
+    core.mark_call_start()  # D61: the alert form depends on what this call adds
     try:
         yield core
     finally:
@@ -57,7 +58,7 @@ ENVELOPE_KEYS = (
 )
 
 
-def _wrap(core: Core, result, short_alert: bool = False) -> str:
+def _wrap(core: Core, result) -> str:
     """D61 - envelope every tool result and return it as compact JSON text.
 
     `result` is always present; every advisory key appears ONLY when it is set,
@@ -73,11 +74,11 @@ def _wrap(core: Core, result, short_alert: bool = False) -> str:
     reads this text verbatim; every tool is registered with
     ``structured_output=False`` so the text is the only content.
 
-    M181 #8b: read ops pass ``short_alert=True`` so the message is a compact
-    one-liner ("⚠ N stale — see `stale` for the list"); writes keep the full
-    obligation paragraph as the at-cost teaching moment."""
+    The alert's form comes from core's one rule (D61, :func:`stale_alert_form`):
+    the full obligation paragraph only when this call ADDED stale ids, the
+    one-line form otherwise, nothing when nothing is stale."""
     values = {
-        "stale_alert": stale_alert_payload(core.stale_worklist(), short=short_alert),
+        "stale_alert": stale_alert_for_call(core.call_entry_stale_ids, core.stale_worklist()),
         "label_nudge": core.last_label_nudge,
         "code_check_reminder": core.last_code_check_reminder,
         "coherence_nudge": core.last_coherence_nudge,
@@ -261,7 +262,7 @@ def build_server() -> FastMCP:
             payload = project_show_slice(
                 c.show(id), include_neighbor_because=include_neighbor_because
             )
-            return _wrap(c, payload, short_alert=True)
+            return _wrap(c, payload)
 
     @mcp.tool(structured_output=False)
     def search(terms: str, limit: int = 20, name_only: bool = False) -> str:
@@ -275,7 +276,7 @@ def build_server() -> FastMCP:
             hits = []
             for h in c.search(terms, limit=limit, name_only=name_only):
                 hits.append(h.model_dump(mode="json"))
-            return _wrap(c, hits, short_alert=True)
+            return _wrap(c, hits)
 
     @mcp.tool(structured_output=False)
     def links(
@@ -304,7 +305,7 @@ def build_server() -> FastMCP:
             out = []
             for n in c.links(ids=ids, already_seen=already_seen):
                 out.append(n.model_dump(mode="json"))
-            return _wrap(c, out, short_alert=True)
+            return _wrap(c, out)
 
     @mcp.tool(structured_output=False)
     def edit(id: int, delta: str, name: str | None = None, description: str | None = None, include_description: bool = False) -> str:
@@ -578,7 +579,6 @@ def build_server() -> FastMCP:
             return _wrap(
                 c,
                 {"reconciled": ids, "remaining_stale": len(c.stale_worklist())},
-                short_alert=True,
             )
 
     @mcp.tool(structured_output=False)
@@ -641,7 +641,6 @@ def build_server() -> FastMCP:
             return _wrap(
                 c,
                 project_link_add_result(c.link_add(a, b, because=because), a, b),
-                short_alert=True,
             )
 
     @mcp.tool(structured_output=False)
@@ -674,7 +673,7 @@ def build_server() -> FastMCP:
         (pairs by prefixed-name); never the because text or neighborhoods (link
         ops are structural -- the result carries no obligation to act on)."""
         with _core() as c:
-            return _wrap(c, c.links_add(edges), short_alert=True)
+            return _wrap(c, c.links_add(edges))
 
     @mcp.tool(structured_output=False)
     def label_add(id: int, label: str) -> str:
@@ -723,7 +722,7 @@ def build_server() -> FastMCP:
                 kind=kind, name_prefix=name_prefix, order_by=order_by,
             ):
                 tasks.append(project_task(t, include_description=include_description))
-            return _wrap(c, tasks, short_alert=True)
+            return _wrap(c, tasks)
 
     @mcp.tool(structured_output=False)
     def summary() -> str:
@@ -735,7 +734,7 @@ def build_server() -> FastMCP:
         board) to act on, so it can't substitute for reading a slice. The counts
         are situational awareness, NOT a target to drive to zero."""
         with _core() as c:
-            return _wrap(c, c.summary(), short_alert=True)
+            return _wrap(c, c.summary())
 
     @mcp.tool(structured_output=False)
     def stale() -> str:
@@ -745,7 +744,7 @@ def build_server() -> FastMCP:
             tasks = []
             for t in c.stale_worklist():
                 tasks.append(project_task(t, include_description=False))
-            return _wrap(c, tasks, short_alert=True)
+            return _wrap(c, tasks)
 
     @mcp.tool(structured_output=False)
     def labels() -> str:
@@ -756,13 +755,13 @@ def build_server() -> FastMCP:
             out = []
             for i in c.labels_summary():
                 out.append(i.model_dump(mode="json"))
-            return _wrap(c, out, short_alert=True)
+            return _wrap(c, out)
 
     @mcp.tool(structured_output=False)
     def render(label: str) -> str:
         """Render the tasks under a label into one markdown narrative (D16)."""
         with _core() as c:
-            return _wrap(c, c.render(label), short_alert=True)
+            return _wrap(c, c.render(label))
 
     @mcp.tool(structured_output=False)
     def history(id: int) -> str:
@@ -773,7 +772,7 @@ def build_server() -> FastMCP:
         used to say -- the record for terminal (closed/wont_do) rows, which
         D259 freezes against edits (reopen a closed task to change it)."""
         with _core() as c:
-            return _wrap(c, c.history(id).model_dump(mode="json"), short_alert=True)
+            return _wrap(c, c.history(id).model_dump(mode="json"))
 
     @mcp.tool(structured_output=False)
     def load(plan: str) -> str:
@@ -840,7 +839,7 @@ def build_server() -> FastMCP:
                     include_description=include_description,
                     include_neighbor_because=include_neighbor_because,
                 ))
-            return _wrap(c, cards, short_alert=True)
+            return _wrap(c, cards)
 
     _assert_param_gate(mcp)  # T236: fail loud if the strict-param gate didn't take
     return mcp

@@ -281,24 +281,43 @@ def stale_alert_text(stale_tasks: list[Task]) -> str:
     )
 
 
-def stale_alert_payload(stale_tasks: list[Task], short: bool = False) -> dict | None:
-    """Structured form of the stale alert for the MCP result envelope; None when
-    nothing is stale. Carries the same wording as :func:`stale_alert_text` by
-    default; when ``short=True``, emits a compact one-line message instead
-    (M181 #8b — cuts ~2k tokens per call on browse-heavy sessions; reads use
-    this, writes keep the full obligation paragraph as the at-cost teaching
-    moment). ``count`` and ``stale_task_ids`` are unchanged either way."""
-    if not stale_tasks:
+def stale_alert_short_text(count: int) -> str:
+    """D61 - the one-line stale alert, for any call that added no stale ids."""
+    return f"⚠ {count} stale — see `stale` for the list."
+
+
+def stale_alert_form(entry_ids: frozenset[int], after: list[Task]) -> str | None:
+    """D61 - the ONE home of which stale-alert form a call gets, used by the MCP
+    envelope and the CLI banner alike. ``entry_ids`` is the worklist at the call's
+    start, ``after`` the worklist at its end:
+      * None when nothing is stale at the end;
+      * "full" when the call ADDED ids (a new obligation appeared; only edit,
+        edit_replace_substring and reclassify can do that);
+      * "short" otherwise -- including a reconcile that shrank the list (D199 #6)."""
+    if not after:
+        return None
+    for t in after:
+        if t.id not in entry_ids:
+            return "full"
+    return "short"
+
+
+def stale_alert_for_call(entry_ids: frozenset[int], after: list[Task]) -> dict | None:
+    """D61 - the MCP envelope's ``stale_alert`` for one call: None when nothing is
+    stale, else ``{count, stale_task_ids, message}`` with the full obligation
+    paragraph only when the call added stale ids (:func:`stale_alert_form`)."""
+    form = stale_alert_form(entry_ids, after)
+    if form is None:
         return None
     ids = []
-    for t in stale_tasks:
+    for t in after:
         ids.append(t.id)
-    if short:
-        message = f"⚠ {len(stale_tasks)} stale — see `stale` for the list."
+    if form == "full":
+        message = stale_alert_text(after)
     else:
-        message = stale_alert_text(stale_tasks)
+        message = stale_alert_short_text(len(after))
     return {
-        "count": len(stale_tasks),
+        "count": len(after),
         "stale_task_ids": ids,
         "message": message,
     }
@@ -450,6 +469,8 @@ class Core:
         # candidate missing edge (the fold-back-forgot-the-edge case, the
         # inverse of D249). Advisory, ephemeral, one op's lifetime.
         self.last_missing_edge_suggestions: list[str] | None = None
+        # D61: worklist ids at the start of this adapter call (mark_call_start).
+        self._call_entry_stale_ids: frozenset[int] | None = None
 
     # --- T124: shared prelude for cascade-firing / delta-bearing ops --------
     def _record_delta(self, delta: str, op_name: str) -> None:
@@ -1457,6 +1478,26 @@ class Core:
             "ORDER BY id"
         ).fetchall()
         return [self._task_from_row(r) for r in rows]
+
+    def mark_call_start(self) -> None:
+        """D61 - record the worklist ids at the start of one adapter call, so
+        :func:`stale_alert_form` can tell whether the call ADDED stale ids. Both
+        adapters call this right after opening the Core for a call."""
+        ids = set()
+        for t in self.stale_worklist():
+            ids.add(t.id)
+        self._call_entry_stale_ids = frozenset(ids)
+
+    @property
+    def call_entry_stale_ids(self) -> frozenset[int]:
+        """D61 - the ids recorded by :meth:`mark_call_start`. Reading them before
+        the adapter marked the call is an adapter bug, so it fails loud."""
+        if self._call_entry_stale_ids is None:
+            raise InvariantError(
+                "stale entry ids read before mark_call_start() (D61): the adapter "
+                "must mark the call start before it builds the stale alert."
+            )
+        return self._call_entry_stale_ids
 
     def reconcile(self, task_id: int) -> Task:
         """D11 + D28 (v0.4) + D36 (v0.5) + T156 - clear ``stale`` on a task

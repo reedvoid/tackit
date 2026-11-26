@@ -20,7 +20,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from . import __version__, sync
-from .core import Core, stale_alert_text
+from .core import Core, stale_alert_form, stale_alert_short_text, stale_alert_text
 from .db import init_store, require_store
 from .errors import TackitError
 from .models import (
@@ -94,42 +94,36 @@ def _dump(model):
     return model.model_dump(mode="json")
 
 
-# --- D19: built-in stale surfacing (design.md "Enforcement" tier 2) ---------
+# --- D61: built-in stale surfacing (design.md "Enforcement" tier 2) ---------
 # The stale check is code in the app, not advice: every Core-opening command
-# surfaces the outstanding stale set deterministically -- on entry (before the op)
-# and again on exit if the op changed it. It goes to STDERR so that `--json` stdout
-# stays clean and parseable. The wording is single-sourced in core.stale_alert_text.
+# surfaces the outstanding stale set deterministically, on STDERR so that `--json`
+# stdout stays clean and parseable. Which form is core's one rule
+# (core.stale_alert_form), shared with the MCP envelope: at entry the one-line form
+# when anything is stale; at exit the full paragraph only when the command ADDED
+# stale ids, or the done line when it emptied the list.
 
-def _stale_ids(tasks) -> list[int]:
-    out = []
-    for t in tasks:
-        out.append(t.id)
-    return out
-
-
-def _print_stale_banner(tasks, changed: bool = False) -> None:
-    text = stale_alert_text(tasks)
-    if text:
-        prefix = "[after this change] " if changed else ""
-        print(prefix + text, file=sys.stderr)
-    elif changed:
+def _print_exit_banner(entry_ids, after) -> None:
+    form = stale_alert_form(entry_ids, after)
+    if form == "full":
+        print("[after this change] " + stale_alert_text(after), file=sys.stderr)
+    elif form is None and entry_ids:
         print("✓ stale worklist now empty — reconciliation complete.", file=sys.stderr)
 
 
 @contextmanager
 def _core_session():
-    """Open Core, surface the entry stale banner, run the command, then surface the
-    exit banner if the stale set changed, and close. Centralizes the mandatory
-    before/after stale check so no command can skip it."""
+    """Open Core, surface the entry stale line, run the command, then surface the
+    exit banner per D61's rule, and close. Centralizes the mandatory before/after
+    stale check so no command can skip it."""
     core = Core.open()
-    entry = core.stale_worklist()
-    _print_stale_banner(entry)
+    core.mark_call_start()
+    entry_ids = core.call_entry_stale_ids
+    if entry_ids:
+        print(stale_alert_short_text(len(entry_ids)), file=sys.stderr)
     try:
         yield core
     finally:
-        after = core.stale_worklist()
-        if _stale_ids(after) != _stale_ids(entry):
-            _print_stale_banner(after, changed=True)
+        _print_exit_banner(entry_ids, core.stale_worklist())
         if core.last_label_nudge:  # D23 anti-sprawl nudge
             print(core.last_label_nudge, file=sys.stderr)
         if core.last_code_check_reminder:  # D31 v0.4 design/schema edit nudge
