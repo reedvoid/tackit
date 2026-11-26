@@ -115,11 +115,12 @@ def test_link_ops_take_no_delta(core):
         core.link_rm(2, 3, delta="y")
 
 
-def test_core_last_delta_set_after_edit(core):
+def test_edit_stores_its_delta_and_does_not_echo_it(core):
     core.add("spec anchor", kind="design")  # id 1
     core.add("a", kind="production", deps={1: "realizes the anchor decision"})  # id 2
     core.edit(2, description="changed", delta="shifted X to Y")
-    assert core.last_delta == "shifted X to Y"
+    assert core.history(2).description_revisions[-1].delta == "shifted X to Y"
+    assert not hasattr(core, "last_delta")  # D61: no delta echo
 
 
 def test_link_add_empty_because_refused(core):

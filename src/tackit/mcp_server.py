@@ -13,6 +13,7 @@ result's content. Transport: stdio.
 
 from __future__ import annotations
 
+import json
 from contextlib import contextmanager
 
 from mcp.server.fastmcp import FastMCP
@@ -43,35 +44,57 @@ def _core():
         core.close_conn()
 
 
-def _wrap(core: Core, result, short_alert: bool = False):
-    """D19 - envelope every tool result as ``{"stale_alert": ..., "result": ...}`` so
-    the built-in stale check surfaces in MCP exactly as it does on the CLI (design.md
-    "Enforcement" tier 2). ``stale_alert`` is None when nothing is stale; otherwise it
-    carries the count, the stale task ids, and the strongly-worded obligation
-    message. Reflects post-op state, so a tool that creates new stale tasks (e.g.
-    ``edit``) returns them right here in the same result.
+# D61: the full envelope key set, in emission order. `_wrap` builds from it and the
+# README guard reads it, so a new key is added here once (and listed in README).
+ENVELOPE_KEYS = (
+    "stale_alert",
+    "label_nudge",
+    "code_check_reminder",
+    "coherence_nudge",
+    "deadref_suggestions",
+    "missing_edge_suggestions",
+    "result",
+)
+
+
+def _wrap(core: Core, result, short_alert: bool = False) -> str:
+    """D61 - envelope every tool result and return it as compact JSON text.
+
+    `result` is always present; every advisory key appears ONLY when it is set,
+    never as null (D61, extending D211's absent-not-null rule):
+      * ``stale_alert`` -- the outstanding stale set (count, ids, message), post-op,
+        so an op that flags new tasks returns them in the same result;
+      * ``label_nudge`` (D65), ``code_check_reminder``, ``coherence_nudge`` (D250),
+        ``deadref_suggestions`` (D249), ``missing_edge_suggestions`` (D280) -- the
+        per-op advisories, each set by Core only for the op that produced it.
+    The op's delta is not echoed: the agent wrote it (D61; stored per D284).
+
+    Serialized once, compactly and with non-ASCII kept literal, because the agent
+    reads this text verbatim; every tool is registered with
+    ``structured_output=False`` so the text is the only content.
 
     M181 #8b: read ops pass ``short_alert=True`` so the message is a compact
     one-liner ("⚠ N stale — see `stale` for the list"); writes keep the full
     obligation paragraph as the at-cost teaching moment."""
-    return {
+    values = {
         "stale_alert": stale_alert_payload(core.stale_worklist(), short=short_alert),
-        "label_nudge": core.last_label_nudge,  # D23: set iff a new label was created
-        "delta": core.last_delta,  # T117: set iff a delta-bearing op just ran
-        # D31 (v0.4): set iff an edit just landed on a design/schema slice.
+        "label_nudge": core.last_label_nudge,
         "code_check_reminder": core.last_code_check_reminder,
-        # D250: set iff a design/schema edit left the resulting body reading as
-        # an append/changelog or with a dangling reference. Advisory, non-blocking.
         "coherence_nudge": core.last_coherence_nudge,
-        # D249: set iff retire/rename/reclassify left a LINKED neighbor citing a
-        # now-dead id. A list of soft repoint suggestions; advisory, non-blocking.
         "deadref_suggestions": core.last_deadref_suggestions,
-        # D280: set iff a just-edited body names a LIVE, non-retired, UNLINKED
-        # task by synthetic id -- a candidate missing edge (inverse of D249).
-        # A list of soft link suggestions; advisory, non-blocking.
         "missing_edge_suggestions": core.last_missing_edge_suggestions,
         "result": result,
     }
+    if set(values) != set(ENVELOPE_KEYS):
+        raise RuntimeError(
+            f"envelope keys {sorted(values)} differ from ENVELOPE_KEYS "
+            f"{sorted(ENVELOPE_KEYS)} (D61): add a new key to both."
+        )
+    envelope = {}
+    for key in ENVELOPE_KEYS:
+        if key == "result" or values[key] is not None:
+            envelope[key] = values[key]
+    return json.dumps(envelope, separators=(",", ":"), ensure_ascii=False, default=str)
 
 
 def _enforce_strict_param_gate() -> None:
@@ -163,14 +186,14 @@ def build_server() -> FastMCP:
     _enforce_strict_param_gate()
     mcp = FastMCP("tackit")
 
-    @mcp.tool()
+    @mcp.tool(structured_output=False)
     def add(
         name: str,
         kind: str,
         description: str = "",
         labels: list[str] | None = None,
         deps: dict[int, str] | None = None,
-    ) -> dict:
+    ) -> str:
         """Create a task (D3 + T94 + D33 + D36 + D37). ``kind`` is REQUIRED --
         one of design | schema | production | meta (D26). Classify by the
         'alters running-app behavior' rule: design = a decision slice, schema
@@ -229,8 +252,8 @@ def build_server() -> FastMCP:
             t = c.add(name, kind=kind, description=description, labels=labels, deps=deps)
             return _wrap(c, project_add_result(t))
 
-    @mcp.tool()
-    def show(id: int, include_neighbor_because: bool = False) -> dict:
+    @mcp.tool(structured_output=False)
+    def show(id: int, include_neighbor_because: bool = False) -> str:
         """Slice fetch (D9): a task plus its `links` (the single symmetric neighbour set) and labels. The task is returned in full. Links are lean by default (id/prefixed_name/status/stale/kind). `because` and `last_edit_delta` appear only when a link or this task is stale and open/spec, for reconciliation. Pass include_neighbor_because=True for them on every link.
 
         D211 + D34 + T294."""
@@ -240,8 +263,8 @@ def build_server() -> FastMCP:
             )
             return _wrap(c, payload, short_alert=True)
 
-    @mcp.tool()
-    def search(terms: str, limit: int = 20, name_only: bool = False) -> dict:
+    @mcp.tool(structured_output=False)
+    def search(terms: str, limit: int = 20, name_only: bool = False) -> str:
         """Ranked FTS keyword search over name+description (D17). `search -> show`
         is the retrieval loop. Returns ids+titles+scores, best first.
 
@@ -254,10 +277,10 @@ def build_server() -> FastMCP:
                 hits.append(h.model_dump(mode="json"))
             return _wrap(c, hits, short_alert=True)
 
-    @mcp.tool()
+    @mcp.tool(structured_output=False)
     def links(
         ids: list[int] | None = None, already_seen: list[int] | None = None
-    ) -> dict:
+    ) -> str:
         """Deterministic link-discovery primitive (D27) -- prefer this over
         `search` for wiring a new task to the specs/tasks it couples to.
         Two modes:
@@ -283,8 +306,8 @@ def build_server() -> FastMCP:
                 out.append(n.model_dump(mode="json"))
             return _wrap(c, out, short_alert=True)
 
-    @mcp.tool()
-    def edit(id: int, delta: str, name: str | None = None, description: str | None = None, include_description: bool = False) -> dict:
+    @mcp.tool(structured_output=False)
+    def edit(id: int, delta: str, name: str | None = None, description: str | None = None, include_description: bool = False) -> str:
         """Edit a task (D13 + T117 + D29 + D36 + D37). First marks its direct
         linked tasks stale (D10); returns the task plus the neighbors this edit
         newly flagged that are open or spec, each as `{id, because}`.
@@ -336,8 +359,8 @@ def build_server() -> FastMCP:
                 ),
             )
 
-    @mcp.tool()
-    def edit_append(id: int, content: str, delta: str, include_description: bool = False) -> dict:
+    @mcp.tool(structured_output=False)
+    def edit_append(id: int, content: str, delta: str, include_description: bool = False) -> str:
         """T179 - append ``content`` to a task's description. Diff-shaped
         variant of edit(): only the snippet crosses the wire, not the full
         new description. Cuts large-body edit cost ~10x.
@@ -387,10 +410,10 @@ def build_server() -> FastMCP:
                 ),
             )
 
-    @mcp.tool()
+    @mcp.tool(structured_output=False)
     def edit_replace_substring(
         id: int, old_string: str, new_string: str, delta: str, include_description: bool = False
-    ) -> dict:
+    ) -> str:
         """T179 - replace exact substring ``old_string`` with ``new_string``
         in a task's description. Diff-shaped variant of edit(): only the
         (old, new) pair crosses the wire. Cuts large-body edit cost ~10x.
@@ -438,8 +461,8 @@ def build_server() -> FastMCP:
                 ),
             )
 
-    @mcp.tool()
-    def close(id: int) -> dict:
+    @mcp.tool(structured_output=False)
+    def close(id: int) -> str:
         """Close a task (D12 + D14 + D36). For PRODUCTION + META tasks only.
         REFUSED if the task is stale, or if a DIRECT (1-hop) linked neighbor
         is stale (D56). The refusal names each stale neighbor with its link's
@@ -460,8 +483,8 @@ def build_server() -> FastMCP:
         with _core() as c:
             return _wrap(c, project_status_result(c.close(id).task))
 
-    @mcp.tool()
-    def reopen(id: int) -> dict:
+    @mcp.tool(structured_output=False)
+    def reopen(id: int) -> str:
         """Move a closed task back to open (D7/D8, logged). Reopen corrects a
         closed record: fix its text (reopen, edit, close again; D259) or
         undo a premature close. New work after a close is a new task linked
@@ -473,8 +496,8 @@ def build_server() -> FastMCP:
         with _core() as c:
             return _wrap(c, project_status_result(c.reopen(id)))
 
-    @mcp.tool()
-    def wont_do(id: int, reason: str) -> dict:
+    @mcp.tool(structured_output=False)
+    def wont_do(id: int, reason: str) -> str:
         """Mark a task as decided-not-to-do, distinct from closed=done (T132).
         For PRODUCTION + META tasks only. ``reason`` is durable (persists
         forever in wont_do_reason). No ``delta`` (D284): wont_do does not
@@ -494,8 +517,8 @@ def build_server() -> FastMCP:
         with _core() as c:
             return _wrap(c, project_status_result(c.wont_do(id, reason=reason).task))
 
-    @mcp.tool()
-    def retire(id: int, reason: str) -> dict:
+    @mcp.tool(structured_output=False)
+    def retire(id: int, reason: str) -> str:
         """Retire a design/schema slice (D36): status spec -> retired. For
         DESIGN + SCHEMA only. Use ONLY when the decision is 100% gone with
         NO replacement -- partial-change path is edit() and let the cascade
@@ -526,8 +549,8 @@ def build_server() -> FastMCP:
         with _core() as c:
             return _wrap(c, project_status_result(c.retire(id, reason=reason).task))
 
-    @mcp.tool()
-    def reconcile(ids: list[int]) -> dict:
+    @mcp.tool(structured_output=False)
+    def reconcile(ids: list[int]) -> str:
         """Batch-reconcile an EXPLICIT list of task ids: clear ``stale`` on
         each after reviewing them as still-correct (D11 + D28 + D36 + D39).
         Does not cascade (no content changed). One transaction, one version
@@ -558,8 +581,8 @@ def build_server() -> FastMCP:
                 short_alert=True,
             )
 
-    @mcp.tool()
-    def reclassify(id: int, kind: str, delta: str) -> dict:
+    @mcp.tool(structured_output=False)
+    def reclassify(id: int, kind: str, delta: str) -> str:
         """Change a task's kind after creation (T128 + D36). Required
         ``delta`` names the semantic shift (T117). REFUSED if the new kind
         would create a cross-kind link with any current neighbor (meta-
@@ -586,8 +609,8 @@ def build_server() -> FastMCP:
                 ),
             )
 
-    @mcp.tool()
-    def link_add(a: int, b: int, because: str) -> dict:
+    @mcp.tool(structured_output=False)
+    def link_add(a: int, b: int, because: str) -> str:
         """Add a symmetric link between tasks ``a`` and ``b`` with required
         ``because`` (durable per-edge coupling rationale, T116). Link ops do
         NOT cascade and carry NO ``delta`` (D213) -- delta exists to ride a
@@ -621,8 +644,8 @@ def build_server() -> FastMCP:
                 short_alert=True,
             )
 
-    @mcp.tool()
-    def link_rm(a: int, b: int) -> dict:
+    @mcp.tool(structured_output=False)
+    def link_rm(a: int, b: int) -> str:
         """Remove the symmetric link between ``a`` and ``b`` (D5/T93). Link ops
         do NOT cascade and carry NO ``delta`` (D213). Argument order doesn't
         matter (canonical lookup). Returns ``{"unlinked": {"a", "b"}}`` (D211)."""
@@ -630,8 +653,8 @@ def build_server() -> FastMCP:
             c.link_rm(a, b)
             return _wrap(c, project_link_rm_result(a, b))
 
-    @mcp.tool()
-    def links_add(edges: list[dict]) -> dict:
+    @mcp.tool(structured_output=False)
+    def links_add(edges: list[dict]) -> str:
         """Bulk-create links between EXISTING tasks (D213) -- the existing<->
         existing wiring pass that `load` can't cover (load only creates NEW
         tasks). Each edge is `{"a", "b", "because"}`: `a`/`b` are an id or a
@@ -653,23 +676,23 @@ def build_server() -> FastMCP:
         with _core() as c:
             return _wrap(c, c.links_add(edges), short_alert=True)
 
-    @mcp.tool()
-    def label_add(id: int, label: str) -> dict:
+    @mcp.tool(structured_output=False)
+    def label_add(id: int, label: str) -> str:
         """Attach a freeform label to a task (D4). Returns ``{id, labels}``,
         the task's labels after the change (D211)."""
         with _core() as c:
             c.label_add(id, label)
             return _wrap(c, project_label_result(id, c.labels_of(id)))
 
-    @mcp.tool()
-    def label_rm(id: int, label: str) -> dict:
+    @mcp.tool(structured_output=False)
+    def label_rm(id: int, label: str) -> str:
         """Remove a label from a task (D4). Returns ``{id, labels}``, the task's
         labels after the change (D211)."""
         with _core() as c:
             c.label_rm(id, label)
             return _wrap(c, project_label_result(id, c.labels_of(id)))
 
-    @mcp.tool()
+    @mcp.tool(structured_output=False)
     def ls(
         status: str | None = None,
         label: str | None = None,
@@ -678,7 +701,7 @@ def build_server() -> FastMCP:
         name_prefix: str | None = None,
         include_description: bool = False,
         order_by: str | None = None,
-    ) -> dict:
+    ) -> str:
         """Query/board (D15 + D211 + T220 + D283): filter tasks by status, label,
         stale, kind, and/or name_prefix, optionally sorted by a structured column.
         Returns a LEAN projection by default -- task scalars only, NO
@@ -702,8 +725,8 @@ def build_server() -> FastMCP:
                 tasks.append(project_task(t, include_description=include_description))
             return _wrap(c, tasks, short_alert=True)
 
-    @mcp.tool()
-    def summary() -> dict:
+    @mcp.tool(structured_output=False)
+    def summary() -> str:
         """Structured-column rollup (D283) for situational awareness -- serves
         the mandated end-of-turn state line. Returns counts by status, by kind,
         by (status × kind), the total, and the obligation-bearing stale count
@@ -714,8 +737,8 @@ def build_server() -> FastMCP:
         with _core() as c:
             return _wrap(c, c.summary(), short_alert=True)
 
-    @mcp.tool()
-    def stale() -> dict:
+    @mcp.tool(structured_output=False)
+    def stale() -> str:
         """The reconciliation worklist (D11): all stale open/spec tasks, as short
         rows with no bodies (D211); `show` opens one. Empty == done."""
         with _core() as c:
@@ -724,8 +747,8 @@ def build_server() -> FastMCP:
                 tasks.append(project_task(t, include_description=False))
             return _wrap(c, tasks, short_alert=True)
 
-    @mcp.tool()
-    def labels() -> dict:
+    @mcp.tool(structured_output=False)
+    def labels() -> str:
         """List every label with its usage -- count + a few example task titles, so
         a label's meaning is clear from its tasks (D21). RUN THIS BEFORE creating a
         new label: reuse an existing one if it fits, to avoid label sprawl."""
@@ -735,14 +758,14 @@ def build_server() -> FastMCP:
                 out.append(i.model_dump(mode="json"))
             return _wrap(c, out, short_alert=True)
 
-    @mcp.tool()
-    def render(label: str) -> dict:
+    @mcp.tool(structured_output=False)
+    def render(label: str) -> str:
         """Render the tasks under a label into one markdown narrative (D16)."""
         with _core() as c:
             return _wrap(c, c.render(label), short_alert=True)
 
-    @mcp.tool()
-    def history(id: int) -> dict:
+    @mcp.tool(structured_output=False)
+    def history(id: int) -> str:
         """The full append-only history of a task (D8 + D29 v0.4): status
         transitions and description revisions, both in chronological order.
         Description revisions preserve verbatim prior name/description
@@ -752,8 +775,8 @@ def build_server() -> FastMCP:
         with _core() as c:
             return _wrap(c, c.history(id).model_dump(mode="json"), short_alert=True)
 
-    @mcp.tool()
-    def load(plan: str) -> dict:
+    @mcp.tool(structured_output=False)
+    def load(plan: str) -> str:
         """Bulk-import a plan (D24 + T94 + D40) given as TEXT: `[key] Name` lines
         with indented `kind:` (REQUIRED, one of design|schema|production|meta) /
         `desc:` / `labels:` / `depends_on:` (references batch keys OR existing
@@ -783,7 +806,7 @@ def build_server() -> FastMCP:
             keymap = c.load(parse_plan(plan))
             return _wrap(c, {"loaded": keymap})
 
-    @mcp.tool()
+    @mcp.tool(structured_output=False)
     def board(
         status: str | None = None,
         label: str | None = None,
@@ -793,7 +816,7 @@ def build_server() -> FastMCP:
         include_description: bool = False,
         include_neighbor_because: bool = False,
         order_by: str | None = None,
-    ) -> dict:
+    ) -> str:
         """Dependency-aware board (D22 + D36 + D211 + T220 + D283): the filtered
         tasks, each as a slice (task + links + labels, the symmetric neighbour set), so you see
         the whole graph's structure in ONE call (richer than `ls`). LEAN by

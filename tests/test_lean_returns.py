@@ -12,6 +12,7 @@ Expected values are written out by hand from D211's rules, never recomputed.
 
 import asyncio
 import json
+import re
 import shlex
 from pathlib import Path
 
@@ -1087,13 +1088,15 @@ def test_the_readme_lists_every_envelope_field(store):
     readme = (REPO / "README.md").read_text(encoding="utf-8")
     section = " ".join(readme.split("### MCP tools", 1)[1].split("## Examples", 1)[0].split())
 
-    async def scenario(session):
-        return await session.call_tool("summary", {})
-
-    envelope = json.loads(_mcp(scenario).content[0].text)
-    assert len(envelope) == 8
-    for key in envelope:
-        assert key in section, f"README's envelope list misses {key}"
+    # D61: keys appear only when set, so one call's keys are not the full set; the
+    # full set is the ENVELOPE_KEYS constant `_wrap` builds from.
+    keys = mcp_server.ENVELOPE_KEYS
+    assert len(keys) > 0 and "result" in keys and "stale_alert" in keys
+    for key in keys:
+        # whole-token match: `label_nudge` must not pass on `label_nudgeX`
+        assert re.search(r"(?<!\w)" + re.escape(key) + r"(?!\w)", section), (
+            f"README's envelope list misses {key}"
+        )
 
 
 def test_the_skill_states_what_edit_append_does():

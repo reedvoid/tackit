@@ -132,8 +132,6 @@ def _core_session():
             _print_stale_banner(after, changed=True)
         if core.last_label_nudge:  # D23 anti-sprawl nudge
             print(core.last_label_nudge, file=sys.stderr)
-        if core.last_delta:  # T117 cascade-ergonomics delta
-            print(f"delta: {core.last_delta}", file=sys.stderr)
         if core.last_code_check_reminder:  # D31 v0.4 design/schema edit nudge
             print(core.last_code_check_reminder, file=sys.stderr)
         if core.last_coherence_nudge:  # D250 spec body reads as a changelog

@@ -141,10 +141,13 @@ def test_edit_append_on_meta_kind_does_not_set_reminder(core):
     assert core.last_code_check_reminder is None
 
 
-def test_edit_append_records_last_delta(core):
+def test_edit_append_records_its_delta_in_the_audit_row(core):
+    # D61: the delta is not echoed back (no Core.last_delta); its record is the
+    # audit row that history and last_edit_delta read (D284).
     core.add("a", kind="meta", description="x")
-    core.edit_append(1, content="y", delta="shifted X to Y")
-    assert core.last_delta == "shifted X to Y"
+    core.edit_append(1, content="y", delta="  shifted X to Y  ")
+    assert core.history(1).description_revisions[-1].delta == "shifted X to Y"
+    assert not hasattr(core, "last_delta")
 
 
 # =========================================================================
@@ -315,13 +318,14 @@ def test_edit_replace_substring_on_schema_kind_fires_code_check_reminder(core):
     assert "D31" in core.last_code_check_reminder
 
 
-def test_edit_replace_substring_records_last_delta(core):
+def test_edit_replace_substring_records_its_delta_in_the_audit_row(core):
     core.add("d", kind="design", description="spec anchor")
     core.add(
         "a", kind="production", description="abc", deps={1: "realizes the anchor decision"}
     )
     core.edit_replace_substring(2, old_string="b", new_string="B", delta="caps b")
-    assert core.last_delta == "caps b"
+    assert core.history(2).description_revisions[-1].delta == "caps b"
+    assert not hasattr(core, "last_delta")  # D61: no delta echo
 
 
 # =========================================================================

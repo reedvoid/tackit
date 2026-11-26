@@ -431,10 +431,6 @@ class Core:
         # adapters can surface the anti-sprawl nudge (CLI stderr / MCP envelope).
         # Lives for the single op's lifetime (each command/tool call is a fresh Core).
         self.last_label_nudge: str | None = None
-        # T117 / cascade-ergonomics B: set by the delta-bearing ops (D284) so
-        # adapters can surface the agent's semantic-delta string alongside the
-        # stale_alert. This field is ephemeral -- one op's lifetime only.
-        self.last_delta: str | None = None
         # D31 (v0.4): set when edit() succeeds on a design or schema task, so
         # the adapter can surface a "this slice's number (D#/S#) is referenced
         # in code by convention; check associated files for drift" reminder.
@@ -457,8 +453,9 @@ class Core:
 
     # --- T124: shared prelude for cascade-firing / delta-bearing ops --------
     def _record_delta(self, delta: str, op_name: str) -> None:
-        """T117/T124 shared prelude - validate the required delta and record
-        it on self for envelope surfacing. Used by every op that takes a
+        """T117/T124 shared prelude - validate the required delta. The delta is
+        not echoed back to the caller (D61: the agent wrote it); its readers are
+        reconcile and the audit row. Used by every op that takes a
         required ``delta`` (D284): the cascade-firing ops edit,
         edit_replace_substring and reclassify, plus edit_append, which flags
         nobody (D10) but writes an audit row that `history` and
@@ -467,7 +464,6 @@ class Core:
         cascade nor an audit row produces a delta with no reader. Naming the
         helper makes "this op carries a delta" explicit at the call site."""
         _require_delta(delta, op_name)
-        self.last_delta = delta.strip()
 
     @classmethod
     def open(cls, start: Path | None = None) -> "Core":

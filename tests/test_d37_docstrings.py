@@ -747,7 +747,7 @@ def _tool_block(name: str) -> str:
     from tackit import mcp_server
     src = inspect.getsource(mcp_server)
     start = src.index(f"    def {name}(")
-    end = src.index("\n    @mcp.tool()", start)
+    end = src.index("\n    @mcp.tool(", start)  # any decorator args (T361)
     return src[start:end]
 
 
