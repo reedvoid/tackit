@@ -121,3 +121,56 @@ def test_nudge_message_has_no_delete_language(core):
     core.edit(1, delta="d", description="SUPERSEDES the old on 2026-01-01 and 2026-02-02.")
     msg = core.last_coherence_nudge.lower()
     assert "delete" not in msg and "remove" not in msg
+
+
+# --- T365 (D250): nudge only when the write INCREASED a fingerprint ----------
+# A body that already carried a fingerprint is not nudged by an edit that adds
+# none; one more dated block on a dated body still fires.
+
+TWO_DATES = "v1 on 2026-01-01, changed on 2026-02-02."
+
+
+def test_no_nudge_when_an_edit_adds_no_fingerprint_to_a_dated_body(core):
+    core.add("d", kind="design", description=TWO_DATES)
+    core.edit(1, delta="d", description=TWO_DATES + " Plus a plain clause.")
+    assert core.last_coherence_nudge is None
+
+
+def test_a_third_dated_block_on_a_dated_body_still_fires(core):
+    core.add("d", kind="design", description=TWO_DATES)
+    core.edit(1, delta="d", description=TWO_DATES + " Again on 2026-03-03.")
+    assert core.last_coherence_nudge is not None
+    assert "multiple dated blocks" in core.last_coherence_nudge
+
+
+def test_the_nudge_names_only_the_issue_the_edit_added(core):
+    core.add("d", kind="design", description=TWO_DATES)
+    core.edit(1, delta="d", description=TWO_DATES + " SUPERSEDES the old text.")
+    msg = core.last_coherence_nudge
+    assert msg is not None and "changelog markers" in msg
+    assert "multiple dated blocks" not in msg
+
+
+def test_removing_one_of_two_markers_does_not_fire(core):
+    core.add("d", kind="design", description="SUPERSEDES a. REVISED b.")
+    core.edit(1, delta="d", description="SUPERSEDES a. plain b.")
+    assert core.last_coherence_nudge is None
+
+
+def test_replace_on_a_dated_body_without_a_new_fingerprint_is_silent(core):
+    core.add("d", kind="design", description=TWO_DATES + " old words")
+    core.edit_replace_substring(1, old_string="old words", new_string="new words", delta="d")
+    assert core.last_coherence_nudge is None
+
+
+def test_replace_adding_a_dangling_reference_fires(core):
+    core.add("d", kind="design", description="instantiated from the loader")
+    core.edit_replace_substring(1, old_string=" the loader", new_string=" .", delta="d")
+    assert core.last_coherence_nudge is not None
+    assert "dangling reference" in core.last_coherence_nudge
+
+
+def test_a_rename_only_edit_on_a_dated_body_is_silent(core):
+    core.add("d", kind="design", description=TWO_DATES)
+    core.edit(1, delta="rename", name="d renamed")
+    assert core.last_coherence_nudge is None

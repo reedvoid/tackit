@@ -352,22 +352,30 @@ _COH_DANGLING = re.compile(r"\b(?:from|see|per|via)\s*[.,;:)]")
 _COH_BARE_SECTION = re.compile(r"§(?!\s*\d)")
 
 
-def _coherence_issues(body: str | None) -> list[str]:
-    """D250 -- flag a design/schema body reading as a stacked changelog, or
-    carrying a dangling reference left by a token deletion. Deterministic and
-    advisory; makes no judgement about the content itself."""
-    text = body or ""
+# D250 -- each fingerprint: (issue name, pattern, threshold). An issue is present
+# when its pattern matches at least `threshold` times.
+_COH_FINGERPRINTS = (
+    ("multiple dated blocks", _COH_ISO_DATE, 2),
+    ("changelog markers (SUPERSEDES/IMPLEMENTED/RECONCILED/REVISED)", _COH_MARKERS, 1),
+    ("stacked stamp bars", _COH_STAMP_BAR, 2),
+    ("dangling reference (trailing preposition)", _COH_DANGLING, 1),
+    ("bare section marker", _COH_BARE_SECTION, 1),
+)
+
+
+def _coherence_introduced(prior: str | None, new: str | None) -> list[str]:
+    """D250 -- the fingerprints a write INTRODUCED into a design/schema body: each
+    issue whose match count rose from ``prior`` to ``new`` and whose new count
+    meets its threshold. A body that already carried an issue is not flagged by an
+    edit that adds none; one more dated block on a dated body still is.
+    Deterministic and advisory; makes no judgement about the content itself."""
+    prior_text = prior or ""
+    new_text = new or ""
     issues: list[str] = []
-    if len(_COH_ISO_DATE.findall(text)) >= 2:
-        issues.append("multiple dated blocks")
-    if _COH_MARKERS.search(text):
-        issues.append("changelog markers (SUPERSEDES/IMPLEMENTED/RECONCILED/REVISED)")
-    if len(_COH_STAMP_BAR.findall(text)) >= 2:
-        issues.append("stacked stamp bars")
-    if _COH_DANGLING.search(text):
-        issues.append("dangling reference (trailing preposition)")
-    if _COH_BARE_SECTION.search(text):
-        issues.append("bare section marker")
+    for name, pattern, threshold in _COH_FINGERPRINTS:
+        new_count = len(pattern.findall(new_text))
+        if new_count >= threshold and new_count > len(pattern.findall(prior_text)):
+            issues.append(name)
     return issues
 
 
@@ -1914,6 +1922,16 @@ class Core:
         if out:
             self.last_deadref_suggestions = out
 
+    def _set_coherence_nudge(self, row: sqlite3.Row) -> None:
+        """D250 -- after a write to a design/schema task, nudge on the coherence
+        fingerprints the write introduced, comparing ``row`` (the task before the
+        write) with its stored body now. The one helper both edit paths call."""
+        if row["kind"] not in ("design", "schema"):
+            return
+        issues = _coherence_introduced(row["description"], self.get(row["id"]).description)
+        if issues:
+            self.last_coherence_nudge = _coherence_nudge_text(row["kind"], row["id"], issues)
+
     def _emit_missing_edge_suggestions(self, task_id: int, prior_text: str) -> None:
         """D280 -- inverse of D249: when a write INTRODUCES into the focal task's
         name or body a synthetic id naming a LIVE (non-retired) task that is NOT
@@ -2073,14 +2091,7 @@ class Core:
                 self._emit_deadref_suggestions(
                     task_id, _dropped, successor=(_succ[0] if _succ else None)
                 )
-        # D250: coherence nudge on design/schema edits.
-        if row["kind"] in ("design", "schema"):
-            edited = self.get(task_id)
-            _coh = _coherence_issues(edited.description)
-            if _coh:
-                self.last_coherence_nudge = _coherence_nudge_text(
-                    row["kind"], task_id, _coh
-                )
+        self._set_coherence_nudge(row)  # D250
         self._emit_missing_edge_suggestions(  # D280: only refs this write introduced
             task_id, (row["name"] or "") + "\n" + (row["description"] or "")
         )
@@ -2137,13 +2148,7 @@ class Core:
                 "UPDATE tasks SET description = ?, updated_at = ? WHERE id = ?",
                 (new_description, _now(), task_id),
             )
-        if row["kind"] in ("design", "schema"):
-            edited = self.get(task_id)
-            _coh = _coherence_issues(edited.description)
-            if _coh:
-                self.last_coherence_nudge = _coherence_nudge_text(
-                    row["kind"], task_id, _coh
-                )
+        self._set_coherence_nudge(row)  # D250
         self._emit_missing_edge_suggestions(  # D280: only refs this write introduced
             task_id, (row["name"] or "") + "\n" + (row["description"] or "")
         )
