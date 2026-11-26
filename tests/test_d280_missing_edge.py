@@ -133,6 +133,15 @@ def test_superseded_marker_after_the_id_is_caught(core):
 # --- boundary (unit-level extraction) --------------------------------------
 
 
+def test_a_section_ref_to_an_unlinked_live_slice_is_not_suggested(core):
+    # T369, D280 scope: only synthetic ids are scanned; a legacy section ref
+    # naming a live, unlinked slice stays silent.
+    core.add("§9.4 — the contract", kind="design", description="body")  # D1
+    core.add("dependent", kind="design", description="body")  # D2
+    core.edit(2, delta="cite the contract", description="see §9.4 for the contract")
+    assert core.last_missing_edge_suggestions is None
+
+
 def test_body_id_refs_extracts_all_forms():
     assert _body_id_refs("see D1, S30, T12, M4, and #3") == {
         ("D", 1),

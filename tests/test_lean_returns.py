@@ -1099,6 +1099,21 @@ def test_the_readme_lists_every_envelope_field(store):
         )
 
 
+def test_the_readme_envelope_sentence_names_only_envelope_keys():
+    # T369: the converse of the guard above. README's envelope sentence must not
+    # name a key the envelope no longer carries (a removed `delta` or
+    # `code_check_reminder` would pass the forward check alone).
+    readme = (REPO / "README.md").read_text(encoding="utf-8")
+    section = " ".join(readme.split("### MCP tools", 1)[1].split("## Examples", 1)[0].split())
+    sentences = []
+    for sentence in re.split(r"(?<=[.;])\s", section):
+        if "`stale_alert`" in sentence:
+            sentences.append(sentence)
+    assert len(sentences) == 1, sentences
+    named = set(re.findall(r"`([a-z_]+)`", sentences[0]))
+    assert named == set(mcp_server.ENVELOPE_KEYS), named ^ set(mcp_server.ENVELOPE_KEYS)
+
+
 def test_the_skill_states_what_edit_append_does():
     # Whitespace-normalized like the other skill pins: a re-wrap is not a reword.
     skill = " ".join(

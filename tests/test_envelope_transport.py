@@ -212,3 +212,96 @@ def test_cli_prints_no_code_check_reminder(store, capsys):
     err = capsys.readouterr().err
     assert "D31:" not in err
     assert "Grep for the id" not in err
+
+
+# --- each advisory key present exactly when set (T369, D61) ---------------------
+# One case per key, both ways: the op that sets the key carries it (non-empty), the
+# same op with an input that sets nothing carries no such key. `stale_alert` and
+# `label_nudge`'s present cases are above; their absent cases are the clean read and
+# the label case below.
+
+
+def _coherence_case(fires):
+    async def scenario(s):
+        await s.call_tool("add", {"name": "a decision", "kind": "design", "description": "body"})
+        if fires:
+            body = "decided 2026-01-01; revised again on 2026-02-02"  # two dated blocks
+        else:
+            body = "one coherent current-state rewrite"
+        return await s.call_tool("edit", {"id": 1, "description": body, "delta": "d"})
+
+    return scenario
+
+
+def _deadref_case(fires):
+    async def scenario(s):
+        await s.call_tool("add", {"name": "a decision", "kind": "design", "description": "body"})
+        if fires:
+            body = "as decided in D1, we do X"
+        else:
+            body = "an unrelated body"
+        await s.call_tool("add", {"name": "dependent", "kind": "design", "description": body,
+                                  "deps": {1: "D2 realizes D1"}})
+        return await s.call_tool("retire", {"id": 1, "reason": "premise gone, no replacement"})
+
+    return scenario
+
+
+def _missing_edge_case(fires):
+    async def scenario(s):
+        await s.call_tool("add", {"name": "a decision", "kind": "design", "description": "body"})
+        await s.call_tool("add", {"name": "other", "kind": "design", "description": "body"})
+        if fires:
+            body = "builds on D2"  # D2 is live and not linked
+        else:
+            body = "names no other task"
+        return await s.call_tool("edit", {"id": 1, "description": body, "delta": "d"})
+
+    return scenario
+
+
+def _label_case(fires):
+    async def scenario(s):
+        await s.call_tool("add", {"name": "a decision", "kind": "design",
+                                  "labels": ["existing"]})
+        await s.call_tool("add", {"name": "other", "kind": "design"})
+        if fires:
+            label = "brandnew"
+        else:
+            label = "existing"  # already in the store: nothing new was created
+        return await s.call_tool("label_add", {"id": 2, "label": label})
+
+    return scenario
+
+
+_ADVISORY_CASES = [
+    ("coherence_nudge", _coherence_case, "D1"),
+    ("deadref_suggestions", _deadref_case, "D2"),
+    ("missing_edge_suggestions", _missing_edge_case, "D2"),
+    ("label_nudge", _label_case, "brandnew"),
+]
+
+
+@pytest.mark.parametrize("key, case, names", _ADVISORY_CASES)
+def test_an_advisory_key_is_present_when_its_op_sets_it(store, key, case, names):
+    env = json.loads(_text(_mcp(case(True))))
+    assert key in env, f"{key} missing from an op that sets it"
+    assert env[key], key
+    assert names in json.dumps(env[key], ensure_ascii=False)
+    assert "result" in env
+
+
+@pytest.mark.parametrize("key, case, names", _ADVISORY_CASES)
+def test_an_advisory_key_is_absent_when_its_op_sets_nothing(store, key, case, names):
+    env = json.loads(_text(_mcp(case(False))))
+    assert key not in env, f"{key} present on an op that set nothing"
+    assert "result" in env
+
+
+def test_the_advisory_cases_cover_every_envelope_key_but_result_and_stale_alert():
+    # stale_alert has its own present/absent pins (above and test_stale_alert_form);
+    # every other advisory key needs a row here, so a new key cannot skip the rule.
+    covered = set()
+    for key, _case, _names in _ADVISORY_CASES:
+        covered.add(key)
+    assert covered == set(mcp_server.ENVELOPE_KEYS) - {"result", "stale_alert"}
