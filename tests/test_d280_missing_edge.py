@@ -149,3 +149,81 @@ def test_body_id_refs_boundary_guards():
     assert _body_id_refs("S5.2") == set()     # trailing dot (§-style / decimal)
     assert _body_id_refs("D123") == {("D", 123)}   # not D1 + '23'
     assert _body_id_refs("") == set()
+
+
+# --- T364 (D280): only ids the write INTRODUCED are suggested ----------------
+# An id already in the task's name or body before the write is not suggested
+# again, so a suggestion the agent ignored does not return on every later edit.
+
+
+def test_a_ref_already_in_the_body_is_not_resuggested_on_an_unrelated_edit(core):
+    core.add("anchor", kind="design", description="body")  # D1
+    core.add("dep", kind="design", description="builds on D1 and more text")  # D2
+    core.edit(2, delta="unrelated wording", description="builds on D1 and other text")
+    assert core.last_missing_edge_suggestions is None
+
+
+def test_an_edit_adding_a_second_ref_suggests_only_the_new_one(core):
+    core.add("one", kind="design", description="body")  # D1
+    core.add("two", kind="design", description="body")  # D2
+    core.add("dep", kind="design", description="uses D1")  # D3
+    core.edit(3, delta="cite D2 too", description="uses D1 and D2")
+    s = core.last_missing_edge_suggestions
+    assert s is not None and len(s) == 1
+    assert "names D2" in s[0]
+
+
+def test_a_ref_introduced_by_a_rename_is_suggested(core):
+    core.add("anchor", kind="design", description="body")  # D1
+    core.add("dep", kind="design", description="body")  # D2
+    core.edit(2, delta="name the anchor", name="dep, follows D1")
+    s = core.last_missing_edge_suggestions
+    assert s is not None and "names D1" in s[0]
+
+
+def test_a_ref_moving_from_name_to_body_is_not_introduced(core):
+    core.add("anchor", kind="design", description="body")  # D1
+    core.add("dep after D1", kind="design", description="body")  # D2
+    core.edit(2, delta="move the cite", name="dep", description="follows D1")
+    assert core.last_missing_edge_suggestions is None
+
+
+def test_a_closed_target_is_still_suggested_when_introduced(core):
+    core.add("anchor", kind="design", description="body")  # D1
+    core.add("work", kind="production", deps={1: "work realizes the anchor"})  # T2
+    core.close(2)
+    core.add("slice", kind="design", description="body")  # D3
+    core.edit(3, delta="port from T2", description="decision ported from T2")
+    s = core.last_missing_edge_suggestions
+    assert s is not None and "names T2" in s[0]
+
+
+def test_replace_keeps_a_pre_existing_ref_silent(core):
+    core.add("anchor", kind="design", description="body")  # D1
+    core.add("dep", kind="design", description="builds on D1 with old words")  # D2
+    core.edit_replace_substring(2, old_string="old words", new_string="new words", delta="d")
+    assert core.last_missing_edge_suggestions is None
+
+
+def test_append_keeps_a_pre_existing_ref_silent_and_flags_a_new_one(core):
+    core.add("one", kind="meta", description="body")  # M1
+    core.add("two", kind="meta", description="body")  # M2
+    core.add("note", kind="meta", description="see M1")  # M3
+    core.edit_append(3, content=" and more words", delta="d")
+    assert core.last_missing_edge_suggestions is None
+    core.edit_append(3, content=" and M2", delta="d")
+    s = core.last_missing_edge_suggestions
+    assert s is not None and len(s) == 1 and "names M2" in s[0]
+
+
+def test_a_ref_removed_then_re_added_counts_as_introduced_again(core):
+    # Negative-space decision (D280's set rule): the comparison is with the body
+    # just before THIS write, so re-adding a ref that an earlier edit removed is
+    # a new introduction and is suggested again.
+    core.add("anchor", kind="design", description="body")  # D1
+    core.add("dep", kind="design", description="uses D1 here")  # D2
+    core.edit(2, delta="drop the cite", description="uses nothing here")
+    assert core.last_missing_edge_suggestions is None
+    core.edit(2, delta="restore the cite", description="uses D1 here")
+    s = core.last_missing_edge_suggestions
+    assert s is not None and "names D1" in s[0]

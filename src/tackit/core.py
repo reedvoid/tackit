@@ -1914,14 +1914,18 @@ class Core:
         if out:
             self.last_deadref_suggestions = out
 
-    def _emit_missing_edge_suggestions(self, task_id: int) -> None:
-        """D280 -- inverse of D249: when the focal task's body names a LIVE,
-        non-retired task by synthetic id that is NOT already a linked neighbor,
-        surface a candidate missing link. Advisory, no gate. Synthetic-id only
-        (§-refs give zero recall + noise -- D280). Guards: skip a pair
-        straddling the meta-island boundary (that edge is refused by
-        construction, D26) and id mentions that appear only in superseded /
-        contrastive contexts."""
+    def _emit_missing_edge_suggestions(self, task_id: int, prior_text: str) -> None:
+        """D280 -- inverse of D249: when a write INTRODUCES into the focal task's
+        name or body a synthetic id naming a LIVE (non-retired) task that is NOT
+        already a linked neighbor, surface a candidate missing link. Advisory,
+        no gate. Only refs absent from ``prior_text`` (the prior name + "\n" +
+        prior body) count, so a suggestion the agent ignored does not return on
+        every later edit. Synthetic-id only (§-refs give zero recall + noise --
+        D280). Guards: skip a pair straddling the meta-island boundary (that
+        edge is refused by construction, D26) and id mentions that appear only
+        in superseded / contrastive contexts. Closed and wont_do targets stay
+        suggestible (D280's main case is a slice naming the closed task it
+        ported a decision from)."""
         row = self.conn.execute(
             "SELECT kind, name, description FROM tasks WHERE id = ?", (task_id,)
         ).fetchone()
@@ -1932,7 +1936,8 @@ class Core:
         linked = {n.id for n in self._linked_with(task_id)}
         out: list[str] = []
         seen: set[int] = set()
-        for letter, num in sorted(_body_id_refs(body)):
+        introduced = _body_id_refs(body) - _body_id_refs(prior_text)
+        for letter, num in sorted(introduced):
             if num == task_id or num in linked or num in seen:
                 continue
             trow = self.conn.execute(
@@ -2076,7 +2081,9 @@ class Core:
                 self.last_coherence_nudge = _coherence_nudge_text(
                     row["kind"], task_id, _coh
                 )
-        self._emit_missing_edge_suggestions(task_id)  # D280
+        self._emit_missing_edge_suggestions(  # D280: only refs this write introduced
+            task_id, (row["name"] or "") + "\n" + (row["description"] or "")
+        )
         return ChangeResult(task=self.get(task_id), newly_stale=newly_stale)
 
     # --- T179: diff-shaped description edits (append + substring replace) ---
@@ -2137,7 +2144,9 @@ class Core:
                 self.last_coherence_nudge = _coherence_nudge_text(
                     row["kind"], task_id, _coh
                 )
-        self._emit_missing_edge_suggestions(task_id)  # D280
+        self._emit_missing_edge_suggestions(  # D280: only refs this write introduced
+            task_id, (row["name"] or "") + "\n" + (row["description"] or "")
+        )
         return ChangeResult(task=self.get(task_id), newly_stale=newly_stale)
 
     def edit_append(
