@@ -1348,12 +1348,19 @@ class Core:
             self._record_transition(task_id, old_status, new_status)  # D8
 
     def reopen(self, task_id: int) -> Task:
-        """D7/D8 + T132 + D36 - move a closed task back to open (logged).
-        Does not set stale; the history log keeps the earlier 'closed' fact.
-        REFUSED on wont_do tasks -- wont_do is terminal forever per T132
-        design (the change-of-mind path is a fresh task with the new
-        direction). REFUSED on retired tasks (D36 v0.5: same terminal
-        rationale -- file a fresh D# instead of reanimating)."""
+        """D7/D8 + D259 - move a closed task back to open (logged). Reopen
+        corrects a closed record: fix its text (reopen, edit while open, close
+        again; D259) or undo a premature close. New work after a close is a
+        new task linked to the closed one, so the closed record stays an
+        honest account of what was done; a close that should have been a
+        drop is wont_do on the closed task directly (D56). The history log
+        keeps the earlier 'closed' fact. A closed task carries no stale flag
+        (D137), so the reopened task arrives unflagged.
+
+        REFUSED on wont_do tasks -- terminal forever (T132; the
+        change-of-mind path is a fresh task with the new direction). REFUSED
+        on retired tasks (D36: same terminal rationale -- file a fresh D#
+        instead of reanimating)."""
         row = self._require_row(task_id)
         if row["status"] == "wont_do":
             raise InvariantError(
@@ -1619,22 +1626,23 @@ class Core:
     # T132 - wont_do (terminal "decided not to do" status, distinct from close)
     # ====================================================================
     def wont_do(self, task_id: int, reason: str) -> WontDoResult:
-        """T132 / 2026-06-01 + D36 (v0.5) - mark a task as decided-not-to-do,
-        distinct from closed (which means work done). Requires ``reason``
-        (durable, persists in wont_do_reason column -- the rationale
-        survives forever). No ``delta`` (D284): wont_do does NOT fire the
-        cascade, so a delta would have no reader -- terminal status verbs
-        carry ``reason`` only, symmetric with close(). Locked-forever
-        per T132 pattern: reopen / close / wont_do all REFUSED on wont_do
-        tasks (the change-of-mind path is a fresh task with the new
-        direction). v0.4 allows edit on wont_do (P2 retires T118). REFUSED
-        on status='spec' (design/schema slices: living spec; use edit() or
-        retire()). REFUSED if the task is stale or in a linked-stale
-        neighborhood (same gate as close, D14). REFUSED if already wont_do
-        (no double-decide). Does NOT fire the cascade (status change, not
-        content edit; symmetric with close). Returns the standard
-        CloseResult-shaped payload of one-hop neighbors for migrate-or-stay
-        review."""
+        """T132 + D36 + D56 - mark a task as decided-not-to-do, distinct from
+        closed (which means work done). Requires ``reason`` (durable,
+        persists in wont_do_reason column -- the rationale survives
+        forever). No ``delta`` (D284): wont_do does NOT fire the cascade, so
+        a delta would have no reader -- terminal status verbs carry
+        ``reason`` only, symmetric with close(). Locked-forever per T132:
+        reopen / close / wont_do all REFUSED on wont_do tasks (the
+        change-of-mind path is a fresh task with the new direction).
+
+        ALLOWED on an open task and on a CLOSED one (D56): a close that
+        should have been a drop is recorded as dropped, and the close stays
+        in status_transitions (D50: closed -> wont_do). REFUSED on
+        status='spec' (design/schema slices: living spec; use edit() or
+        retire()), on retired, and if already wont_do (no double-decide).
+        REFUSED if the task is stale or a direct neighbor is (same gate as
+        close, D56). Returns the standard CloseResult-shaped payload of
+        one-hop neighbors for migrate-or-stay review."""
         if not reason or not reason.strip():
             raise ValidationError(
                 "wont_do requires a non-empty `reason` -- the durable rationale "
@@ -1658,14 +1666,6 @@ class Core:
                 f"REFUSED: {prefixed_id(row['kind'], task_id)} is already wont_do (T132). The decision "
                 f"is locked; if it has changed, create a new task with the new "
                 f"direction."
-            )
-        if row["status"] == "closed":
-            raise InvariantError(
-                f"REFUSED: {prefixed_id(row['kind'], task_id)} is closed (work done) -- it cannot be "
-                f"reclassified as wont_do (decided not to do) (T132). The two "
-                f"are distinct terminal states. If the close was a mistake "
-                f"and the work shouldn't have been done, create a new task "
-                f"explaining the wont_do decision."
             )
         if row["status"] == "retired":
             raise InvariantError(

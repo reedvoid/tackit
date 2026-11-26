@@ -460,11 +460,14 @@ def build_server() -> FastMCP:
 
     @mcp.tool()
     def reopen(id: int) -> dict:
-        """Move a closed task back to open (D7/D8, logged). REFUSED on
-        wont_do tasks (T132: terminal forever; change-of-mind path is a
-        fresh task with the new direction). REFUSED on retired (D36: same
-        terminal rationale -- file a fresh D# if the decision returned).
-        Returns ``{id, status}`` (D211)."""
+        """Move a closed task back to open (D7/D8, logged). Reopen corrects a
+        closed record: fix its text (reopen, edit, close again; D259) or
+        undo a premature close. New work after a close is a new task linked
+        to the closed one. A close that should have been a drop: use
+        wont_do on the closed task directly. REFUSED on wont_do tasks
+        (T132: terminal forever; change-of-mind path is a fresh task with
+        the new direction). REFUSED on retired (D36: file a fresh D# if the
+        decision returned). Returns ``{id, status}`` (D211)."""
         with _core() as c:
             return _wrap(c, project_status_result(c.reopen(id)))
 
@@ -479,8 +482,10 @@ def build_server() -> FastMCP:
         Locked-forever per T132: reopen / close / wont_do refused on wont_do
         tasks (change-of-mind path is a fresh task with the new direction).
         REFUSED if task is stale or has a directly-linked (1-hop) stale
-        neighbor (D14 / D56 close-gate). REFUSED on already-wont_do / closed / retired tasks (no
-        double-decide). REFUSED if status='spec' (D36: design/schema can't
+        neighbor (D14 / D56 close-gate). REFUSED on already-wont_do / retired
+        tasks (no double-decide). ALLOWED on a closed task (D56): a close
+        that should have been a drop is recorded as dropped, and the close
+        stays in the status history. REFUSED if status='spec' (D36: design/schema can't
         be 'not done' -- use edit() to refine, or retire() if 100%
         abandoned). Does not fire the staling cascade. Returns
         ``{id, status}`` (D211); `show` returns the neighbors."""

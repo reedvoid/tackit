@@ -83,10 +83,12 @@ production task linked to it. Don't ship code straight from a meta task.
 - `close` records that work shipped and does not cascade, so don't first edit the
   body with a completion note ("done", "committed <hash>"); git and the status
   carry that. Only a fold-back earns an edit before close.
-- `reopen` resumes the same work under the same premise. A new direction is a
-  new task, so the closed row stays an honest record.
+- `reopen` corrects a closed record: fix its text, or undo a close made by
+  mistake. New work after a close is a new task linked to the closed one, so
+  the closed row stays an honest record.
 - `wont_do` records a durable decision not to do the work; write a reason a
-  later reader can use.
+  later reader can use. It also works on a closed task whose close should have
+  been a drop.
 - `retire` only when a slice is 100% gone with nothing replacing it. Any partial
   change, even a big rewrite, is an `edit`, whose cascade is how neighbors get
   re-checked. If a premise is replaced by something too different to reuse, file

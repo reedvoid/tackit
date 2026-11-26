@@ -949,9 +949,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp = add(
         "reopen",
         _cmd_reopen,
-        "closed -> open, logged (D7/D8). Refused on wont_do (T132) and "
-        "retired (D36) -- both terminal forever; file a fresh D# if the "
-        "decision returned.",
+        "closed -> open, logged (D7/D8). Reopen corrects a closed record: "
+        "fix its text (D259) or undo a premature close. New work after a "
+        "close is a new task linked to the closed one. Refused on wont_do "
+        "(T132) and retired (D36) -- both terminal forever.",
     )
     sp.add_argument("id", type=int)
 
@@ -959,8 +960,9 @@ def build_parser() -> argparse.ArgumentParser:
         "wont-do",
         _cmd_wont_do,
         "mark task as decided-not-to-do; locked forever, distinct from "
-        "closed (T132). For production+meta only -- design/schema use "
-        "retire() (D36).",
+        "closed (T132). Also allowed on a closed task whose close should "
+        "have been a drop (D56). For production+meta only -- design/schema "
+        "use retire() (D36).",
     )
     sp.add_argument("id", type=int)
     sp.add_argument(

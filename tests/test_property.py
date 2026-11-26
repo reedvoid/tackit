@@ -181,8 +181,9 @@ class TackitMachine(RuleBasedStateMachine):
         try:
             self.core.wont_do(self._id(i), reason="property test")
         except InvariantError:
-            # Refused: already-closed/wont_do (no double-decide), design/schema
-            # kind (D30), or close-gate stale -- all expected.
+            # Refused: already wont_do or retired (no double-decide), design/
+            # schema kind (D30), or close-gate stale -- all expected. A closed
+            # task can become wont_do (D56).
             pass
 
     @precondition(lambda self: self.ids)

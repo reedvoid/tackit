@@ -587,8 +587,8 @@ Everything you can drive through your agent — it maps your request to tackit's
 | "Tag task 12 `smoke-test`" / "untag it" | `label_add` / `label_rm` |
 | "What's open / closed / stale?" | `ls` / `stale` (status accepts open/closed/wont_do/spec/retired) |
 | "What labels exist?" | `labels` — each with its usage |
-| "Close task 12" / "reopen it" | `close` (refused if stale / spec / wont_do / retired) / `reopen` |
-| "Mark task 12 won't-do" | `wont_do` (production/meta only) with durable reason |
+| "Close task 12" / "reopen it" | `close` (refused if stale / spec / wont_do / retired) / `reopen` (corrects a closed record; new work is a new task) |
+| "Mark task 12 won't-do" | `wont_do` (production/meta only; also on a closed task) with durable reason |
 | "Retire design slice D17" | `retire` (design/schema only) with durable reason + open-neighbor refusal |
 | "Reclassify task 12 to design" | `reclassify` — auto-shifts status open↔spec |
 | "I reviewed task 9 — still fine" | `reconcile` (clears stale, no cascade) |

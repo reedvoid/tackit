@@ -126,14 +126,127 @@ def test_wont_do_already_wont_do_refused(core):
         core.wont_do(2, reason="dropped again")
 
 
-def test_wont_do_on_closed_refused(core):
-    """closed=done and wont_do=decided-not-to-do are distinct; can't reclassify
-    a done task as not-done. If close was a mistake, supersede with a new task."""
+def test_wont_do_on_closed_records_the_drop_and_keeps_the_close(core):
+    """D56 + D50: a close that should have been a drop is recorded directly
+    with wont_do on the closed task. The reason is stored and the history
+    reads open -> closed -> wont_do: the close stays on record."""
     core.add("spec anchor", kind="design")  # T1 -- D256 creation-gate anchor
     core.add("task", kind="production", deps={1: "realizes the anchor decision"})
     core.close(2)
-    with pytest.raises(InvariantError, match="closed"):
-        core.wont_do(2, reason="changing my mind")
+    result = core.wont_do(2, reason="closed by mistake; the work was dropped")
+    assert result.task.status == "wont_do"
+    t2 = core.get(2)
+    assert t2.status == "wont_do"
+    assert t2.wont_do_reason == "closed by mistake; the work was dropped"
+    seq = [(h.from_status, h.to_status) for h in core.history(2).status_transitions]
+    assert seq == [(None, "open"), ("open", "closed"), ("closed", "wont_do")]
+
+
+def test_wont_do_on_closed_still_requires_a_reason(core):
+    """Same reason rule as on an open task (D56): an empty reason is refused
+    and the task stays closed."""
+    core.add("spec anchor", kind="design")  # T1
+    core.add("task", kind="production", deps={1: "realizes the anchor decision"})
+    core.close(2)
+    with pytest.raises(ValidationError, match="reason"):
+        core.wont_do(2, reason="   ")
+    assert core.get(2).status == "closed"
+
+
+def test_wont_do_on_closed_is_terminal_after(core):
+    """After closed -> wont_do, the row is terminal forever: a second wont_do,
+    a reopen and a close are all refused, and the history does not move."""
+    core.add("spec anchor", kind="design")  # T1
+    core.add("task", kind="production", deps={1: "realizes the anchor decision"})
+    core.close(2)
+    core.wont_do(2, reason="closed by mistake; the work was dropped")
+    seq = [(h.from_status, h.to_status) for h in core.history(2).status_transitions]
+    with pytest.raises(InvariantError, match="already wont_do"):
+        core.wont_do(2, reason="again")
+    with pytest.raises(InvariantError, match="wont_do"):
+        core.reopen(2)
+    with pytest.raises(InvariantError, match="wont_do"):
+        core.close(2)
+    assert core.get(2).status == "wont_do"
+    assert [(h.from_status, h.to_status) for h in core.history(2).status_transitions] == seq
+
+
+def test_wont_do_on_closed_meets_the_close_gate(core):
+    """D56: the same 1-hop gate as on an open task. The closed task's open
+    neighbor T3 is stale (an edit of the shared spec flagged it), so wont_do
+    on closed T2 is refused and T2 stays closed. Converse: after T3 is
+    reconciled the same call succeeds."""
+    core.add("spec anchor", kind="design")  # T1
+    core.add("done", kind="production", deps={1: "realizes the anchor decision"})  # T2
+    core.add("live", kind="production", deps={1: "realizes the anchor decision"})  # T3
+    core.link_add(2, 3, because="T3 builds on what T2 shipped")
+    core.close(2)
+    core.edit(1, description="changed", delta="the anchor decision shifted")
+    assert core.get(3).stale is True and core.get(2).stale is False
+    with pytest.raises(InvariantError, match="T3"):
+        core.wont_do(2, reason="closed by mistake; the work was dropped")
+    assert core.get(2).status == "closed"
+    core.reconcile(3)
+    assert core.wont_do(2, reason="closed by mistake; the work was dropped").task.status == "wont_do"
+
+
+# --- surfaces state reopen's correction role and wont_do from closed (D259) ---
+
+def _norm(text):
+    import re
+    return re.sub(r"\s+", " ", text)
+
+
+def _mcp_tool_block(name, next_name):
+    import inspect
+    from tackit import mcp_server
+    src = inspect.getsource(mcp_server)
+    start = src.index(f"def {name}(")
+    return _norm(src[start:src.index(f"def {next_name}(", start)])
+
+
+def _cli_help(subcommand, capsys):
+    from tackit.cli import main
+    with pytest.raises(SystemExit):
+        main([subcommand, "--help"])
+    return _norm(capsys.readouterr().out)
+
+
+def _skill():
+    from pathlib import Path
+    path = Path(__file__).resolve().parent.parent / "src" / "tackit" / "data" / "SKILL.md"
+    return _norm(path.read_text(encoding="utf-8"))
+
+
+def test_mcp_reopen_docstring_states_the_correction_role():
+    block = _mcp_tool_block("reopen", "wont_do")
+    assert "corrects a closed record" in block
+    assert "new task linked to the closed one" in block
+    assert "wont_do on the closed task" in block
+
+
+def test_mcp_wont_do_docstring_allows_a_closed_task():
+    block = _mcp_tool_block("wont_do", "retire")
+    assert "ALLOWED on a closed task" in block
+    assert "wont_do / closed / retired" not in block  # the old refused list
+
+
+def test_cli_reopen_help_states_the_correction_role(capsys):
+    text = _cli_help("reopen", capsys)
+    assert "corrects a closed record" in text
+    assert "new task linked to the closed one" in text
+
+
+def test_cli_wont_do_help_allows_a_closed_task(capsys):
+    assert "Also allowed on a closed task" in _cli_help("wont-do", capsys)
+
+
+def test_skill_states_reopen_corrects_and_wont_do_works_on_closed():
+    skill = _skill()
+    assert "`reopen` corrects a closed record" in skill
+    assert "new task linked to the closed one" in skill
+    assert "also works on a closed task" in skill
+    assert "resumes the same work" not in skill  # the old reopen role
 
 
 # --- change-of-mind path is a fresh task -----------------------------------
