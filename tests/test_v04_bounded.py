@@ -1,10 +1,10 @@
-"""v0.4 / D28 + D30 + D31 - bounded-obligation cascade + design-schema gates.
+"""v0.4 / D28 + D30 - bounded-obligation cascade + design-schema gates.
 
 Pins the v0.4 simplification's behavior contract: closed/wont_do stale is
 record-only (D28); design/schema kinds are perma-open via close+wont_do
-refusal (D30); edit on a design/schema task surfaces a code-check reminder
-(D31); search returns status alongside hits so adapters can tag historical
-results without opening each one.
+refusal (D30); search returns status alongside hits so adapters can tag
+historical results without opening each one. (The D31 code-check reminder was
+removed in T363.)
 """
 
 import pytest
@@ -415,60 +415,20 @@ def test_close_allowed_on_production_and_meta(core):
 
 
 # ----------------------------------------------------------------------------
-# D31 - code-check reminder on design/schema edits
+# The code-check reminder is gone (T363; its slice was retired): no edit of any
+# kind sets it. Adapter-level absence is pinned in test_envelope_transport.py.
 # ----------------------------------------------------------------------------
 
 
-def test_edit_design_sets_code_check_reminder(core):
-    """Editing a design task surfaces last_code_check_reminder on Core, so
-    adapters (CLI stderr / MCP envelope) can nudge the agent to check
-    associated code for drift."""
-    core.add("d1", kind="design", description="initial")
-    assert core.last_code_check_reminder is None
+@pytest.mark.parametrize("kind", ["design", "schema", "meta"])
+def test_no_edit_sets_a_code_check_reminder(core, kind):
+    core.add("t1", kind=kind, description="initial")
     core.edit(1, description="updated", delta="refining the slice")
-    assert core.last_code_check_reminder is not None
-    # T162 (v0.4): id mention uses the D32 kind-letter prefix, not the kind-blind
-    # `T<id>`. A design task surfaces as `D<id>` in the reminder.
-    assert "D1" in core.last_code_check_reminder
-    # The kind word may or may not appear in prose; the prefix carries the
-    # kind signal. Assert the kind is recoverable from the prefix.
+    assert core.get(1).description == "updated"  # the edit really landed
+    assert not hasattr(core, "last_code_check_reminder")
 
 
-def test_edit_schema_sets_code_check_reminder(core):
-    core.add("s1", kind="schema", description="initial")
-    core.edit(1, description="updated", delta="refining the slice")
-    assert core.last_code_check_reminder is not None
-    # T162: schema task surfaces as `S<id>` (kind-letter prefix).
-    assert "S1" in core.last_code_check_reminder
-
-
-def test_edit_production_does_not_set_code_check_reminder(core):
-    """Production edits don't trigger the D31 nudge -- it's specifically for
-    living spec edits where the agent might forget to grep the slice id."""
-    core.add("anchor", kind="design")  # T1 -- D256 creation-gate anchor
-    core.add(
-        "p1", kind="production", description="initial", deps={1: "realizes anchor"}
-    )  # T2
-    core.edit(2, description="updated", delta="refining")
-    assert core.last_code_check_reminder is None
-
-
-def test_edit_meta_does_not_set_code_check_reminder(core):
-    core.add("m1", kind="meta", description="initial")
-    core.edit(1, description="updated", delta="refining")
-    assert core.last_code_check_reminder is None
-
-
-def test_code_check_reminder_resets_between_ops(core):
-    """Like label_nudge / delta, the reminder reflects only the current op."""
-    core.add("d1", kind="design")  # T1
-    core.edit(1, description="updated", delta="refining")
-    assert core.last_code_check_reminder is not None
-    # A subsequent non-design op clears the reminder.
-    core.add("p1", kind="production", deps={1: "realizes d1"})  # T2, not an edit, but next op
-    # The next edit on a non-design task should clear and not re-set.
-    core.edit(2, description="updated", delta="refining")
-    assert core.last_code_check_reminder is None
+# ----------------------------------------------------------------------------
 
 
 # ----------------------------------------------------------------------------

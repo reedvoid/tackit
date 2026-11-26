@@ -86,7 +86,7 @@ def test_reopen_then_edit_then_close_round_trips_for_closed(core):
 
 def test_edit_still_allowed_on_retired_design_slice(core):
     """D259 exempts retired slices: edit-on-retired stays for annotating a dead
-    decision (D29 v0.5), and it still writes an audit row + fires D31."""
+    decision (D29 v0.5), and it still writes an audit row."""
     core.add("d", kind="design", description="a decision")
     core.retire(1, reason="fully superseded by D2, no migration")
     core.edit(1, description="a decision (retired — superseded by D2)", delta="annotate dead decision")

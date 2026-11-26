@@ -450,12 +450,6 @@ class Core:
         # adapters can surface the anti-sprawl nudge (CLI stderr / MCP envelope).
         # Lives for the single op's lifetime (each command/tool call is a fresh Core).
         self.last_label_nudge: str | None = None
-        # D31 (v0.4): set when edit() succeeds on a design or schema task, so
-        # the adapter can surface a "this slice's number (D#/S#) is referenced
-        # in code by convention; check associated files for drift" reminder.
-        # Sibling to label_nudge / stale_alert: structured envelope field.
-        # Ephemeral.
-        self.last_code_check_reminder: str | None = None
         # D250: set when a design/schema edit leaves the resulting body reading
         # as a stacked changelog (append-not-rewrite) or with a dangling
         # reference. Advisory envelope field; ephemeral, one op's lifetime.
@@ -1977,7 +1971,7 @@ class Core:
 
         Scope: status IN ('closed', 'wont_do'). RETIRED design/schema slices are
         EXEMPT -- edit-on-retired stays allowed for annotating a dead decision
-        (D29 v0.5 + the D31 code-check). Reverses D29's v0.4 edit-on-closed
+        (D29 v0.5). Reverses D29's v0.4 edit-on-closed
         stance (see D259).
 
         The recovery advice is status-specific: a CLOSED task can be reopen()ed
@@ -2019,13 +2013,8 @@ class Core:
         design/schema, and on RETIRED slices (edit-on-retired stays for
         annotating a dead decision, D29 v0.5). The audit table (S7) preserves
         verbatim prior state for the allowed edits. The wont_do reason field is
-        never edited via this op.
-
-        D31 (v0.4): if the edited task is kind in {design,schema}, the
-        adapter envelope includes a code-check reminder pointing the agent
-        at code referencing the slice's D#/S# id."""
+        never edited via this op."""
         self._record_delta(delta, "edit")
-        self.last_code_check_reminder = None  # D31: reflect only this op
         self.last_coherence_nudge = None  # D250: reflect only this op
         self.last_missing_edge_suggestions = None  # D280: reflect only this op
         row = self._require_row(task_id)
@@ -2079,17 +2068,9 @@ class Core:
                 self._emit_deadref_suggestions(
                     task_id, _dropped, successor=(_succ[0] if _succ else None)
                 )
-        # D31 (v0.4): code-check reminder on design/schema edits. tackit
-        # can't introspect which files reference D#/S# -- the agent does the
-        # grep -- so the reminder just names the slice id+name + nudges.
+        # D250: coherence nudge on design/schema edits.
         if row["kind"] in ("design", "schema"):
             edited = self.get(task_id)
-            self.last_code_check_reminder = (
-                f"D31: {prefixed_id(row['kind'], task_id)} was edited -- "
-                f"{edited.name!r}. The slice's D#/S# id is referenced in "
-                f"code by convention (SKILL.md code↔task naming rule). "
-                f"Grep for the id and check the associated files for drift."
-            )
             _coh = _coherence_issues(edited.description)
             if _coh:
                 self.last_coherence_nudge = _coherence_nudge_text(
@@ -2106,9 +2087,8 @@ class Core:
     # snippet being added or the (old, new) substring pair crosses the wire.
     #
     # Both ops share ``_commit_description_edit`` for the post-validation tail
-    # (no-op short-circuit, optional cascade, audit row, UPDATE, D31 reminder),
-    # so the contract -- one audit row per real change, identical D31 wording --
-    # is enforced in one place. They differ on the cascade: replace fires it;
+    # (no-op short-circuit, optional cascade, audit row, UPDATE, coherence nudge),
+    # so the contract -- one audit row per real change -- is enforced in one place. They differ on the cascade: replace fires it;
     # append does not (D10), a concession to reality, not necessarily the optimal
     # decision. Agents clear flags unread, and a cleared flag reads as a review
     # that did not happen, so flagging on every saved note bought little and
@@ -2130,8 +2110,8 @@ class Core:
         Handles: no-op short-circuit (D20 -- equal description -> no cascade,
         no audit row, no version bump), cascade depth-1 when ``cascade`` (D10),
         description_revisions audit row preserving prior verbatim
-        name+description+delta (D29 / S7), UPDATE description+updated_at, D31
-        code-check reminder on design/schema edits."""
+        name+description+delta (D29 / S7), UPDATE description+updated_at, D250
+        coherence nudge on design/schema edits."""
         task_id = row["id"]
         self.last_missing_edge_suggestions = None  # D280: reflect only this op
         if new_description == row["description"]:
@@ -2152,12 +2132,6 @@ class Core:
             )
         if row["kind"] in ("design", "schema"):
             edited = self.get(task_id)
-            self.last_code_check_reminder = (
-                f"D31: {prefixed_id(row['kind'], task_id)} was edited -- "
-                f"{edited.name!r}. The slice's D#/S# id is referenced in "
-                f"code by convention (SKILL.md code↔task naming rule). "
-                f"Grep for the id and check the associated files for drift."
-            )
             _coh = _coherence_issues(edited.description)
             if _coh:
                 self.last_coherence_nudge = _coherence_nudge_text(
@@ -2187,7 +2161,6 @@ class Core:
         ``content`` -- a whitespace-only append is almost always a typo'd
         no-op the caller didn't mean."""
         self._record_delta(delta, "edit_append")
-        self.last_code_check_reminder = None
         self.last_coherence_nudge = None
         row = self._require_row(task_id)
         self._refuse_edit_on_terminal(row)  # D259
@@ -2245,7 +2218,6 @@ class Core:
         ``new_string`` containing ``old_string`` replaces exactly once
         (str.replace count=1 semantics), not a recursive sweep."""
         self._record_delta(delta, "edit_replace_substring")
-        self.last_code_check_reminder = None
         self.last_coherence_nudge = None
         row = self._require_row(task_id)
         self._refuse_edit_on_terminal(row)  # D259

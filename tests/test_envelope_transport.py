@@ -186,3 +186,29 @@ def test_history_still_returns_the_delta(store):
 
     env = json.loads(_text(_mcp(scenario)))
     assert env["result"]["description_revisions"][0]["delta"] == "the shift"
+
+
+# --- no code-check reminder (T363; its slice was retired) ----------------------
+
+
+@pytest.mark.parametrize("kind", ["design", "schema", "retired"])
+def test_no_code_check_reminder_on_a_spec_edit(store, kind):
+    async def scenario(s):
+        real_kind = "design" if kind == "retired" else kind
+        await s.call_tool("add", {"name": "slice", "kind": real_kind, "description": "body"})
+        if kind == "retired":
+            await s.call_tool("retire", {"id": 1, "reason": "premise gone, no replacement"})
+        return await s.call_tool("edit", {"id": 1, "description": "new body", "delta": "d"})
+
+    text = _text(_mcp(scenario))
+    assert "code_check_reminder" not in json.loads(text)
+    assert "D31:" not in text
+
+
+def test_cli_prints_no_code_check_reminder(store, capsys):
+    main(["add", "slice", "--kind", "design", "--desc", "body"])
+    capsys.readouterr()
+    assert main(["edit", "1", "--desc", "new body", "--delta", "d"]) == 0
+    err = capsys.readouterr().err
+    assert "D31:" not in err
+    assert "Grep for the id" not in err

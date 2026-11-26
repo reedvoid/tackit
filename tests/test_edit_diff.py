@@ -11,7 +11,7 @@ description, per fold-back. These two diff-shaped ops cut that ~10x:
 
 Both write a description_revisions audit row preserving the prior verbatim
 name+description+delta, and share the underlying mutation block so audit +
-version-bump + D31 reminder logic stays in one place. ``edit_replace_substring``
+version-bump logic stays in one place. ``edit_replace_substring``
 fires the cascade depth-1 like ``edit()``; ``edit_append`` flags nobody (D10).
 
 Tests are driven by the test-audit four-pass (skill: test-audit):
@@ -122,23 +122,15 @@ def test_edit_append_refused_on_design_replace_still_works(core):
     assert core.get(1).status == "retired"
 
 
-def test_edit_replace_substring_on_design_fires_code_check_reminder(core):
-    """D31: design/schema edits set last_code_check_reminder. (edit_append is
-    refused on design per D250, so the diff-op path is edit_replace_substring.)"""
+def test_edit_replace_substring_on_design_sets_no_code_check_reminder(core):
+    """The code-check reminder was removed (T363): a design replace lands and
+    sets nothing. (edit_append is refused on design per D250.)"""
     core.add("d", kind="design", description="decision text")
-    core.last_code_check_reminder = None
     core.edit_replace_substring(
         1, old_string="decision text", new_string="decision text v2", delta="prose extension"
     )
-    assert core.last_code_check_reminder is not None
-    assert "D31" in core.last_code_check_reminder
-
-
-def test_edit_append_on_meta_kind_does_not_set_reminder(core):
-    core.add("a", kind="meta", description="notes")
-    core.last_code_check_reminder = "leftover"
-    core.edit_append(1, content=" + note", delta="extend")
-    assert core.last_code_check_reminder is None
+    assert core.get(1).description == "decision text v2"
+    assert not hasattr(core, "last_code_check_reminder")
 
 
 def test_edit_append_records_its_delta_in_the_audit_row(core):
@@ -308,14 +300,13 @@ def test_reopen_then_edit_then_reclose_is_the_path_for_a_closed_task(core):
     assert core.get(2).status == "closed"
 
 
-def test_edit_replace_substring_on_schema_kind_fires_code_check_reminder(core):
+def test_edit_replace_substring_on_schema_kind_sets_no_code_check_reminder(core):
     core.add("s", kind="schema", description="CREATE TABLE foo")
-    core.last_code_check_reminder = None
     core.edit_replace_substring(
         1, old_string="foo", new_string="bar", delta="renamed schema table"
     )
-    assert core.last_code_check_reminder is not None
-    assert "D31" in core.last_code_check_reminder
+    assert core.get(1).description == "CREATE TABLE bar"
+    assert not hasattr(core, "last_code_check_reminder")
 
 
 def test_edit_replace_substring_records_its_delta_in_the_audit_row(core):

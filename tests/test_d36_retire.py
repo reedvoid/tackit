@@ -435,12 +435,11 @@ def test_edit_on_retired_fires_cascade_on_live_neighbors_only(core):
     assert worklist_ids == {3}
 
 
-def test_edit_on_retired_fires_code_check_reminder(core):
-    """D31: edit on a retired design/schema row STILL fires the code-check
-    reminder. The kind clause is unchanged -- both spec and retired slices
-    are kind in design/schema."""
+def test_edit_on_retired_lands_with_no_code_check_reminder(core):
+    """Edit on a retired slice stays allowed (D259 exemption); the code-check
+    reminder that used to fire on it was removed (T363)."""
     core.add("d1", kind="design")
     core.retire(1, reason="legit")
     core.edit(1, description="updated", delta="post-retire edit")
-    assert core.last_code_check_reminder is not None
-    assert "D1" in core.last_code_check_reminder
+    assert core.get(1).description == "updated"
+    assert not hasattr(core, "last_code_check_reminder")

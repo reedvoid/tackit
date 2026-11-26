@@ -50,7 +50,6 @@ def _core():
 ENVELOPE_KEYS = (
     "stale_alert",
     "label_nudge",
-    "code_check_reminder",
     "coherence_nudge",
     "deadref_suggestions",
     "missing_edge_suggestions",
@@ -65,7 +64,7 @@ def _wrap(core: Core, result) -> str:
     never as null (D61, extending D211's absent-not-null rule):
       * ``stale_alert`` -- the outstanding stale set (count, ids, message), post-op,
         so an op that flags new tasks returns them in the same result;
-      * ``label_nudge`` (D65), ``code_check_reminder``, ``coherence_nudge`` (D250),
+      * ``label_nudge`` (D65), ``coherence_nudge`` (D250),
         ``deadref_suggestions`` (D249), ``missing_edge_suggestions`` (D280) -- the
         per-op advisories, each set by Core only for the op that produced it.
     The op's delta is not echoed: the agent wrote it (D61; stored per D284).
@@ -80,7 +79,6 @@ def _wrap(core: Core, result) -> str:
     values = {
         "stale_alert": stale_alert_for_call(core.call_entry_stale_ids, core.stale_worklist()),
         "label_nudge": core.last_label_nudge,
-        "code_check_reminder": core.last_code_check_reminder,
         "coherence_nudge": core.last_coherence_nudge,
         "deadref_suggestions": core.last_deadref_suggestions,
         "missing_edge_suggestions": core.last_missing_edge_suggestions,
