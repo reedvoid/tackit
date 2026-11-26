@@ -87,8 +87,7 @@ tackit ships the slash commands its maintainer works with: `/diagnose` proves a 
 root cause, `/firmup` settles a plan, `/graduate` turns it into specs and tasks, `/build`
 builds them test-first, and `/orient`, `/handoff` and `/trim` carry state between
 sessions. The `test-audit` skill comes with them. They are opinionated and Claude Code
-only, and `/diagnose` also needs the `superpowers` plugin. To install them, tell your
-agent:
+only. To install them, tell your agent:
 
 > Run `tackit setup` and carry out the optional workflow-commands step.
 

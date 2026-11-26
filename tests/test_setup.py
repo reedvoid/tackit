@@ -82,7 +82,7 @@ def test_step_names_every_command_and_each_dependency(tmp_path, monkeypatch):
         assert command in step
     assert "/plain" not in text
     assert "the test-audit skill they rely on" in step
-    assert "superpowers@claude-plugins-official" in step
+    assert "superpowers" not in text  # D306: the set depends on no plugin
     assert "/build reads a project's test, deploy and billed-eval commands from its CLAUDE.md." in step
     assert "An upgrade does not refresh copied files; re-run `tackit setup` to compare." in step
 

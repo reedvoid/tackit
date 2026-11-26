@@ -139,7 +139,8 @@ def test_each_genericizing_edit_landed(filename, replacement):
         ("commands/handoff.md", "ADD-ONLY"),
         ("commands/orient.md", "READ-ONLY"),
         ("commands/diagnose.md", "IRON LAW"),
-        ("commands/diagnose.md", "superpowers:systematic-debugging"),
+        ("commands/diagnose.md", "TRACE THE BAD VALUE BACKWARD to its origin: from the line that fails, ask what called it"),
+        ("commands/diagnose.md", "run the tests one at a time until the first one that produces it"),
         ("skills/test-audit/SKILL.md", "So this skill is NOT offered"),
         ("skills/test-audit/references/llm-eval.md", "Pass 5"),
         # T336: rules ported from the deployed copies
@@ -283,8 +284,16 @@ def test_shipped_cross_references_resolve():
         checked.update(SLASH_TOKEN.findall(text))
     assert "/firmup" in checked  # the check really saw the commands
     assert "/handoff" in checked
-    # diagnose's one outside file belongs to the superpowers plugin, which it names
-    assert "root-cause-tracing.md" in shipped["commands/diagnose.md"]
+
+
+def test_no_shipped_file_depends_on_a_plugin():
+    """D306: the set depends on no plugin. A user can turn a plugin off, and a
+    plain-file install cannot enforce one, so no command may point at one."""
+    shipped = _shipped()
+    assert "commands/diagnose.md" in shipped
+    for name, text in shipped.items():
+        assert "superpowers" not in text, name
+        assert "root-cause-tracing.md" not in text, name
 
 
 @pytest.mark.parametrize("name", COMMANDS)
@@ -320,7 +329,8 @@ def test_readme_describes_the_set_under_install():
         assert f"`/{command}`" in text
     assert "`/plain`" not in text
     assert "The `test-audit` skill comes with them." in text
-    assert "They are opinionated and Claude Code only, and `/diagnose` also needs the `superpowers` plugin." in text
+    assert "They are opinionated and Claude Code only. To install them, tell your agent:" in text
+    assert "superpowers" not in text
     assert "> Run `tackit setup` and carry out the optional workflow-commands step." in text
 
 
