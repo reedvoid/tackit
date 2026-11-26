@@ -21,7 +21,9 @@ import pytest
 # Distinctive D37 phrases the surfaces must carry.
 GRANULAR_PHRASE_ADD = "impl-ready granularity"
 GRANULAR_PHRASE_EDIT_PARTIAL = "Use edit for ALL partial changes"
-GRANULAR_PHRASE_EDIT_FOLDBACK = "fold them back BEFORE close"
+# D172 amended (T348): fold-back routing replaced "fold them back BEFORE close".
+GRANULAR_PHRASE_EDIT_FOLDBACK = "route it as a fold-back"
+OLD_PHRASE_EDIT_FOLDBACK = "fold them back BEFORE close"
 
 
 def _normspace(text: str) -> str:
@@ -80,6 +82,7 @@ def test_mcp_edit_docstring_contains_granularity_guidance():
         f"MCP edit() docstring must contain {GRANULAR_PHRASE_EDIT_PARTIAL!r} "
         f"(D37): the edit-vs-retire decision prompt."
     )
+    assert not _contains(edit_block, OLD_PHRASE_EDIT_FOLDBACK)
     assert _contains(edit_block, GRANULAR_PHRASE_EDIT_FOLDBACK), (
         f"MCP edit() docstring must contain {GRANULAR_PHRASE_EDIT_FOLDBACK!r} "
         f"(D37): the fold-back-before-close discipline."
@@ -111,6 +114,7 @@ def test_cli_add_help_contains_granularity_guidance(capsys):
 def test_cli_edit_help_contains_granularity_guidance(capsys):
     """`tackit edit --help` carries the D37 fold-back guidance."""
     out = _cli_help("edit", capsys)
+    assert not _contains(out, OLD_PHRASE_EDIT_FOLDBACK)
     assert _contains(out, GRANULAR_PHRASE_EDIT_FOLDBACK), (
         f"`tackit edit --help` must contain {GRANULAR_PHRASE_EDIT_FOLDBACK!r} "
         f"(D37)."
@@ -737,3 +741,26 @@ def test_readme_contains_granular_description_walkthrough():
         'verb like "fix bug", TBD/TODO placeholders) so the install-time reader '
         "sees what's NOT allowed, not just the abstract rule."
     )
+
+
+def _tool_block(name: str) -> str:
+    from tackit import mcp_server
+    src = inspect.getsource(mcp_server)
+    start = src.index(f"    def {name}(")
+    end = src.index("\n    @mcp.tool()", start)
+    return src[start:end]
+
+
+def test_edit_append_docstring_drops_fold_back_before_close():
+    # T348 / D172: fold-backs are routed as found, not batched before close.
+    block = _tool_block("edit_append")
+    assert "BEFORE close" not in block
+    assert _contains(block, "edit_append is the cheap fold-back mechanism")
+
+
+def test_add_docstring_claims_only_the_refusal_core_makes():
+    # T348 / D163: core refuses an empty or whitespace-only `because`; a vague
+    # or placeholder-looking one passes, so the docstring must not claim more.
+    block = _tool_block("add")
+    assert "placeholder/empty rationales are refused" not in block
+    assert _contains(block, "an empty or whitespace-only rationale is refused")

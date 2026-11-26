@@ -196,7 +196,7 @@ def build_server() -> FastMCP:
         meta (D36 partition rule). Optionally attach labels (D4) and
         symmetric links via ``deps``: under D33 / T164 each entry is
         ``{dep_id: because}`` where ``because`` is the per-edge one-sentence
-        coupling rationale (placeholder/empty rationales are refused).
+        coupling rationale (an empty or whitespace-only rationale is refused).
 
         D37 -- granular-description discipline: aim for impl-ready
         granularity at create time. A fresh-session agent should be able to
@@ -302,10 +302,10 @@ def build_server() -> FastMCP:
         preserves the verbatim prior name + description + delta, so editing
         in place is recoverable.
 
-        D37 -- granular-description discipline: if impl reveals under-defined
-        details, edit() is the mechanism to fold them back BEFORE close.
-        Closing with an out-of-date description destroys granularity for
-        future readers. Edit is allowed on OPEN, SPEC, and RETIRED rows;
+        D37 -- granular-description discipline: if implementation reveals an
+        under-defined detail, route it as a fold-back: a decision to its spec
+        slice, a correction of this task's forecast by rewriting the body
+        (SKILL "Fold-backs"). Edit is allowed on OPEN, SPEC, and RETIRED rows;
         REFUSED on closed / wont_do (D259 -- reopen a closed task to edit it,
         then re-close; a wont_do task is terminal). The wont_do/retire reason
         is never editable.
@@ -366,8 +366,8 @@ def build_server() -> FastMCP:
 
         Refused on empty / whitespace-only ``content`` (a whitespace
         append is almost always a typo'd no-op). D37 -- on META, edit_append
-        is the cheap fold-back mechanism BEFORE close; on production/spec the
-        append is refused, so use the edit-family to fold detail back.
+        is the cheap fold-back mechanism; on production/spec the append is
+        refused, so use the edit-family to fold detail back.
 
         **Edits aren't free** -- every append stays in this note's audit trail
         and is read by whoever opens it next; make edits consequential and

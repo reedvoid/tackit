@@ -845,10 +845,10 @@ def build_parser() -> argparse.ArgumentParser:
         _cmd_edit,
         "change a task -> stale its dependents (D13/D10 + D36 + D37). Use "
         "edit for ALL partial changes including major rewrites. If a design/"
-        "schema slice's premise is completely gone, use retire() instead. Edit is REFUSED on closed/wont_do (D259 -- reopen a closed task first); on production, edit is correction/scope-shrink only (D255) and even that is a smell of thin prep (D277). If impl"
-        "reveals under-defined details, edit() is the mechanism to fold "
-        "them back BEFORE close -- closing with an out-of-date description "
-        "destroys granularity for future readers. **Edits aren't free** -- "
+        "schema slice's premise is completely gone, use retire() instead. Edit is REFUSED on closed/wont_do (D259 -- reopen a closed task first); on production, edit is correction/scope-shrink only (D255) and even that is a smell of thin prep (D277). If "
+        "implementation reveals an under-defined detail, route it as a "
+        "fold-back: a decision to its spec slice, a correction of this "
+        "task's forecast by rewriting the body. **Edits aren't free** -- "
         "fires the cascade depth-1 + pressures the close-gate; make edits "
         "consequential and necessary (substantive impact). See SKILL.md "
         "\"Edits aren't free\" for the discipline.",
