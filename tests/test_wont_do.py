@@ -370,3 +370,11 @@ def test_existing_tasks_have_null_wont_do_reason(core):
     core.add("spec anchor", kind="design")  # T1 -- D256 creation-gate anchor
     core.add("regular_task", kind="production", deps={1: "realizes the anchor decision"})
     assert core.get(2).wont_do_reason is None
+
+
+def test_readme_states_reopen_corrects_and_wont_do_works_on_closed():
+    """D259 lists README among the surfaces that state reopen's correction role."""
+    from pathlib import Path
+    readme = _norm((Path(__file__).resolve().parent.parent / "README.md").read_text(encoding="utf-8"))
+    assert "`reopen` (corrects a closed record; new work is a new task)" in readme
+    assert "also on a closed task" in readme
