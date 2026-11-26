@@ -117,7 +117,8 @@ def test_focal_task_and_labels_stay_complete(core):
         deps={1: "task realizes spec"},
     )  # 2
     card = _project(core, 2)
-    assert card["task"]["name"] == "task"
+    assert card["task"]["prefixed_name"] == "T2 — task"  # D211 Names
+    assert "name" not in card["task"]
     assert card["task"]["description"] == "the body"
     assert "created_at" in card["task"] and "updated_at" in card["task"]
     assert card["labels"] == ["x"]
@@ -345,7 +346,8 @@ def test_mcp_show_is_lean_by_default_and_opts_in(tmp_path, monkeypatch):
 
     lean, full = _drive(tmp_path, monkeypatch, scenario)
     assert set(lean["links"][0]) == LEAN_KEYS
-    assert lean["task"]["name"] == "task"
+    assert lean["task"]["prefixed_name"] == "T2 — task"  # D211 Names
+    assert "name" not in lean["task"]
     assert lean["task"]["description"] == "the body"
     assert full["links"][0]["because"] == "task realizes spec"
     assert full["links"][0]["last_edit_delta"] is None
@@ -511,7 +513,8 @@ def test_cli_show_json_is_lean_by_default_and_opts_in(cli, capsys):
     assert main(["show", "2", "--json"]) == 0
     lean = json.loads(capsys.readouterr().out)
     assert set(lean["links"][0]) == LEAN_KEYS
-    assert lean["task"]["name"] == "task"
+    assert lean["task"]["prefixed_name"] == "T2 — task"  # D211 Names
+    assert "name" not in lean["task"]
     assert main(["show", "2", "--json", "--include-neighbor-because"]) == 0
     full = json.loads(capsys.readouterr().out)
     assert full["links"][0]["because"] == "task realizes spec"

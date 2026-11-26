@@ -25,8 +25,10 @@ from .models import (
     project_add_result,
     project_change_result,
     project_label_result,
+    project_link_candidate,
     project_link_add_result,
     project_link_rm_result,
+    project_search_hit,
     project_show_slice,
     project_slice,
     project_status_result,
@@ -273,7 +275,7 @@ def build_server() -> FastMCP:
         with _core() as c:
             hits = []
             for h in c.search(terms, limit=limit, name_only=name_only):
-                hits.append(h.model_dump(mode="json"))
+                hits.append(project_search_hit(h))
             return _wrap(c, hits)
 
     @mcp.tool(structured_output=False)
@@ -302,7 +304,7 @@ def build_server() -> FastMCP:
         with _core() as c:
             out = []
             for n in c.links(ids=ids, already_seen=already_seen):
-                out.append(n.model_dump(mode="json"))
+                out.append(project_link_candidate(n))
             return _wrap(c, out)
 
     @mcp.tool(structured_output=False)

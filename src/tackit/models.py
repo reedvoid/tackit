@@ -398,10 +398,23 @@ def project_change_result(result: "ChangeResult", *, include_description: bool) 
     task = result.task.model_dump(mode="json")
     if not include_description:
         del task["description"]
+    del task["name"]  # D211 Names: prefixed_name carries it
     newly_stale = []
     for neighbor in result.newly_stale:
         newly_stale.append({"id": neighbor.id, "because": neighbor.because})
     return {"task": task, "newly_stale": newly_stale}
+
+
+def project_search_hit(hit: "SearchHit") -> dict:
+    """D211 Names + D59: one search hit, both adapters. The bare `name` is dropped
+    because `prefixed_name` carries the same untruncated name."""
+    return hit.model_dump(mode="json", exclude={"name"})
+
+
+def project_link_candidate(neighbor: "NeighborRef") -> dict:
+    """D211 Names + D27: one `links` discovery candidate, both adapters. The bare
+    `name` is dropped because `prefixed_name` carries it."""
+    return neighbor.model_dump(mode="json", exclude={"name"})
 
 
 def project_status_result(task: "Task") -> dict:
@@ -446,15 +459,16 @@ def obligation_stale(item: "Task | NeighborRef") -> bool:
 
 
 def project_show_slice(slice_: "Slice", *, include_neighbor_because: bool) -> dict:
-    """D211 + D34 + T293: lean projection of a slice return. The focal task,
-    labels and `because_reminder` are returned as-is. Every neighbor entry drops
-    its bare `name`. An entry keeps `because` + `last_edit_delta` iff the caller
+    """D211 + D34 + T293: lean projection of a slice return. The focal task
+    (minus its bare `name`, D211 Names), labels and `because_reminder` are
+    returned as-is. Every neighbor entry drops its bare `name`. An entry keeps `because` + `last_edit_delta` iff the caller
     opted in, or the entry or the focal task is obligation-bearing stale: an edit
     stales the edited task's neighbors, so reconciling a stale task needs the
     fields on entries that are not themselves stale. Omitted fields are absent
     keys, never null (null `last_edit_delta` means "never edited"). Entries are
     never dropped, whatever their status."""
     payload = slice_.model_dump(mode="json")
+    del payload["task"]["name"]  # D211 Names: prefixed_name carries it
     focal_owes_reconcile = obligation_stale(slice_.task)
     for neighbor, entry in zip(slice_.links, payload["links"]):
         del entry["name"]

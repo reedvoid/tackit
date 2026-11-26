@@ -28,8 +28,10 @@ from .models import (
     project_add_result,
     project_change_result,
     project_label_result,
+    project_link_candidate,
     project_link_add_result,
     project_link_rm_result,
+    project_search_hit,
     project_show_slice,
     project_slice,
     project_status_result,
@@ -323,7 +325,7 @@ def _cmd_search(args) -> int:
             text = "\n".join(lines)
         else:
             text = "(no matches)"
-        _emit(text, [_dump(h) for h in hits], args.json)
+        _emit(text, [project_search_hit(h) for h in hits], args.json)
     return 0
 
 
@@ -347,7 +349,7 @@ def _cmd_links(args) -> int:
             text = "(no candidates)"
         payload = []
         for n in neighbors:
-            payload.append(_dump(n))
+            payload.append(project_link_candidate(n))
         _emit(text, payload, args.json)
     return 0
 

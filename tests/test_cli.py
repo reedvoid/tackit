@@ -84,7 +84,9 @@ def test_cli_add_json_output(cli, capsys):
     ]) == 0
     assert json.loads(capsys.readouterr().out) == {"id": 2}
     assert main(["show", "2", "--json"]) == 0
-    assert json.loads(capsys.readouterr().out)["task"]["name"] == "json task"
+    shown = json.loads(capsys.readouterr().out)["task"]
+    assert shown["prefixed_name"] == "T2 — json task"  # D211 Names: no bare name
+    assert "name" not in shown
 
 
 def test_cli_ls_name_prefix(cli, capsys):
