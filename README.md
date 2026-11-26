@@ -498,7 +498,7 @@ The complete discipline is `SKILL.md`, and the surest way to apply it is to load
 at the **start of every session** rather than rely on the agent to invoke the
 `tackit` skill when it recognizes task work. Two levers exist, both opt-in (tackit
 ships no hook of its own): an **always-loaded instructions file** carries the floor,
-and a **session-start hook** can inject the full skill. The mechanism differs per
+and a **session-start hook** tells the agent to load the full skill. The mechanism differs per
 agent — pick yours.
 
 **Claude Code** — a `SessionStart` hook in `.claude/settings.json`. Its command's
@@ -518,9 +518,9 @@ tool itself; it prints a directive the agent then acts on):
 ```
 
 Keep the `compact` matcher — it re-fires after a context compaction, where the
-loaded skill is otherwise the first thing dropped. To inject the discipline
-**verbatim** instead of a pointer, swap the `echo` for `cat
-<skills-path>/tackit/SKILL.md`.
+loaded skill is otherwise the first thing dropped. The hook prints a one-line
+directive and the agent loads the skill itself: hook output over 10,000 characters
+reaches the agent as a 2,000-character preview, and the skill is longer than that.
 
 **Codex CLI** — the same hook model, in `.codex/config.toml` (or `.codex/hooks.json`,
 whose JSON mirrors Claude's block above). Same four matchers; stdout becomes
