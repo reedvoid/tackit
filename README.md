@@ -564,9 +564,10 @@ without round-tripping a large body. `edit_append` is meta-only (D255) and flags
 no neighbor (D10); both keep the same audit row and delta requirement, and
 `edit_replace_substring` fires the same cascade as `edit`.) Input schemas are generated
 from the Python type hints, so they can't drift from the real interface. Every
-result is wrapped as `{stale_alert, label_nudge, delta, code_check_reminder,
-coherence_nudge, deadref_suggestions, missing_edge_suggestions, result}` so the
-outstanding stale set + per-op nudges ride along on every call;
+result is a compact JSON envelope: `result` always, plus each of `stale_alert`,
+`label_nudge`, `coherence_nudge`, `deadref_suggestions` and
+`missing_edge_suggestions` only when it is set, so the outstanding stale set and
+per-op nudges ride along without empty keys;
 refusals (e.g. closing a stale task, retiring with an open neighbor, link_add
 to a retired endpoint, editing a closed / wont_do task — D259) come back as
 errors that state the reason and — where relevant — the resolve path inline.

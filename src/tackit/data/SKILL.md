@@ -109,7 +109,8 @@ alignment to a neighbor's style, defensive elaboration, and vague deltas such as
 ## Reconcile
 
 `edit`, `edit_replace_substring` and `reclassify` flag directly linked neighbors
-in both directions; other ops don't. Every tool result carries the stale count.
+in both directions; other ops don't. Every tool result carries the stale count while
+anything is stale; the full warning comes only with the call that created new stale work.
 
 - The worklist is stale open and spec tasks. Closed, wont_do and retired tasks are
   never flagged: a change flags only live neighbors.
