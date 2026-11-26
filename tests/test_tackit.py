@@ -126,18 +126,17 @@ def test_d14_edge_to_missing_task_refused(core):
 
 # --- D7 / D8: status, stale invariant, history ------------------------------
 
-def test_d7_relaxed_closed_can_be_stale(core):
-    """T123: cascade now stales closed neighbors without force-reopening them.
-    The closed task carries stale=True + status='closed' to signal 'review for
-    supersede / link migration' while remaining immutable per T118."""
+def test_d7_relaxed_closed_is_never_flagged(core):
+    """D137: an upstream edit neither force-opens nor flags a closed
+    neighbor; it stays closed with stale=False."""
     core.add("spec anchor", kind="design")  # T1 (D1)
     core.add("a", kind="production", deps={1: "realizes the anchor decision"})  # T2
     core.add("b", kind="production", deps={1: "realizes the anchor decision"})  # T3 linked to T2
     core.link_add(3, 2, because="test fixture")
     core.close(3)  # T3 closed
-    core.edit(2, description="changed", delta="test")  # stales T3 but no force-reopen
+    core.edit(2, description="changed", delta="test")  # does not touch closed T3
     t3 = core.get(3)
-    assert t3.stale is True and t3.status == "closed"  # T123: stays closed
+    assert t3.stale is False and t3.status == "closed"  # D137: never flagged
 
 
 def test_d8_history_logged_through_reopen(core):

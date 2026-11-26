@@ -60,9 +60,9 @@ def _entry(card, neighbor_id):
     raise AssertionError(f"no link entry for {neighbor_id} in {card['links']}")
 
 
-def _record_only_pair(core, terminal):
-    """Build a reachable pair: spec focal 1 and terminal neighbor 2, where editing
-    1 leaves 2 stale but record-only (D7). Returns nothing; ids are 1 and 2."""
+def _terminal_pair(core, terminal):
+    """Build a reachable pair: spec focal 1 and terminal neighbor 2, then edit 1.
+    The edit does not write 2 (D137). Returns nothing; ids are 1 and 2."""
     core.add("focal spec", kind="design")  # 1
     if terminal == "retired":
         core.add("neighbor spec", kind="design")  # 2
@@ -187,28 +187,28 @@ def test_stale_entry_keeps_fields_and_reconciled_sibling_goes_lean(core):
     assert set(_entry(card, 3)) == LEAN_KEYS
 
 
-# --- record-only stale stays lean, but stays listed --------------------------
+# --- terminal entries stay lean, stay listed, and are never flagged ---------
 
 
 @pytest.mark.parametrize("terminal", ["closed", "wont_do", "retired"])
-def test_record_only_stale_entry_is_listed_lean_with_its_flag(core, terminal):
-    _record_only_pair(core, terminal)
+def test_terminal_entry_is_listed_lean_and_unflagged(core, terminal):
+    _terminal_pair(core, terminal)
     entry = _entry(_project(core, 1), 2)
     assert set(entry) == LEAN_KEYS
-    assert entry["stale"] is True
+    assert entry["stale"] is False
     assert entry["status"] == terminal
 
 
 @pytest.mark.parametrize("terminal", ["closed", "wont_do", "retired"])
-def test_record_only_stale_focal_does_not_keep_fields(core, terminal):
-    _record_only_pair(core, terminal)
+def test_terminal_focal_is_not_stale_and_keeps_no_fields(core, terminal):
+    _terminal_pair(core, terminal)
     card = _project(core, 2)
-    assert card["task"]["stale"] is True
+    assert card["task"]["stale"] is False
     assert set(_entry(card, 1)) == LEAN_KEYS
 
 
 def test_closed_focal_keeps_fields_only_on_its_open_stale_neighbor(core):
-    """A stale closed focal task earns nothing itself, so only the entry that is
+    """A closed focal task is never flagged (D137), so only the entry that is
     obligation-bearing stale keeps the fields."""
     core.add("spec", kind="design")  # 1
     core.add("closed one", kind="production", deps={1: "closed one realizes spec"})  # 2
@@ -217,7 +217,7 @@ def test_closed_focal_keeps_fields_only_on_its_open_stale_neighbor(core):
     core.close(2)
     core.edit(1, description="new", delta="changed spec")
     card = _project(core, 2)
-    assert card["task"]["stale"] is True
+    assert card["task"]["stale"] is False
     assert _entry(card, 3)["because"] == "closed one shares a contract with open one"
     assert set(_entry(card, 1)) == LEAN_KEYS
 
@@ -226,13 +226,13 @@ def test_closed_focal_keeps_fields_only_on_its_open_stale_neighbor(core):
 
 
 def test_opt_in_returns_both_fields_on_every_entry(core):
-    _record_only_pair(core, "closed")
+    _terminal_pair(core, "closed")
     core.add("plain", kind="production", deps={1: "plain realizes focal"})  # 3
     core.reconcile(3)
     card = _project(core, 1, include_neighbor_because=True)
-    record_only = _entry(card, 2)
-    assert record_only["because"] == "pair coupling"
-    assert "last_edit_delta" in record_only
+    terminal = _entry(card, 2)
+    assert terminal["because"] == "pair coupling"
+    assert "last_edit_delta" in terminal
     plain = _entry(card, 3)
     assert plain["because"] == "plain realizes focal"
     assert "last_edit_delta" in plain
@@ -293,18 +293,18 @@ def test_reminder_fires_on_open_stale_neighbor(core):
 
 
 @pytest.mark.parametrize("terminal", ["closed", "wont_do", "retired"])
-def test_reminder_silent_when_only_record_only_neighbors_are_stale(core, terminal):
-    _record_only_pair(core, terminal)
+def test_reminder_silent_when_the_only_neighbor_is_terminal(core, terminal):
+    _terminal_pair(core, terminal)
     slice_ = core.show(1)
-    assert [n.stale for n in slice_.links] == [True]
+    assert [n.stale for n in slice_.links] == [False]
     assert slice_.because_reminder is None
 
 
 @pytest.mark.parametrize("terminal", ["closed", "wont_do", "retired"])
-def test_reminder_silent_when_focal_is_record_only_stale(core, terminal):
-    _record_only_pair(core, terminal)
+def test_reminder_silent_when_focal_is_terminal(core, terminal):
+    _terminal_pair(core, terminal)
     slice_ = core.show(2)
-    assert slice_.task.stale is True
+    assert slice_.task.stale is False
     assert slice_.because_reminder is None
 
 
@@ -371,7 +371,9 @@ def test_mcp_reconcile_read_keeps_fields_reminder_and_short_alert(tmp_path, monk
     assert "see `stale` for the list" in env["stale_alert"]["message"]
 
 
-def test_mcp_show_record_only_stale_stays_listed_lean_without_reminder(tmp_path, monkeypatch):
+def test_mcp_show_terminal_neighbor_stays_listed_lean_unflagged_without_reminder(tmp_path, monkeypatch):
+    """D137 over MCP: the closed neighbor of an edited spec is listed lean,
+    is not flagged, and raises no reminder."""
     async def scenario(s):
         await s.call_tool("add", {"name": "spec", "kind": "design"})
         await s.call_tool("add", {"name": "task", "kind": "production",
@@ -384,7 +386,7 @@ def test_mcp_show_record_only_stale_stays_listed_lean_without_reminder(tmp_path,
     env = _drive(tmp_path, monkeypatch, scenario)
     entry = env["result"]["links"][0]
     assert set(entry) == LEAN_KEYS
-    assert entry["stale"] is True and entry["status"] == "closed"
+    assert entry["stale"] is False and entry["status"] == "closed"
     assert env["result"]["because_reminder"] is None
 
 

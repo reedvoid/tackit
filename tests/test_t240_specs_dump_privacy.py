@@ -41,3 +41,33 @@ def test_specs_only_still_keeps_current_state_tables(core):
     assert "INSERT INTO task_labels" in dump
     assert "INSERT INTO links" in dump
     assert "INSERT INTO status_transitions" in dump
+
+
+def test_committed_spec_dump_has_no_stale_terminal_row():
+    """D137: only live tasks carry the stale flag, and the committed dump is
+    regenerated after migration 11, so no retired row in it is flagged. A
+    spec-only dump has no schema version, so a flag left in it would come back
+    on every hand-load and never clear. Non-vacuous: the dump must hold
+    retired rows to check."""
+    import sqlite3
+    from pathlib import Path
+
+    from tackit import schema
+
+    dump = Path(__file__).resolve().parent.parent / "examples" / "specs.sql"
+    conn = sqlite3.connect(":memory:")
+    try:
+        for ddl in schema.ALL_DDL:  # the dump is INSERTs only
+            conn.executescript(ddl)
+        conn.executescript(dump.read_text(encoding="utf-8"))
+        retired = conn.execute(
+            "SELECT COUNT(*) FROM tasks WHERE status = 'retired'"
+        ).fetchone()[0]
+        assert retired > 0, "the committed dump holds no retired row to check"
+        flagged = conn.execute(
+            "SELECT id, status FROM tasks WHERE stale = 1 "
+            "AND status IN ('closed', 'wont_do', 'retired') ORDER BY id"
+        ).fetchall()
+    finally:
+        conn.close()
+    assert flagged == []

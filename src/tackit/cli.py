@@ -584,8 +584,8 @@ def _cmd_board(args) -> int:
             return 0
         # D283: one summary() rollup replaces a second full ls() + Python sums.
         # n_stale is the obligation-bearing (open/spec) count -- what the `stale`
-        # worklist and the `summary` state line report; terminal-stale is
-        # record-only (D28/D36) and no longer inflates the board header.
+        # worklist and the `summary` state line report. Terminal tasks carry no
+        # flag (D137); the filter guards against flags from an old spec dump.
         s = core.summary()
         by_status = s["by_status"]
         n_open = by_status.get("open", 0)
@@ -992,7 +992,7 @@ def build_parser() -> argparse.ArgumentParser:
         "clear stale on one or more ids without changing them (reviewed-OK, "
         "D11 + D39). Batch via an explicit id list (one transaction); any "
         "terminal-status id (closed/wont_do/retired) refuses the whole batch "
-        "-- stale on those is record-only archaeology (D28 + D36). No "
+        "-- those carry no stale flag, so there is nothing to clear (D137). No "
         "'reconcile all' form by design (D39 guard-rail: that would automate "
         "the judgment the cascade depends on).",
     )

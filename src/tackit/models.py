@@ -102,11 +102,10 @@ def prefixed_id(kind: str, task_id: int) -> str:
 class Task(BaseModel):
     """S1 `tasks` row. The atomic item; every view is derived from it.
 
-    T123 (2026-06-01): the v0.2.0 invariant ``stale=True => status='open'`` is
-    retired. Cascade-staling no longer force-opens closed neighbors -- a closed
-    task can carry ``stale=True`` to signal "an upstream changed; review for
-    link migration" while remaining closed. v0.4 (D28): closed/wont_do stale is
-    record only -- not on the worklist, not blocking close-gates.
+    D137: ``stale=True`` implies status IN ('open','spec'). The cascade never
+    writes a closed, wont_do or retired row, and the terminal verbs refuse a
+    stale task, so a terminal task carries no flag. Cascade-staling never
+    changes status (T123: no force-reopen).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -440,8 +439,9 @@ def project_link_rm_result(a: int, b: int) -> dict:
 
 
 def obligation_stale(item: "Task | NeighborRef") -> bool:
-    """D28 + D36: stale AND status IN ('open','spec'), the worklist predicate.
-    A stale flag on any other status is record-only (D7)."""
+    """D137: stale AND status IN ('open','spec'), the worklist predicate.
+    Only live tasks carry the flag, so the status clause is a guard for flags
+    loaded by hand from a spec-only dump written before schema version 11."""
     return item.stale and item.status in ("open", "spec")
 
 

@@ -1189,8 +1189,9 @@ class Core:
 
         Fires the cascade: a kind change is a semantic shift, and every
         linked neighbor must re-review whether the relationship still makes
-        sense under the new classification. Closed neighbors stay closed +
-        stale=True per T123."""
+        sense under the new classification. Like every cascade, it writes
+        only live neighbors: closed, wont_do and retired ones are untouched
+        (D137)."""
         self._record_delta(delta, "reclassify")
         _require_kind(new_kind, "reclassify")
         row = self._require_row(task_id)
@@ -1380,37 +1381,40 @@ class Core:
         return self.get(task_id)
 
     def _mark_linked_stale(self, task_id: int) -> list[NeighborRef]:
-        """D10 + T123 - mark the DIRECT linked neighbors of ``task_id`` stale,
+        """D10 + D137 - mark the DIRECT linked neighbors of ``task_id`` stale,
         leaving status untouched. One hop only; non-transitive. Recorded
         *before* the change so an interrupted reconciliation is crash-safe.
         Symmetric since T86: fires for both endpoints of any link, bounded by
-        the meta-island constraint (D26). Closed neighbors stay closed +
-        stale=True per T123's relaxed D7. Under v0.4 (D28) closed/wont_do
-        stale is record only -- the worklist filter excludes it.
+        the meta-island constraint (D26).
 
-        D13 + D211 + T315: the flag is written on every neighbor, but only the
-        neighbors this call moved from clear to set AND that are live
-        (status IN ('open','spec')) are returned: that is the new obligation.
+        D137: only LIVE neighbors (status IN ('open','spec')) are written. A
+        closed, wont_do or retired neighbor gets no flag and no `updated_at`
+        bump, so every stale flag is an obligation.
+
+        D13 + D211 + T315: of the neighbors written, only the ones this call
+        moved from clear to set are returned: that is the new obligation.
         ``_linked_with`` reads before the UPDATE, so each entry still holds its
         prior ``stale`` and its link's ``because``."""
         linked = self._linked_with(task_id)
         newly_flagged: list[NeighborRef] = []
         for n in linked:
+            if n.status not in ("open", "spec"):
+                continue  # D137: a terminal neighbor is never written
             self.conn.execute(
                 "UPDATE tasks SET stale = 1, updated_at = ? WHERE id = ?",
                 (_now(), n.id),
             )
-            if not n.stale and n.status in ("open", "spec"):
+            if not n.stale:
                 newly_flagged.append(n.model_copy(update={"stale": True}))
         return newly_flagged
 
     def stale_worklist(self) -> list[Task]:
-        """D11 + D28 (v0.4) + D36 (v0.5) - the resumable reconciliation
-        worklist: stale tasks that carry an OBLIGATION. Filters to status IN
-        ('open','spec'). Closed/wont_do production/meta and retired design/
-        schema tasks may still carry stale=1 as a record-only marker, but
-        they're not on the worklist and don't pressure the agent. Empty list
-        == reconciliation pass complete."""
+        """D11 + D137 - the resumable reconciliation worklist: stale tasks,
+        all of which carry an OBLIGATION. Only live tasks carry the flag
+        (D137), so the status IN ('open','spec') filter excludes nothing in a
+        migrated store; it stays as a guard for flags loaded by hand from a
+        spec-only dump written before schema version 11. Empty list ==
+        reconciliation pass complete."""
         rows = self.conn.execute(
             "SELECT * FROM tasks WHERE stale = 1 "
             "AND status IN ('open', 'spec') "
@@ -1426,11 +1430,11 @@ class Core:
         REFUSED when status IN ('closed','wont_do','retired') -- the
         terminal states. This mirrors the worklist filter (allowed iff
         status IN ('open','spec')), so what surfaces on the worklist is
-        exactly what can be reconciled. Stale on terminal rows is record-
-        only archaeology (D28 + D36); clearing it would erase the historical
-        signal that an upstream changed. Open and spec rows are the live
-        partition -- reconcile clears stale and confirms the row still
-        describes truth after the upstream shift."""
+        exactly what can be reconciled. Terminal tasks carry no stale flag
+        (D137), so there is nothing on them to reconcile and a list naming
+        one is wrong (D56). Open and spec rows are the live partition --
+        reconcile clears stale and confirms the row still describes truth
+        after the upstream shift."""
         row = self._require_row(task_id)
         if row["status"] in ("closed", "wont_do", "retired"):
             raise InvariantError(
@@ -1601,8 +1605,8 @@ class Core:
             )
         # No-op guard (D20): closing an already-closed task changes nothing -- still
         # return the obligation payload (deps/dependents), but don't bump version
-        # or re-dump tackit.sql.gz. (A closed task is never stale, so the gate above
-        # always passes on this path.)
+        # or re-dump tackit.sql.gz. A closed task is never stale (D137), so the
+        # own-flag gate above always passes on this path.
         if row["status"] != "closed":
             with self._mutate():
                 self._set_status(task_id, "closed", clear_stale=False)

@@ -424,6 +424,18 @@ def _mig_003_dependencies_to_links_symmetric(conn: sqlite3.Connection) -> None:
     conn.execute("DROP TABLE dependencies;")
 
 
+def _mig_010_clear_terminal_stale(conn: sqlite3.Connection) -> None:
+    """D137 -- only live tasks carry the stale flag. Before schema version 11
+    the cascade also wrote the flag on closed, wont_do and retired neighbors;
+    clear it on every such row. ``updated_at`` is left as it was: clearing a
+    flag nobody could act on is not a change to the task. Live rows (open,
+    spec) keep their flags, which are real obligations. No DDL change."""
+    conn.execute(
+        "UPDATE tasks SET stale = 0 "
+        "WHERE stale = 1 AND status IN ('closed', 'wont_do', 'retired')"
+    )
+
+
 # Ordered registry. Append migrations here in target-version order as they land
 # (T84 -> 2, T85 -> 3, T86 -> 4, ...).
 MIGRATIONS: list[Migration] = [
@@ -471,6 +483,11 @@ MIGRATIONS: list[Migration] = [
         target_version=10,
         name="extend status to 5 values + kind/status partition CHECK + design/schema rows migrate to spec/retired (v0.5 / D35 + D36)",
         migrate=_mig_009_status_extend_and_partition_check,
+    ),
+    Migration(
+        target_version=11,
+        name="clear stale on closed/wont_do/retired rows: only live tasks carry the flag (D137)",
+        migrate=_mig_010_clear_terminal_stale,
     ),
 ]
 

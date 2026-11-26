@@ -95,11 +95,9 @@ def test_d14_close_allowed_when_upstream_clean(core):
 
 
 def test_d7_relaxed_staling_closed_dependent_stays_closed(core):
-    """T123 (2026-06-01): cascade-staling a closed neighbor no longer
-    force-opens it. The closed task carries stale=True with status='closed',
-    and no spurious closed->open transition is logged. Action menu on
-    closed-stale: reconcile / supersede / link_rm-link_add (edit still
-    refused per T118)."""
+    """D137: an upstream edit neither force-opens a closed neighbor nor flags
+    it. The closed task keeps stale=False and status='closed', and no
+    spurious closed->open transition is logged."""
     core.add("spec anchor", kind="design")  # D1 -- D256 anchor
     core.add("base", kind="production", deps={1: "realizes the anchor decision"})  # T2
     core.add("dep", kind="production", deps={1: "realizes the anchor decision"})  # T3
@@ -107,7 +105,7 @@ def test_d7_relaxed_staling_closed_dependent_stays_closed(core):
     core.close(3)  # T3 closed
     core.edit(2, description="x", delta="test")  # stales T3 (and D1) without force-reopen
     t3 = core.get(3)
-    assert t3.stale is True and t3.status == "closed"  # T123: stays closed
+    assert t3.stale is False and t3.status == "closed"  # D137: never flagged
     # Status-transitions log does NOT carry a spurious closed->open event.
     seq = [(h.from_status, h.to_status) for h in core.history(3).status_transitions]
     assert seq == [(None, "open"), ("open", "closed")]

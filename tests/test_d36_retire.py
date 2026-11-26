@@ -413,22 +413,26 @@ def test_edit_on_retired_allowed(core):
     assert t.status == "retired"
 
 
-def test_edit_on_retired_fires_cascade_record_only(core):
-    """Edit on retired fires the cascade depth-1; closed neighbors get
-    flagged stale (record-only per D28).
+def test_edit_on_retired_fires_cascade_on_live_neighbors_only(core):
+    """Edit on retired fires the cascade depth-1 (D52): a living spec
+    neighbor is flagged; a closed neighbor is not written at all (D137).
 
     p1's D256 creation-gate link to d1 IS the "prod realizes design" edge
     under test, so it's declared at creation via deps rather than a
     separate link_add call."""
-    core.add("d1", kind="design")
-    core.add("p1", kind="production", deps={1: "prod realizes design"})
+    core.add("d1", kind="design")  # T1
+    core.add("p1", kind="production", deps={1: "prod realizes design"})  # T2
+    core.add("d2", kind="design")  # T3 -- a living spec neighbor
+    core.link_add(1, 3, because="d2 refines d1's decision")
     core.close(2)  # close so retire isn't blocked by open neighbor
     core.retire(1, reason="legit")
+    closed_before = core.get(2).updated_at
     core.edit(1, description="updated", delta="post-retire prose fix")
-    assert core.get(2).stale is True  # cascade fired
-    # But T2 is closed-stale, record-only -- not on the worklist:
+    assert core.get(3).stale is True  # cascade fired on the live neighbor
+    assert core.get(2).stale is False  # the closed neighbor is never flagged
+    assert core.get(2).updated_at == closed_before
     worklist_ids = {t.id for t in core.stale_worklist()}
-    assert 2 not in worklist_ids
+    assert worklist_ids == {3}
 
 
 def test_edit_on_retired_fires_code_check_reminder(core):

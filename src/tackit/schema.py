@@ -6,7 +6,7 @@ core logic (graph integrity in D14, status/stale rules in D7); see those
 slices for the authoritative formulations.
 """
 
-SCHEMA_VERSION = "10"
+SCHEMA_VERSION = "11"
 
 # D26 task kind taxonomy. The four values are also reserved label strings (D14):
 # label_add / load refuse a label equal to any of them, because S1.kind absorbs

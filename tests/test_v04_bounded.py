@@ -18,19 +18,18 @@ from tackit.errors import InvariantError
 
 
 def test_stale_worklist_excludes_closed_production(core):
-    """Closed production task carrying stale=1 (cascade record) is NOT on the
-    worklist. The flag stays as record but doesn't pressure the agent."""
+    """D137: a closed production task is never flagged by an upstream edit,
+    so it is not on the worklist; the open upstream's live neighbors are."""
     core.add("anchor", kind="design")  # T1 -- D256 creation-gate anchor
     core.add("upstream", kind="production", deps={1: "realizes anchor"})  # T2
     core.add("downstream", kind="production", deps={1: "realizes anchor"})  # T3
     core.link_add(3, 2, because="setup")
     core.close(3)  # T3 closed
-    core.edit(2, description="x", delta="upstream shifted")  # cascade stales T3
-    # T3 is closed + stale=1 (record), but worklist excludes it.
+    core.edit(2, description="x", delta="upstream shifted")  # cascade skips T3
     t3 = core.get(3)
-    assert t3.status == "closed" and t3.stale is True
+    assert t3.status == "closed" and t3.stale is False
     worklist_ids = {t.id for t in core.stale_worklist()}
-    assert 3 not in worklist_ids
+    assert worklist_ids == {1}  # only the live anchor
 
 
 def test_stale_worklist_includes_open_stale(core):

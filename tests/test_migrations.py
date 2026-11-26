@@ -1097,3 +1097,94 @@ def test_mig_009_full_v9_to_v10_round_trip_via_core_open(tmp_path):
         ]
     finally:
         c.close_conn()
+
+
+# ============================================================================
+# D137 / mig 11: clear the stale flag on every closed, wont_do and retired row
+# ============================================================================
+
+_OLD_STAMP = "2026-01-01T00:00:00+00:00"
+
+
+def _seed_v10_store_with_flags_everywhere(root):
+    """A store at schema version 10 in which EVERY row carries stale=1 and a
+    fixed `updated_at`, the shape a pre-D137 cascade left behind. Returns the
+    ids by status: 1 spec, 2 open, 3 closed, 4 wont_do, 5 retired, 6 open
+    meta, 7 closed meta."""
+    from tackit.db import init_store
+
+    init_store(root)
+    c = Core.open(start=root)
+    try:
+        c.add("spec", kind="design")  # 1
+        c.add("open", kind="production", deps={1: "realizes the spec"})  # 2
+        c.add("closed", kind="production", deps={1: "realizes the spec"})  # 3
+        c.add("dropped", kind="production", deps={1: "realizes the spec"})  # 4
+        c.add("dead", kind="design")  # 5
+        c.add("note", kind="meta")  # 6
+        c.add("old note", kind="meta")  # 7
+        c.close(3)
+        c.wont_do(4, reason="dropped for this fixture")
+        c.retire(5, reason="premise replaced for this fixture")
+        c.close(7)
+        c.conn.execute("UPDATE tasks SET stale = 1, updated_at = ?", (_OLD_STAMP,))
+        migrations._set_schema_version(c.conn, 10)
+        dump = sync.dump_text(c.conn)
+    finally:
+        c.close_conn()
+    return dump
+
+
+def _flags_and_stamps(c):
+    rows = c.conn.execute(
+        "SELECT id, stale, updated_at FROM tasks ORDER BY id"
+    ).fetchall()
+    return {r["id"]: (bool(r["stale"]), r["updated_at"]) for r in rows}
+
+
+_EXPECTED_AFTER_MIG_011 = {
+    1: (True, _OLD_STAMP),   # spec: live, keeps its flag
+    2: (True, _OLD_STAMP),   # open: live, keeps its flag
+    3: (False, _OLD_STAMP),  # closed: cleared
+    4: (False, _OLD_STAMP),  # wont_do: cleared
+    5: (False, _OLD_STAMP),  # retired: cleared
+    6: (True, _OLD_STAMP),   # open meta: live, keeps its flag
+    7: (False, _OLD_STAMP),  # closed meta: cleared
+}
+
+
+def test_mig_011_clears_terminal_flags_keeps_live_flags_and_updated_at(tmp_path):
+    """D137: opening a version-10 store runs migration 11, which clears stale
+    on closed, wont_do and retired rows only, and touches no `updated_at`.
+    Converse pinned in the same table: every live row keeps its flag."""
+    _seed_v10_store_with_flags_everywhere(tmp_path)
+    c = Core.open(start=tmp_path)
+    try:
+        assert migrations.get_schema_version(c.conn) == 11
+        assert _flags_and_stamps(c) == _EXPECTED_AFTER_MIG_011
+    finally:
+        c.close_conn()
+
+
+def test_mig_011_runs_after_rebuilding_from_a_version_10_dump(tmp_path):
+    """D137: a store rebuilt from an older dump keeps that dump's schema
+    version, so migration 11 runs at the next open. The second store has only
+    the dump file, no db, exactly as after a fresh clone."""
+    dump = _seed_v10_store_with_flags_everywhere(tmp_path / "source")
+    clone = tmp_path / "clone"
+    (clone / ".tackit" / "backups").mkdir(parents=True)
+    sync.write_dump(Store(clone).sql_path, dump)
+    assert not Store(clone).db_path.exists()
+    c = Core.open(start=clone)
+    try:
+        assert migrations.get_schema_version(c.conn) == 11
+        assert _flags_and_stamps(c) == _EXPECTED_AFTER_MIG_011
+    finally:
+        c.close_conn()
+
+
+def test_mig_011_is_registered_at_version_11_citing_d137():
+    """The registry entry exists, targets 11, and names its decision."""
+    entries = [m for m in migrations.MIGRATIONS if m.target_version == 11]
+    assert len(entries) == 1
+    assert "D137" in entries[0].name

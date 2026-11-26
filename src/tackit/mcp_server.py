@@ -527,8 +527,8 @@ def build_server() -> FastMCP:
         bump. Pass ``[id]`` to reconcile a single task.
 
         Validate-all-first: any terminal-status (closed/wont_do/retired) or
-        unknown id refuses the WHOLE batch and names every offender -- stale
-        on terminal rows is record-only archaeology that can't be cleared.
+        unknown id refuses the WHOLE batch and names every offender --
+        terminal tasks carry no stale flag (D137), so naming one is a mistake.
 
         D39 GUARD-RAIL: the list is explicit on purpose -- you still
         enumerate the set you judged still-correct. There is deliberately no
@@ -565,8 +565,9 @@ def build_server() -> FastMCP:
         leave the closed work-done semantics with no spec equivalent).
 
         Fires the staling cascade on linked neighbors (kind is a semantic
-        property; the link relationship may need re-review). Closed/wont_do/
-        retired neighbors stay terminal + stale per D28 (record only).
+        property; the link relationship may need re-review). Only live
+        neighbors are flagged; closed, wont_do and retired ones are untouched
+        (D137).
 
         D211 -- returns the task's scalars without its body, plus
         ``newly_stale``: first-time open or spec flags as ``{id, because}``."""

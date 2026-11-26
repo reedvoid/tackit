@@ -217,24 +217,25 @@ def test_wont_do_label_ops_allowed(core):
 
 # --- cascade-stale interaction (T123 compose) -------------------------------
 
-def test_wont_do_task_cascade_staled_stays_wont_do(core):
-    """A wont_do task that gets cascade-staled by an upstream edit stays
-    wont_do + stale=True (per T123's relaxed D7, no force-reopen on any
-    terminal status)."""
+def test_wont_do_task_not_flagged_by_upstream_edit(core):
+    """D137: an upstream edit does not write a wont_do neighbor -- it stays
+    wont_do, unflagged, with its updated_at unchanged."""
     core.add("spec anchor", kind="design")  # T1 -- D256 creation-gate anchor
     core.add("upstream", kind="production", deps={1: "realizes the anchor decision"})  # T2
     core.add("dropped_downstream", kind="production", deps={1: "realizes the anchor decision"})  # T3
     core.link_add(3, 2, because="setup")
     core.wont_do(3, reason="dropped")
-    core.edit(2, description="upstream shifted", delta="upstream shift stales T3")
+    before = core.get(3).updated_at
+    core.edit(2, description="upstream shifted", delta="upstream shift skips T3")
     t3 = core.get(3)
-    assert t3.stale is True
-    assert t3.status == "wont_do"  # T123 + T132: stays terminal
+    assert t3.stale is False
+    assert t3.updated_at == before
+    assert t3.status == "wont_do"
 
 
-def test_reconcile_refused_on_wont_do_stale_under_v04(core):
-    """v0.4 (D28): reconcile is REFUSED on wont_do tasks (same as closed).
-    Their stale flag is record-only and stays as historical signal."""
+def test_reconcile_refused_on_wont_do(core):
+    """D56 + D137: reconcile is REFUSED on wont_do tasks (same as closed):
+    they carry no stale flag, so there is nothing to clear."""
     core.add("spec anchor", kind="design")  # T1 -- D256 creation-gate anchor
     core.add("upstream", kind="production", deps={1: "realizes the anchor decision"})  # T2
     core.add("dropped", kind="production", deps={1: "realizes the anchor decision"})  # T3
@@ -244,7 +245,7 @@ def test_reconcile_refused_on_wont_do_stale_under_v04(core):
     with pytest.raises(InvariantError, match=r"record-only|archaeology"):
         core.reconcile(3)
     t3 = core.get(3)
-    assert t3.stale is True  # preserved as record
+    assert t3.stale is False
     assert t3.status == "wont_do"
 
 

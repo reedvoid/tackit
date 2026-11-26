@@ -132,8 +132,9 @@ class TackitMachine(RuleBasedStateMachine):
     @precondition(lambda self: self.ids)
     @rule(i=_pick, body=_names)
     def edit_body(self, i, body):
-        """D13 + D211: an edit returns exactly the neighbors it moved from clear to
-        flagged that are open or spec, and flags every neighbor regardless."""
+        """D13 + D211 + D137: an edit flags exactly its live (open or spec)
+        neighbors, returns the ones it moved from clear to flagged, and leaves
+        every other row's flag as it was, terminal neighbors included."""
         task_id = self._id(i)
         before = self._stale_flags()
         prior_body = self.core.get(task_id).description
@@ -147,8 +148,10 @@ class TackitMachine(RuleBasedStateMachine):
         flagged = set()
         if body != prior_body:
             for neighbor in neighbors:
+                if neighbor.status not in ("open", "spec"):
+                    continue  # D137: a terminal neighbor is not written
                 flagged.add(neighbor.id)
-                if not before[neighbor.id] and neighbor.status in ("open", "spec"):
+                if not before[neighbor.id]:
                     expected.append(neighbor.id)
         listed = []
         for ref in result.newly_stale:
@@ -302,15 +305,19 @@ class TackitMachine(RuleBasedStateMachine):
     # ---- invariants (checked after every rule) ----
 
     @invariant()
-    def stale_neighbor_was_linked_or_marked(self):
-        """T123 (2026-06-01) retired the v0.2.0 'stale => open' invariant. A
-        closed task may now carry stale=True (cascade-staling no longer
-        force-opens closed neighbors per the relaxed D7). This invariant has
-        been removed; closed-stale is a valid state. We keep an empty hook
-        here as a marker so the removed invariant's intent is recorded in
-        the property suite."""
-        # Intentionally empty: no invariant on (stale, status) under T123.
-        return
+    def stale_implies_live_status(self):
+        """D137: only live tasks carry the stale flag. It holds because the
+        cascade never writes a terminal row AND close / wont_do / retire refuse
+        a task that is itself stale, so this runs after every rule, the
+        terminal verbs included."""
+        rows = self.core.conn.execute(
+            "SELECT id, status FROM tasks WHERE stale = 1"
+        ).fetchall()
+        for row in rows:
+            assert row["status"] in ("open", "spec"), (
+                f"task {row['id']} is stale at status={row['status']!r}; "
+                f"D137 allows the flag only on open and spec rows."
+            )
 
     @invariant()
     def version_never_decreases(self):
@@ -357,7 +364,7 @@ class TackitMachine(RuleBasedStateMachine):
         """T176 / D36 v0.5 - the stale_worklist must only contain tasks
         where status IN ('open','spec'). Closed/wont_do production/meta
         and retired design/schema rows are record-only -- their stale
-        flag does NOT pressure the worklist. This catches a future
+        flag does NOT pressure the worklist (D137: they carry none). This catches a future
         regression where the filter is loosened (which would re-
         introduce the v0.3-era never-emptying-worklist problem on hub-
         spec edits) OR tightened to exclude live spec (which would hide

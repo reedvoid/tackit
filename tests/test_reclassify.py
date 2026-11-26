@@ -154,9 +154,10 @@ def test_reclassify_empty_delta_refused(core):
         core.reclassify(task.id, "meta", delta="")
 
 
-def test_reclassify_keeps_closed_neighbor_closed_per_t123(core):
-    """T123 / T128 compose: a closed linked neighbor that gets cascade-staled
-    by reclassify stays closed + stale (no force-reopen)."""
+def test_reclassify_leaves_closed_neighbor_closed_and_unflagged(core):
+    """D137: reclassify fires the cascade, but a closed linked neighbor is
+    not written -- it stays closed, unflagged, with its updated_at unchanged.
+    Converse: the live anchor neighbor of the same reclassify IS flagged."""
     anchor = core.add("spec anchor", kind="design")  # D1
     hub = core.add(
         "hub", kind="production",
@@ -168,7 +169,10 @@ def test_reclassify_keeps_closed_neighbor_closed_per_t123(core):
     )  # T3
     core.link_add(neighbor.id, hub.id, because="setup")
     core.close(neighbor.id)
+    before = core.get(neighbor.id).updated_at
     core.reclassify(hub.id, "design", delta="moving to design")
     t2 = core.get(neighbor.id)
-    assert t2.stale is True
+    assert t2.stale is False
     assert t2.status == "closed"
+    assert t2.updated_at == before
+    assert core.get(anchor.id).stale is True

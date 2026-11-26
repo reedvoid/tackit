@@ -107,9 +107,8 @@ language and it drives the tools. Common asks:
 - **"What did that change affect?"** / **"What's stale?"** → it shows the reconciliation
   worklist.
 - **"Mark the parser task done."** → it closes the task — *refused* if the task is stale
-  or sits on unreconciled work, so you can't silently mark broken work complete. The
-  gate honors obligation-bearing stale only: closed / wont_do / retired neighbors
-  carrying stale flags as historical record don't trip it.
+  or sits on unreconciled work, so you can't silently mark broken work complete. Closed,
+  wont_do and retired tasks are never flagged, so a finished neighbor never trips it.
 - **"We're abandoning the spec for that legacy auth flow — retire it."** → it
   calls `retire` on the design slice — *refused* if any linked production task
   is still open (because then the work isn't actually dead), with the
@@ -140,9 +139,10 @@ Concrete loops, so the discipline reads as habits, not rules:
   that's the core guarantee.
 - **Wrap up.** Nothing is "done" while the worklist `stale` (filtered to live
   partition: `status IN ('open', 'spec')`) is non-empty; an empty worklist is the
-  only safe stopping point. Stale on terminal-status rows (`closed`, `wont_do`,
-  `retired`) is *record-only* archaeology — historical signal that an upstream
-  changed, but it doesn't pressure the worklist or the close-gate.
+  only safe stopping point. Terminal tasks (`closed`, `wont_do`, `retired`) are never
+  flagged: a change only flags live neighbors, so every flag is an obligation. What
+  changed after a close is in the task's history (status transitions and edit
+  revisions).
 
 ## For humans: the CLI
 
@@ -316,7 +316,7 @@ which op you reach for (the partition and verb taxonomy are unchanged):
   you already have, identically on MCP and CLI `--json`. An edit returns the task's
   scalars plus `newly_stale`: each neighbor it moved from clear to flagged that is open
   or spec, as `{id, because}`. A neighbor already flagged stays on the worklist and in
-  the alert; a terminal neighbor gets the flag as a record only. `close`, `wont_do`,
+  the alert; a terminal neighbor is not flagged at all. `close`, `wont_do`,
   `retire` and `reopen` return `{id, status}`; `add` returns `{id}`; `label_add` and
   `label_rm` return `{id, labels}`; `link_add` returns `{linked: {a, b, because}}` with
   the stored rationale; `link_rm` returns `{unlinked: {a, b}}`. `show` is the path to
@@ -467,9 +467,8 @@ point:
   is a `board`/`ls`-by-label query, not a hand-typed ledger (D38).
 - Reconcile on change: a change marks linked neighbors stale; an `edit_append` note does
   not, so use `edit` when a note really changes what a neighbor should say. The worklist filter is
-  `status IN ('open','spec')` — stale on terminal-status rows
-  (closed/wont_do/retired) is record-only archaeology and does NOT pressure the
-  worklist or the close-gate. Review each obligation-bearing stale task against its
+  `status IN ('open','spec')`, and terminal tasks (closed/wont_do/retired) are never
+  flagged in the first place, so every flag is an obligation. Review each stale task against its
   linked neighbors, then `edit` or `reconcile`. Never end a turn while obligation-
   bearing stale remains. Clear a reviewed-clean set in one call with
   `reconcile(ids=[...])` (atomic, short alert) — but the list is explicit by design;

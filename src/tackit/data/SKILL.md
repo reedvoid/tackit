@@ -109,8 +109,8 @@ alignment to a neighbor's style, defensive elaboration, and vague deltas such as
 `edit`, `edit_replace_substring` and `reclassify` flag directly linked neighbors
 in both directions; other ops don't. Every tool result carries the stale count.
 
-- The worklist is stale open and spec tasks only; a flag on a closed, wont_do or
-  retired task is a record of upstream change. Leave it.
+- The worklist is stale open and spec tasks. Closed, wont_do and retired tasks are
+  never flagged: a change flags only live neighbors.
 - For each stale task, compare the upstream `delta` with the link's `because`. If
   they don't intersect, reconcile without re-reading; otherwise re-read with that
   question in mind.

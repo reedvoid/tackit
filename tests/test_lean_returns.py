@@ -4,8 +4,8 @@ Every scenario runs through the real MCP server, over the in-memory client
 protocol, and through `main`. The dangerous direction is pinned hardest: a live
 neighbor flagged for the first time must ALWAYS be listed with its exact `because`,
 because that list is how an agent learns about a new obligation. The converses are
-pinned beside it: terminal and already-stale neighbors are never listed, yet the
-flag is still written on them.
+pinned beside it: already-stale neighbors are never listed though they stay
+flagged, and terminal neighbors are neither listed nor flagged (D137).
 
 Expected values are written out by hand from D211's rules, never recomputed.
 """
@@ -91,7 +91,7 @@ def _seed_hub_with_every_neighbor_state():
     """A design hub (1) with one neighbor in each state an edit can meet:
 
     2 open and 3 spec, both unflagged: live and first-time, so they get listed.
-    4 closed, 5 wont_do, 6 retired: terminal, record-only.
+    4 closed, 5 wont_do, 6 retired: terminal, never written (D137).
     8 open and already stale, flagged earlier through its other spec, 7.
     """
 
@@ -134,12 +134,14 @@ CLI_FLAGGING_OPS = [
 ]
 
 
-def _assert_every_neighbor_flagged_but_only_live_first_time_listed(newly_stale):
+def _assert_live_neighbors_flagged_but_only_first_time_listed(newly_stale):
     assert newly_stale == FIRST_TIME_LIVE
-    # The flag is still written on every neighbor (D10, D28): only what is
-    # printed changes.
-    for neighbor in (2, 3, 4, 5, 6, 8):
-        assert _stale_flag(neighbor) is True, f"neighbor {neighbor} lost its flag"
+    # The flag is written on every live neighbor (D52), listed or not.
+    for neighbor in (2, 3, 8):
+        assert _stale_flag(neighbor) is True, f"live neighbor {neighbor} lost its flag"
+    # Terminal neighbors are not written at all (D137).
+    for neighbor in (4, 5, 6):
+        assert _stale_flag(neighbor) is False, f"terminal neighbor {neighbor} was flagged"
     # The already-stale one stays on the worklist; the terminal ones never join.
     assert _worklist_ids() == [2, 3, 8]
 
@@ -151,7 +153,7 @@ def _assert_every_neighbor_flagged_but_only_live_first_time_listed(newly_stale):
 def test_mcp_lists_only_first_time_live_neighbors(store, tool, args):
     _seed_hub_with_every_neighbor_state()
     result = _call(tool, args)
-    _assert_every_neighbor_flagged_but_only_live_first_time_listed(
+    _assert_live_neighbors_flagged_but_only_first_time_listed(
         result["newly_stale"]
     )
 
@@ -160,7 +162,7 @@ def test_mcp_lists_only_first_time_live_neighbors(store, tool, args):
 def test_cli_json_lists_only_first_time_live_neighbors(store, capsys, argv):
     _seed_hub_with_every_neighbor_state()
     result = _cli_json(capsys, argv + ["--json"])
-    _assert_every_neighbor_flagged_but_only_live_first_time_listed(
+    _assert_live_neighbors_flagged_but_only_first_time_listed(
         result["newly_stale"]
     )
 
@@ -240,7 +242,9 @@ def test_a_neighbor_flagged_by_a_second_task_keeps_both_notes_on_show(store):
     assert becauses == ["shared realizes a", "shared realizes b"]
 
 
-def test_a_terminal_neighbor_reopened_with_its_flag_stays_on_the_worklist(store):
+def test_a_reopened_task_arrives_unflagged_and_the_next_edit_lists_it(store):
+    """D137 + D259: a closed task is never flagged, so reopen brings it back
+    unflagged; the next edit is its first flag and lists it."""
     def seed(core):
         core.add("hub", kind="design")  # 1
         core.add("a", kind="production", deps={1: "a realizes"})  # 2
@@ -250,12 +254,12 @@ def test_a_terminal_neighbor_reopened_with_its_flag_stays_on_the_worklist(store)
     while_closed = _call("edit", {"id": 1, "description": "one", "delta": "first"})
     assert while_closed["newly_stale"] == []
     assert _worklist_ids() == []
+    assert _stale_flag(2) is False
     _call("reopen", {"id": 2})
-    # Its flag survives the reopen, so the next edit is not its first flag: it is
-    # surfaced by the worklist, not the edit's list.
-    assert _worklist_ids() == [2]
+    assert _stale_flag(2) is False
+    assert _worklist_ids() == []
     after = _call("edit", {"id": 1, "description": "two", "delta": "second"})
-    assert after["newly_stale"] == []
+    assert after["newly_stale"] == [{"id": 2, "because": "a realizes"}]
     assert _worklist_ids() == [2]
 
 
@@ -1105,9 +1109,9 @@ def test_the_skill_states_what_edit_append_does():
 # --- regression: what an edit flags stays governed by the old rules (D28, D14) ---
 
 
-def test_a_terminal_neighbor_flagged_but_unlisted_still_cannot_be_reconciled(store):
-    """Not listing it must not change what it is: record-only, refused, off the
-    worklist, and no block on closing its neighbors."""
+def test_a_terminal_neighbor_is_not_flagged_and_cannot_be_reconciled(store):
+    """D137 + D56: an edit leaves a closed neighbor unflagged and unlisted;
+    reconcile on it is still refused, and it stays off the worklist."""
 
     def seed(core):
         core.add("hub", kind="design")  # 1
@@ -1116,7 +1120,7 @@ def test_a_terminal_neighbor_flagged_but_unlisted_still_cannot_be_reconciled(sto
 
     _core_call(seed)
     assert _call("edit", {"id": 1, "description": "new", "delta": "d"})["newly_stale"] == []
-    assert _stale_flag(2) is True
+    assert _stale_flag(2) is False
 
     async def scenario(session):
         return await session.call_tool("reconcile", {"ids": [2]})
@@ -1124,7 +1128,7 @@ def test_a_terminal_neighbor_flagged_but_unlisted_still_cannot_be_reconciled(sto
     response = _mcp(scenario)
     assert response.isError is True
     assert "REFUSED" in response.content[0].text
-    assert _stale_flag(2) is True
+    assert _stale_flag(2) is False
     assert _worklist_ids() == []
 
 
