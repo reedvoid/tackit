@@ -233,16 +233,22 @@ def test_skill_md_contains_ship_on_pain_section():
         "pressure. The section heading is what an agent greps for."
     )
     # The overrides-bundle-first principle is present.
-    assert "OVERRIDES" in text and "finish the current bundle first" in text, (
-        "SKILL.md must state explicitly that ship-on-pain OVERRIDES "
+    # M344 / D207: plain register -- the word is "overrides"; the old
+    # capitalized form must not come back.
+    assert "overrides \"finish the current bundle first\"" in text, (
+        "SKILL.md must state explicitly that ship-on-pain overrides "
         "'finish the current bundle first' -- this is the load-bearing "
         "tension the rule resolves. A softer phrasing returns the "
         "discipline to advisory status."
     )
-    # The T179 anchoring incident is referenced.
-    assert "T179" in text and "Standalone" in text, (
-        "SKILL.md must reference the T179 anchoring incident (the diff-edit "
-        "ops that sat at status='open' through 8 release phases) and the "
+    assert "OVERRIDES" not in text, (
+        "SKILL.md is plain register (D207): no capitals for stress."
+    )
+    # The anchoring incident is stated in a clause, not cited by id (D207:
+    # the skill is self-contained; another user's store has its own T179).
+    assert _contains(text, "sat deferred through 8 phases") and "Standalone" in text, (
+        "SKILL.md must state the anchoring incident (a fix that sat "
+        "deferred through 8 release phases) and the "
         "'Standalone -- NOT part of the current bundle' smell pattern. The "
         "incident is what makes the rule actionable; without it the rule "
         "reads as a slogan."
@@ -508,7 +514,9 @@ def test_skill_md_contains_reactive_side_door_trigger():
         "appears' heading -- the reactive trigger for net-new work that "
         "has no plan and no parent task to fire off (T227)."
     )
-    assert _contains(text, "an OPEN task already covers this"), (
+    # M344 / D207: plain register; the capitalized form must not return.
+    assert not _contains(text, "an OPEN task already covers this")
+    assert _contains(text, "an open task already covers this"), (
         "SKILL.md must carry the fork test ('an OPEN task already covers "
         "this? yes -> fold-back; no -> new task') -- it is what "
         "disambiguates filing a NEW task from folding into an existing one."
@@ -523,7 +531,8 @@ def test_skill_md_contains_reactive_side_door_trigger():
         "not to recognizing 'side-door work' (the recognition is what silently "
         "fails). T229 re-anchoring; reverting it un-fixes the core failure."
     )
-    assert _contains(text, "STATE the disposition out loud"), (
+    assert not _contains(text, "STATE the disposition out loud")
+    assert _contains(text, "state the disposition out loud"), (
         "SKILL.md must require the disposition be STATED out loud (new task / "
         "fold-back / not-tracked) so a SILENT skip -- the actual failure mode "
         "-- is forbidden, not merely discouraged (T229)."
@@ -584,7 +593,8 @@ def test_skill_md_contains_spec_slice_holds_decisions_rule():
     # not just a copied literal. Pinning it stops a revert to the old
     # "point to the code home" phrasing, which was itself a spec->code
     # reference that rots.
-    assert _contains(text, "a spec NEVER names code"), (
+    assert not _contains(text, "a spec NEVER names code")
+    assert _contains(text, "a spec never names code"), (
         "SKILL.md must carry the one-directional spec<->code bridge rule -- "
         "code names the spec by id (grep-bridged); a spec never names code "
         "(no file:line / path / see-foo.py), because code churns while the "

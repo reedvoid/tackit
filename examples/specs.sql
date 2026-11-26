@@ -287,7 +287,7 @@ the partition layer is orthogonal. A meta row''s status is open/closed/
 wont_do — meta is in the production/meta partition.
 
 Backs (v0.5 additions): D35 (T167), D36 (T171), T168 (Phase 1 — partition
-CHECK + reclassify auto-shift), T176 (Phase 4 — property invariant).', 'spec', 0, '2026-06-01T01:51:47.643672+00:00', '2026-11-04T22:48:32.215884+00:00', 'design', NULL);
+CHECK + reclassify auto-shift), T176 (Phase 4 — property invariant).', 'spec', 0, '2026-06-01T01:51:47.643672+00:00', '2026-11-26T03:05:52.786920+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (111, 'D27 — Link discovery via `links` op (added v0.3.0)', 'Replaces the v0.2.0 "search-before-create" workflow with a deterministic candidate-surfacing loop. The links op: with no input → returns all design + schema kind tasks (the anchor layer — the spec tasks that production work should link to); with a list of task ids → returns every task linked at depth=1 to any input id, filtered to viable link targets, minus the input ids themselves and minus any "already-seen" set the caller passes back. Iteration is caller-driven — tackit holds no state between calls; the agent loops links(anchors), links(next_layer), … until satisfied.
 
 Candidate filter (D27 v0.4 / D28): the expansion-hop output restricts to status=''open'' OR kind in {design, schema}. Closed/wont_do production/meta neighbors are NOT surfaced as candidates — they cannot be productive link targets going forward (the work is done or dropped; coupling to them would be archaeology, not coupling). The anchor-layer query (links() with no input) is unchanged — design/schema slices are perma-open under D30 so the question doesn''t arise there. This filter aligns the surface with the worklist-filter scope (D28) so what you''d reconcile and what you''d link to share the same boundary.
@@ -438,7 +438,7 @@ every randomized op so a future regression on the filter shape gets caught
 in CI.
 
 Backs (v0.5 additions): D35 (T167), D36 (T171), T173 (Phase 2a sweep),
-T180 (anchor-query residual), T176 Phase 4 (property invariant).', 'spec', 0, '2026-06-01T22:22:03.373143+00:00', '2026-11-04T22:46:13.765906+00:00', 'design', NULL);
+T180 (anchor-query residual), T176 Phase 4 (property invariant).', 'spec', 0, '2026-06-01T22:22:03.373143+00:00', '2026-11-26T03:05:52.786920+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (138, 'D29 — Description revisions audit table', 'Append-only audit table capturing every successful edit''s prior name and description plus the delta rationale. Backstop for edit archaeology: while a task is OPEN its description can be updated in place with the verbatim prior state recoverable. (D259 REVERSES D29''s original v0.4 stance that also permitted editing CLOSED and wont_do tasks in place — the three edit ops now refuse on status IN (''closed'', ''wont_do''); reopen to change. The audit table therefore backstops open-edits and retired-slice edits, not closed tasks.) Replaces the v0.3.0 supersede marker (D25) — the marker addressed ''don''t get misled by old prose'' via inline-tagging hits with a superseder id; the audit table addresses it by preserving the prior verbatim version under the SAME task id. Simpler model, same archaeology capability. history() op extends to return description_revisions alongside status_transitions.
 
 ## v0.5 update (D35+D36 — retire interaction with audit table)
@@ -920,8 +920,8 @@ D33''s placeholder-rationale refusal exemplifies this: the rule fires in `link_a
 - D33 (placeholder rationale refusal — extends to retire''s reason field).
 - S1 (partition CHECK joint with D35; wont_do_reason column documented as terminal-verb-reason regardless of which verb wrote it).
 
-Backs: D7 (status taxonomy joint with D35), D14, D26, D27, D28, D29, D30, D31, D33, S1.', 'spec', 0, '2026-06-02T07:22:12.812393+00:00', '2026-11-05T00:28:47.130899+00:00', 'design', NULL);
-INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (172, 'D37 — Granular-description discipline: task bodies must be impl-ready on fresh-session revisit; edit() before close to absorb impl-time discoveries', '**The granular-description discipline** (added 2026-06-02): task descriptions must be implementation-ready. On a new-session revisit, an agent reading the description should not be confused, should not feel the need to do additional scoping work, and should not encounter ambiguity that could be resolved. Under-defined task descriptions force fresh-session agents to re-derive context that should already be on the row — which is exactly the failure tackit exists to prevent.
+Backs: D7 (status taxonomy joint with D35), D14, D26, D27, D28, D29, D30, D31, D33, S1.', 'spec', 0, '2026-06-02T07:22:12.812393+00:00', '2026-11-26T03:05:52.786920+00:00', 'design', NULL);
+INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (172, 'D37 — Granular-description discipline: task bodies must be impl-ready on fresh-session revisit; impl-time discoveries are routed as fold-backs', '**The granular-description discipline** (added 2026-06-02): task descriptions must be implementation-ready. On a new-session revisit, an agent reading the description should not be confused, should not feel the need to do additional scoping work, and should not encounter ambiguity that could be resolved. Under-defined task descriptions force fresh-session agents to re-derive context that should already be on the row — which is exactly the failure tackit exists to prevent.
 
 **The rule (forceful):**
 
@@ -936,8 +936,8 @@ INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at,
 **When the discipline applies:**
 
 - **At create time (`add()`)** — aim for full granularity from the start. add()''s docstring SHOULD prompt the agent to write at impl-ready granularity. The bias is "richer body now beats remembering it later."
-- **During implementation** — if an agent discovers an under-defined detail while implementing (an edge case the spec missed, a refusal-message wording question, an extra file affected), `edit()` is the mechanism to fold the discovery back into the description BEFORE close. Under-definition discovered during impl is a normal and expected outcome — the response is to edit, not to lose the detail.
-- **Before close** — the author should re-read the description against what was actually implemented. If the description no longer fully captures the impl, edit() it before close. Closing a task with an out-of-date description destroys the granularity for future readers — the audit trail (S7 description_revisions) is the safety net, but relying on archaeology should be the exception, not the rule.
+- **During implementation** — an under-defined detail discovered while implementing (an edge case the spec missed, a refusal-message wording question, an extra file affected) is a normal and expected outcome; the response is to route it as a fold-back (D258), not to lose it. A decision goes into the governing spec slice (D245). A correction to the current production task''s forecast (a wrong code path, a missed call site) rewrites that body with `edit` / `edit_replace_substring` (D255). Progress goes to git and the status, not the body.
+- **Before close** — no separate re-read step. The body stays accurate because each discovery is routed as it is found; the revision audit (S7 description_revisions) is the safety net.
 
 **Anti-patterns this discipline forbids:**
 
@@ -951,7 +951,7 @@ INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at,
 
 - **SKILL.md** (T169): forceful instruction in the writing-tasks section. The primary surface — agents read it at session start and the rule shapes every subsequent add() / edit() invocation.
 - **MCP `add()` docstring** (T168): "Aim for impl-ready granularity at create time. A fresh-session agent should be able to implement the task from its description alone."
-- **MCP `edit()` docstring** (T168): "If impl reveals under-defined details, edit() is the mechanism to fold them back BEFORE close. Closing with an out-of-date description destroys granularity for future readers."
+- **MCP `edit()` docstring** (T168): "If implementation reveals an under-defined detail, route it as a fold-back: a decision to its spec slice, a correction of this task''s forecast by rewriting the body."
 - **CLI `tackit add` / `tackit edit --help`** (T168): same wording.
 - **README** (T170): the writing-tasks workflow walkthrough demonstrates the discipline — show a vague task being refined into an impl-ready one via edit().
 
@@ -969,7 +969,7 @@ The 2026-06-02 D35/D36/T168/T169/T170 persistence pass demonstrated the failure 
 
 D37 is a writing-time discipline, not a runtime mechanism — there are no refusal predicates to pin. The "tests" that matter are surface-presence tests: assert that SKILL.md contains the forceful instruction; assert that the add() and edit() MCP docstrings contain the granularity guidance; assert that the README''s writing-tasks walkthrough includes the discipline demonstration. These are documentation-presence tests in tests/test_docs.py or similar.
 
-Backs: D3 (task create/read/update — discipline applies at create time), D26 (kind taxonomy — granular descriptions are how each kind achieves its purpose), D29 (description_revisions — audit trail of edits captures granularity improvements over time and is the safety net for missed pre-close refinements), D36 (propagation principle — D37 follows the same multi-surface pattern: SKILL + MCP docstrings + CLI help + README).', 'spec', 0, '2026-06-02T07:26:37.592198+00:00', '2026-11-26T01:46:00.088370+00:00', 'design', NULL);
+Backs: D3 (task create/read/update — discipline applies at create time), D26 (kind taxonomy — granular descriptions are how each kind achieves its purpose), D29 (description_revisions — audit trail of edits captures granularity improvements over time and is the safety net for missed pre-close refinements), D36 (propagation principle — D37 follows the same multi-surface pattern: SKILL + MCP docstrings + CLI help + README).', 'spec', 0, '2026-06-02T07:26:37.592198+00:00', '2026-11-26T03:05:52.786920+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (197, 'D38 — Links are coupling, labels are membership: the rollup / hub / membership-link anti-patterns', 'Names and forbids the "fake task" family that the dogfood surfaced, and removes the SKILL.md endorsement (the "epic pattern" snippet) that caused it.
 
 ## The core distinction (the thing that''s easy to miss)
@@ -1057,48 +1057,21 @@ The workflow surfaces (SKILL.md, README, load docstring/CLI help) name `load` as
 - `plan.py`: defer blank lines inside a desc (Decision A).
 - SKILL.md + README + `load` MCP docstring + CLI help: name load as the bulk-import path; note multi-paragraph desc support.
 - Tests: blank-line paragraph round-trip; the previously-failing sample now parses; trailing-blank-before-field still ends the block; consecutive-line continuation unchanged; deps block still ends on blank.', 'spec', 0, '2026-06-04T17:36:52.807216+00:00', '2026-06-04T17:36:52.807216+00:00', 'design', NULL);
-INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (207, 'D41 — SKILL.md is instructions, not documentation: why/do/don''t-do format, cut standalone narrative, cite-don''t-narrate, MCP harmony', 'SKILL.md has drifted into documentation-with-a-narrative-arc; it should be a strict list of behavioral instructions. This slice is the standard the rewrite (and all future SKILL edits) must obey. Subsumes the Q4 pattern/anti-pattern request (the format below IS the pattern/anti-pattern, generalized).
+INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (207, 'D41 — SKILL.md is self-contained behavioral instructions: plain register, each rule carries its reason, no task-id citations, MCP harmony', 'SKILL.md ships to every tackit user. It is a self-contained list of behavioral instructions: not documentation, and not a pointer into the maintainer''s store.
 
-## The format — every BEHAVIORAL instruction
-```
-why:        <the rationale: what it solves / what breaks without it. This is
-            the encapsulated context — reading it tells the agent WHY the rule
-            exists. ALWAYS present.>
-do:         <the directive. ALWAYS present.>
-don''t-do:   <the concrete anti-pattern. Present ONLY when there''s a real one;
-            omit when it would be vacuous (Q4 discretion — `show` has no
-            meaningful "wrong example").>
-```
-why+do are mandatory; don''t-do is conditional. An instruction whose `why:` isn''t clear is, by definition, poorly written — fix it, don''t leave the why implicit.
+Form. Each instruction states the directive and the reason it exists, in plain prose; it names the concrete anti-pattern only when a real one exists. No emphasis markers (capitals for stress, FORCEFUL, star or "most important" framing). Keep each rule''s scope words ("every", "only", "open or spec"): on the 5.5 model generation, adherence held when emphasis was cut and dropped where a scope word was cut. Short mechanics may stay as reference.
 
-## What is NOT an instruction (stays as reference, NOT forced into the format)
-Pure mechanics/definitions: the kind/status partition table, what a read op returns, the auto-id prefix synthesis rule, the report-format template. These are reference; leave them as tables/definitions.
+What stays. The judgment calls the code cannot make: classification, when to file, how to write a `because`, what to reconcile, where a finding goes. A move the code refuses with a message that says what to do instead is taught by that refusal and the op''s docstring, not restated here.
 
-## Cut standalone narrative
-do: delete war stories, worked-example retellings, version archaeology (the v0.3→v0.4→v0.5 parentheticals), and motivational preambles.
-don''t-do: don''t keep a beginning/middle/end arc; SKILL.md is not a story.
+Self-contained. The skill cites no task ids from this store: in another user''s store those numbers name their own rows, and the reader cannot open ours. An incident that motivates a rule is stated in one clause. Id-shaped strings appear only as syntax examples.
 
-## Cite-don''t-narrate (the key move)
-The full incident/example already lives in the tackit task body it''s about (T179''s anchoring incident, D25''s retire story, T115''s inheritance-trap case). The instruction cites it in a clause ("see T179") instead of re-telling it. tackit IS the archive — the skill must not duplicate what the task records.
+Cut. War stories, version archaeology, motivational preambles, and any paragraph that appears twice.
 
-## No duplication, demote superlatives
-- No paragraph appears verbatim twice (today: "Edits aren''t free" pasted 3× in the MCP edit docstrings; the T179 story in 2–3 places).
-- At most ONE rule may be framed as "the most important" (today four sections each claim it). Pick one (ship-on-pain) or none.
+Intro. Three or four lines: what tackit is and why it exists.
 
-## Intro
-3–4 lines max: what tackit is + why it exists. No more standalone context than that.
+MCP harmony. A discipline''s full statement lives once, in the skill. A docstring carries its op''s contract, the one-line sharp edge of any discipline that bites at that call, and the skill section''s heading. Headings cited by docstrings, CLI help or refusals are a contract: renaming one updates every citer.
 
-## MCP harmony (indirect, not 1:1)
-The skill and MCP are different surfaces (propagation principle): SKILL teaches cross-cutting disciplines at session-start; a docstring describes ONE operation at call-moment. Harmony rule: each discipline''s FULL statement lives once, in SKILL; the docstring carries the op''s contract (params/refusals/return) + the one-line sharp edge of any discipline that bites at THAT call + a cite to the SKILL section — never the full discipline paragraph. Docstrings get shorter + scoped, NOT reformatted into why/do/don''t (that genre is SKILL''s). This preserves each-surface-teaches-at-its-moment without verbatim duplication.
-
-## Test + sync impact
-Presence-pinning tests (test_d37_docstrings, test_d38_docstrings) assert phrases that will move — update them with the rewrite. Re-sync the 3 dev SKILL copies (dev-copies-match test).
-
-## Target
-~35–40% reduction (~1060 → ~620–680 lines) with ZERO loss of any behavioral directive. Every cut is narrative/duplication/archaeology, never a rule.
-
-## Measured at T208/T209 (fold-back)
-The rewrite compressed SKILL.md 1083 → 282 lines (63.6k → 27.9k chars, ~56%), NOT the ~35–40% estimated above — the why/do/don''t format is far denser than projected, so that target was wrong. The presence-pin tests (test_d37/d38_docstrings) proved to be the rewrite''s safety net: a wholesale reformat moved or dropped 6 load-bearing phrases (ship-on-pain "OVERRIDES", "trained on noise", "substantive impact", "consequential and necessary", "findings outgrow the body", the D37 heading) — every one caught by a failing test and restored verbatim. Lesson for any future skill/docstring reformat: expect a deeper cut than intuition suggests, and lean on the presence pins as the guardrail against silent directive loss.', 'spec', 0, '2026-06-04T20:46:55.466445+00:00', '2026-06-13T00:31:18.355156+00:00', 'design', NULL);
+Pins. Presence-pin tests assert the skill''s load-bearing phrases. A reword updates the pin to the new phrase in the same change and never drops it silently.', 'spec', 0, '2026-06-04T20:46:55.466445+00:00', '2026-11-26T03:04:45.959514+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (211, 'Lean projection default for every adapter return, identical on MCP and CLI', 'Decision: every adapter return is LEAN by default. A return carries what the agent''s next step needs and nothing it already has; the rest stays available on request. Nothing stored is removed, only what a call returns.
 
 **`ls`, `board` and `stale`:** task scalars only: id, prefixed_name, kind, status, stale, wont_do_reason. No `description`, no bare `name` (the computed prefixed_name `<L><id> — <name>` carries it), no `created_at`/`updated_at`. `show(id)` is the path for one row''s full name and timestamps. `board` neighbors are the graph SHAPE: id, prefixed_name, status, stale, kind. `stale` returns the worklist rows in this short form, with no bodies and no opt-in: an overflowing worklist is useless at the moment there is something to review, and the alert already carries the ids.
@@ -1169,12 +1142,12 @@ THE GUARD (don''t over-correct into vagueness). Pointing to code instead of stat
 
 RELATION. Sibling to the no-hub / fake-task rules (D38) and the granular-description discipline (D37): D37 says have ENOUGH detail; this says don''t have the WRONG, stale-prone detail. Shared ancestor with no-hub: each artifact owns only what''s authoritative to it, nothing it merely mirrors. Kept distinct (no-hub = task decomposition; this = slice content).
 
-SURFACE (where it ships). Canonical SKILL.md as a standalone `##` immediately after the granular-description discipline (D37), form = positive recipe (state what the body IS), not a prohibition list — per writing-skills "match the form to the failure" (baseline failure is wrong-SHAPED output, for which prohibition wording backfires). Pinned by a presence-pin test on the litmus phrase + the reconcile clause so a revert fails CI. SKILL.md-only for now (not propagated to a per-op docstring — it''s a content discipline, not a single op''s sharp edge); revisit if edit/reconcile misuse recurs.', 'spec', 0, '2026-06-17T19:38:06.618392+00:00', '2026-07-20T03:50:16.474775+00:00', 'design', NULL);
+SURFACE (where it ships). Canonical SKILL.md as a standalone `##` immediately after the granular-description discipline (D37), form = positive recipe (state what the body IS), not a prohibition list — per writing-skills "match the form to the failure" (baseline failure is wrong-SHAPED output, for which prohibition wording backfires). Pinned by a presence-pin test on the litmus phrase + the reconcile clause so a revert fails CI. SKILL.md-only for now (not propagated to a per-op docstring — it''s a content discipline, not a single op''s sharp edge); revisit if edit/reconcile misuse recurs.', 'spec', 0, '2026-06-17T19:38:06.618392+00:00', '2026-11-26T03:05:52.786920+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (245, 'a decision homes in a spec slice, not a production body', 'INVARIANT: a design/schema-grade decision — one that alters what is decided, or the store''s shape — homes in a design/schema slice, never in a production/meta task body. A production/meta task may reference a decision through a link; it is not the decision''s home.
 
 WHY: when a decision surfaces during production work, the fold-back reflex records it in the active task — which during build work is `production`. The decision then strands: the governing spec slice silently goes stale, the decision is not discoverable from the spec layer, and the existing link + a routine `reconcile` make the graph LOOK maintained. Observed pattern: an architectural decision (a locked layout) lived only in the production task that built it, while the design slices it linked to still described the superseded design, and a reconcile had cleared their stale flag without ever porting the decision in.
 
-ENFORCED AT FOUR SKILL.md SURFACES (each one-purpose, each cites this slice):
+ENFORCED AT FOUR SKILL.md SURFACES (each one-purpose, each stating the rule in its own words; the skill cites no task ids, D207):
 - create: a task that BOTH settles a design/schema-grade decision AND builds it is split — decision → design/schema slice, build → production task linking to it.
 - fold: a fold-back that alters the spec lands in the governing design/schema slice (edit it, or add + link), not the production body you are in.
 - report: the end-of-turn fold-back report tags each discovery decision-vs-impl; a decision recorded in a production body is a defect, not a satisfied fold-back.
@@ -1182,7 +1155,7 @@ ENFORCED AT FOUR SKILL.md SURFACES (each one-purpose, each cites this slice):
 
 DETECTION of an ALREADY-stranded decision is semantic (agent judgment), not deterministically computable; its fallback net is the stranded-decision audit (linked, provisional).
 
-ANTI-PATTERN: appending a decision to the nearest production task because that is where you are working; clearing a spec''s stale flag via reconcile when a decision still needs porting into it.', 'spec', 0, '2026-07-07T05:08:16.215200+00:00', '2026-11-26T01:46:00.088370+00:00', 'design', NULL);
+ANTI-PATTERN: appending a decision to the nearest production task because that is where you are working; clearing a spec''s stale flag via reconcile when a decision still needs porting into it.', 'spec', 0, '2026-07-07T05:08:16.215200+00:00', '2026-11-26T03:05:52.786920+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (247, 'stranded-decision audit — surface production/meta tasks harboring spec-grade decisions', 'PROVISIONAL (label: provisional) — design NOT settled; do not implement (see the linked provisional impl task). Fallback net for D245 (the decision-homing invariant): an after-the-fact, human-or-agent-triggered audit that surfaces production/meta tasks possibly harboring a design/schema-grade decision that belongs in — and is missing from — a spec slice.
 
 DIVISION OF LABOR: the tool NARROWS deterministically; the agent JUDGES. The tool never classifies prose or emits a verdict — "is there a stranded decision here?" is semantic. No accurate deterministic locator exists (tested: phrasing-grep is brittle and domain-polluted — "locked"/"canonical" are ordinary domain words; edit-graph churn has poor precision AND recall).
@@ -1202,7 +1175,7 @@ GROUNDING MESSAGE (returned WITH the candidate list so the deterministic output 
 
 OUT OF SCOPE v1: detecting a spec slice whose CONTENT is stale (describes superseded design) — needs to know the architecture changed, not deterministically computable; possible later facet.
 
-OPEN (why provisional): exact axis thresholds; new MCP tool vs an extension of ls/board; whether the grounding message lives in the return payload or a cited skill.', 'retired', 0, '2026-07-07T05:09:02.038867+00:00', '2026-07-08T17:04:14.304034+00:00', 'design', 'Premature promotion — audit design was not settled; relocated to the M266 meta scratchpad until firm. Retiring the prematurely-created spec slice.');
+OPEN (why provisional): exact axis thresholds; new MCP tool vs an extension of ls/board; whether the grounding message lives in the return payload or a cited skill.', 'retired', 1, '2026-07-07T05:09:02.038867+00:00', '2026-11-26T03:05:42.227126+00:00', 'design', 'Premature promotion — audit design was not settled; relocated to the M266 meta scratchpad until firm. Retiring the prematurely-created spec slice.');
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (249, 'dead-reference soft-suggest on retire / rename / reclassify', 'DECISION: when a task''s identifier stops naming a live referent, tackit searches for references to it in its LINKED neighbors and EMITS A SOFT SUGGESTION on any that still cite it. Detection-and-suggest only — no hard gate.
 
 TRIGGERS — the only three events that kill a reference target:
@@ -1221,7 +1194,7 @@ SCOPE (narrow, deliberately): LINKED neighbors only (rides the cascade reach). S
 
 DEPENDENCY: accuracy is gated on D245. In a clean, D245-compliant store the three triggers above are the complete cause list and detection is exact; with buried decisions the liveness set has no single source of truth, so the clean deterministic version requires the D245/D247 cleanup first.
 
-REALIZATION: SHIPPED in T252 (commit 9a9831e) — id-search + soft repoint/rationalize suggestion on retire / rename-edit / reclassify over the cascade''s linked-neighbor set, surfaced as deadref_suggestions in the envelope. v1 SCOPE NOTE: reclassify-out-of-spec emits on the SYNTHETIC id only (D#->T#, unambiguously dead); the §-name-convention token is NOT emitted on a reclassify, because a reclassified section MOVED to production rather than died — that moved-vs-died ambiguity is the buried-decision ambiguity (D245-gated) and belongs to the audit sweep (D247), not this inline mechanism.', 'spec', 0, '2026-07-07T18:05:54.321891+00:00', '2026-11-04T22:48:32.215884+00:00', 'design', NULL);
+REALIZATION: SHIPPED in T252 (commit 9a9831e) — id-search + soft repoint/rationalize suggestion on retire / rename-edit / reclassify over the cascade''s linked-neighbor set, surfaced as deadref_suggestions in the envelope. v1 SCOPE NOTE: reclassify-out-of-spec emits on the SYNTHETIC id only (D#->T#, unambiguously dead); the §-name-convention token is NOT emitted on a reclassify, because a reclassified section MOVED to production rather than died — that moved-vs-died ambiguity is the buried-decision ambiguity (D245-gated) and belongs to the audit sweep (D247), not this inline mechanism.', 'spec', 0, '2026-07-07T18:05:54.321891+00:00', '2026-11-26T03:05:52.786920+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (250, 'a spec slice is a coherent current-state body — rewrite, never append', 'DECISION: an update to a design/schema slice must yield ONE coherent current-state body. The slice is the CURRENT answer, not a changelog — superseded prose is removed and integrated, not stacked under a dated "SUPERSEDES ... above" block. Edit history lives in the description_revisions audit (D29), never inline.
 
 WHY: a spec slice that accretes dated blocks self-contradicts — it asserts the old and the new at once, and a reader can''t tell which sentence is authoritative without diffing dates. That is worse than a merely-stale slice (which is at least internally consistent). Measured: ~28% of spec slices in a real store carry the append fingerprint. Driver: the agent optimizes "is the new info now present" (which gets a completion signal) over "is the old, contradictory info now absent" (which nothing scores), and imitates the slice''s own established append house-style.
@@ -1233,7 +1206,7 @@ ENFORCEMENT — three surfaces:
 
 CHARACTER: non-destructive and PREVENTIVE — the inline half of the response. It prevents the anti-pattern at write-time without forcing any risky action (unlike a hard gate). Existing appended slices (the ~28% backlog) are remediated by the agent-driven audit sweep, not by this.
 
-BUILD ORDER: FIRST. It is the coherence quality-bar the dead-ref work (D249) depends on — a dead-ref suggestion resolved by a lazy deletion is a coherence failure this catches.', 'spec', 0, '2026-07-07T18:08:39.247451+00:00', '2026-11-26T01:46:00.088370+00:00', 'design', NULL);
+BUILD ORDER: FIRST. It is the coherence quality-bar the dead-ref work (D249) depends on — a dead-ref suggestion resolved by a lazy deletion is a coherence failure this catches.', 'spec', 0, '2026-07-07T18:08:39.247451+00:00', '2026-11-26T03:05:52.786920+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (254, 'The kind ontology — spec / production / meta as deciding / doing / thinking', 'Three tenses of one system: a SPEC is what should be true; CODE is what is true; a PRODUCTION task is the change between them; META is thinking that has not become any of those yet.
 
 - spec (design D# / schema S#) — THE DECISIONS. What should be true, durably: design = a decision, schema = the store-shape contract. The system of record for every design-grade decision. Never "completes" — edit to refine, retire only when 100% abandoned. Not a checklist, not a task.
@@ -1244,7 +1217,7 @@ DISCRIMINATOR when a task blurs: is it DECIDING, DOING, or THINKING? Deciding �
 
 WORKFLOW DIRECTION, never a shortcut: meta → spec → production → code.
 
-Grounding: a sweep of the dogfood store found "production" actually fused three species — pure build/checklist (the clean case), reconciliation/decision tasks (pose a spec↔code gap and adjudicate it — design-nature), and investigations (meta-nature). Only the first is truly production; this ontology draws the line so the other two route to spec/meta. Realized in SKILL.md as the conceptual anchor above the existing status-partition reference table.', 'spec', 0, '2026-07-08T01:32:03.124580+00:00', '2026-11-04T22:48:32.215884+00:00', 'design', NULL);
+Grounding: a sweep of the dogfood store found "production" actually fused three species — pure build/checklist (the clean case), reconciliation/decision tasks (pose a spec↔code gap and adjudicate it — design-nature), and investigations (meta-nature). Only the first is truly production; this ontology draws the line so the other two route to spec/meta. Realized in SKILL.md as the conceptual anchor above the existing status-partition reference table.', 'spec', 0, '2026-07-08T01:32:03.124580+00:00', '2026-11-26T03:05:52.786920+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (255, 'Production editing contract — no edit_append; rewrite only, for correction or scope-shrink', 'A production task is a forecast while open and a record once closed (see the kind ontology). Its body must not ACCRETE — accretion is how design decisions and progress-noise strand into production bodies (dogfood sweep: decisions ride in on progress appends; ~91% of production fold-backs are additive, ~47% of those are design decisions).
 
 DECIDED: edit_append is REFUSED on kind=production, extending the D250 / T251 refusal that already covers design/schema. Append becomes a META-ONLY operation — meta is the notepad; specs and production are rewrite-only.
@@ -1257,7 +1230,7 @@ NOT allowed via edit: adding scope/features (spawn a NEW production task), recor
 
 BOUNDARY: a correction fixes the task''s COPY of a decision; it never ORIGINATES one. If the spec itself turns out wrong, that is a slice edit + reconcile, not a production correction.
 
-Realized by (production tasks, later): extend the edit_append kind-guard in core.py to include ''production''; update SKILL surfaces + the fold-back discipline to route additive learnings away from production.', 'spec', 0, '2026-07-08T01:32:03.125626+00:00', '2026-07-08T02:29:51.507579+00:00', 'design', NULL);
+Realized by (production tasks, later): extend the edit_append kind-guard in core.py to include ''production''; update SKILL surfaces + the fold-back discipline to route additive learnings away from production.', 'spec', 0, '2026-07-08T01:32:03.125626+00:00', '2026-11-26T03:05:52.786920+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (256, 'Production creation gate — a production task must link a design/schema slice at creation', 'A production task realizes an ALREADY-MADE decision (see the kind ontology). DECIDED: add() and load() REFUSE creating a kind=production task with zero design/schema links — a hard gate, no escape flag.
 
 WHY: it removes the "no slice to promote into" excuse that lets a fully-formed decision strand at creation. Dogfood sweep: ~40% of confirmed strands had ZERO edits — the decision was dumped complete at creation, which the append-ban cannot catch; only a creation-time gate can.
@@ -1266,7 +1239,7 @@ NO ESCAPE HATCH: genuinely spec-less mechanical work (typo fix, dependency bump)
 
 ACCEPTED RISK: the gate ensures a slice EXISTS and is linked; it cannot force the decision to live IN the slice rather than the (append-frozen) body — a stub slice plus a dumped body still satisfies it. Mitigated by workflow discipline (author the slice first — the plan-first control batch produced zero strands across 29 tasks) and by the D247 audit as backstop. The gate makes the good workflow the path of least resistance; it is not a perfect seal.
 
-ERGONOMIC CONSEQUENCE: linking a production task to its design/schema anchor makes that anchor a cascade NEIGHBOR — editing the production task stales the anchor, and the close-gate walks the connected graph transitively, so a stale anchor can block closing the task until it is reconciled. Reconcile the anchor after such an edit. This is inherent link-cascade mechanics, surfaced (not caused) by the gate making every production task carry a spec link. Realized by T263: a kind-guard in add()/load() (core.py) refusing production creation with zero design/schema links; the error names the rule and the fix (author/link the governing slice).', 'spec', 0, '2026-07-08T01:32:03.126365+00:00', '2026-11-26T01:46:00.088370+00:00', 'design', NULL);
+ERGONOMIC CONSEQUENCE: linking a production task to its design/schema anchor makes that anchor a cascade NEIGHBOR — editing the production task stales the anchor, and the close-gate walks the connected graph transitively, so a stale anchor can block closing the task until it is reconciled. Reconcile the anchor after such an edit. This is inherent link-cascade mechanics, surfaced (not caused) by the gate making every production task carry a spec link. Realized by T263: a kind-guard in add()/load() (core.py) refusing production creation with zero design/schema links; the error names the rule and the fix (author/link the governing slice).', 'spec', 0, '2026-07-08T01:32:03.126365+00:00', '2026-11-26T03:05:52.786920+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (257, 'Meta is a notepad — island boundary kept; no shortcut from meta to code', 'Meta is THE THINKING layer (see the kind ontology): experiments, investigations, brainstorming, release bookkeeping — the mutable playground where a decision gets REACHED. Refines the meta-island constraint (D110) with meta''s ROLE plus two guards.
 
 1. LINK BOUNDARY (D110 unchanged): meta links only within the island. meta↔meta is ALLOWED — a multi-part note may cross-reference itself and cannot contaminate the spec graph. meta↔non-meta is REFUSED. Decision: keep meta↔meta legal — forbidding it adds friction with zero integrity benefit, since the meta-island''s purpose is bounding the cascade OUT of meta, already served by the existing rule. Appending to a meta flags no neighbor (D10); `edit` and `edit_replace_substring` on a meta still do, so use those when a note really changes what a neighbor should say.
@@ -1283,7 +1256,7 @@ Fold-back is RE-AIMED, not removed. A captured learning is exactly one of three 
 
 RULE: a fold-back into a production task is ONLY for correction/shrink — never additive. Additive capture goes to a slice (if a decision) or nowhere in tackit (if progress). Meta is exempt — it is a notepad; fold anything.
 
-Realized by (later): rewrite the fold-back discipline text in SKILL.md and the mandatory end-of-turn fold-back report to route by learning-type; global CLAUDE.md + README carry the same discipline and move in lockstep.', 'spec', 0, '2026-07-08T01:32:03.126539+00:00', '2026-07-08T01:41:25.296222+00:00', 'design', NULL);
+Realized by (later): rewrite the fold-back discipline text in SKILL.md and the mandatory end-of-turn fold-back report to route by learning-type; global CLAUDE.md + README carry the same discipline and move in lockstep.', 'spec', 0, '2026-07-08T01:32:03.126539+00:00', '2026-11-26T03:05:52.786920+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (259, 'Closed tasks are immutable — no edit on a closed task; reopen to change', 'A closed task is a RECORD of a completed unit of work, and a wont_do task is a RECORD of a dropped one (kind ontology D254: a production/meta task in a terminal state is a frozen record). Editing such a record in place is how design decisions launder in and how a settled task silently acquires new content — the dogfood store showed ~67% of production edits land on already-closed tasks, ~35 of them folding a design decision into a closed body.
 
 DECIDED: the content-edit ops — edit(), edit_append(), edit_replace_substring() — are REFUSED on any terminal production/meta status, i.e. status IN (''closed'', ''wont_do''). Period, no exceptions, no in-place-edit escape flag. To change a CLOSED task you REOPEN it first (an honest status transition flipping it back to open, visible in history), edit while open, then close again. A WONT_DO task is terminal FOREVER (reopen is refused, D36) — its body can never change; if the work revives, create a new task.
@@ -1310,7 +1283,7 @@ WHY: a production task is the forecast of ONE settled unit of change. If it keep
 
 NOT FROZEN — SCOPE BOUNDARY. This is about OPEN production tasks. It does not freeze them (contrast D259, which DOES freeze editing on closed/wont_do terminal rows). Mechanical correction remains allowed; this slice changes the STANCE toward it, not the mechanics.
 
-SURFACES (guidance to propagate — production step, later): SKILL §edit + §fold-backs (a production edit, though allowed, signals thin prep; recurring ones mean fix the spec); edit / edit_replace_substring docstrings (editing a production task is a smell of thin spec prep).', 'spec', 0, '2026-07-08T21:56:20.178669+00:00', '2026-07-08T21:56:20.178669+00:00', 'design', NULL);
+SURFACES (guidance to propagate — production step, later): SKILL §edit + §fold-backs (a production edit, though allowed, signals thin prep; recurring ones mean fix the spec); edit / edit_replace_substring docstrings (editing a production task is a smell of thin spec prep).', 'spec', 0, '2026-07-08T21:56:20.178669+00:00', '2026-11-26T03:05:52.786920+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (280, 'Missing-edge soft-suggest — a body naming a live unlinked task/slice surfaces the missing link (inverse of D249)', 'DECISION. A deterministic, ADVISORY detector: when a task or slice body textually names another LIVE task/slice by its SYNTHETIC ID (e.g. T641 / D261 / S15 / #id) and that target is NOT a current linked neighbor, surface it as a candidate MISSING link. Agent judges; never a gate (detection-over-gating, per D249''s rationale — a gate would incentivize lazy token-deletion). This is the INVERSE of D249: D249 flags a body naming a DEAD (retired/renamed) target; this flags a body naming a LIVE-but-UNLINKED one. Reuses T252''s boundary-guarded synthetic-id extraction.
 
 SCOPE — SYNTHETIC-ID ONLY; §-refs are NOT scanned. Empirically refuted (read-only test vs a reference project): adding §-ref scanning gave ZERO extra recall over synthetic-id alone and introduced fan-out + collision noise (a §-family fanning to many sub-slices; markers shared by multiple slices). §-refs are a legacy pre-tackit convention carried by one long-lived project; the synthetic id is the reliable, deterministic, go-forward addressing scheme. Do not scan §-refs.
@@ -1321,7 +1294,7 @@ PRECISION GUARDS. (1) EXCLUDE any pair straddling the meta-island boundary (a pr
 
 DELIVERY. Advisory soft-suggestion via an envelope field, mirroring D249''s deadref_suggestions — fired reactively on edit (the fold-back moment, primary), and available as a batch/store-wide scan. Never blocks.
 
-RELATED (NOT built here). The higher-leverage lever for the task→slice direction is PREVENTION at creation-time: rank the design/schema anchor layer by content-overlap with a new production task and nudge "which of these does this realize?" — surface+prompt, agent judges, at the moment the semantic signal is freshest. That is a separate future thread; this slice is the detection side only.', 'spec', 0, '2026-07-08T22:44:01.789476+00:00', '2026-07-08T22:44:01.789476+00:00', 'design', NULL);
+RELATED (NOT built here). The higher-leverage lever for the task→slice direction is PREVENTION at creation-time: rank the design/schema anchor layer by content-overlap with a new production task and nudge "which of these does this realize?" — surface+prompt, agent judges, at the moment the semantic signal is freshest. That is a separate future thread; this slice is the detection side only.', 'spec', 0, '2026-07-08T22:44:01.789476+00:00', '2026-11-26T03:05:52.786920+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (283, 'The task surface is read-and-judge, not pattern-and-mutate', 'Decision: tackit''s task surface is READ-AND-JUDGE, not PATTERN-AND-MUTATE. Operations address structured metadata and whole bodies; none pattern-match, query, or bulk-rewrite body CONTENT. The agent reads and semantically interprets a slice body; any op that lets it grep/replace over bodies instead is refused, because it re-opens the exact lazy path the surface exists to prevent.
 
 THREE CONSEQUENCES OF ONE LINE:
@@ -1355,7 +1328,7 @@ Self-contained text. Shipped text does not cite the maintainer''s personal confi
 
 The repo holds the master copy, and copies in `~/.claude` are deployed from it. An edit made only in a deployed copy drifts and never ships.
 
-Public by default. Everything shipped goes to a public package, so private project names, vocabulary, store ids and dated personal rulings stay out. A repo test checks only generic patterns, since a list of private names in a public test would itself leak them; checking names is the release scan''s job.', 'spec', 0, '2026-11-04T03:25:44.769116+00:00', '2026-11-26T01:45:55.507237+00:00', 'design', NULL);
+Public by default. Everything shipped goes to a public package, so private project names, vocabulary, store ids and dated personal rulings stay out. A repo test checks only generic patterns, since a list of private names in a public test would itself leak them; checking names is the release scan''s job.', 'spec', 0, '2026-11-04T03:25:44.769116+00:00', '2026-11-26T03:05:52.786920+00:00', 'design', NULL);
 INSERT INTO task_labels (task_id, label) VALUES (37, 'core');
 INSERT INTO task_labels (task_id, label) VALUES (37, 'schema');
 INSERT INTO task_labels (task_id, label) VALUES (38, 'schema');
@@ -1582,6 +1555,9 @@ INSERT INTO links (id, task_a, task_b, because) VALUES (576, 199, 211, 'D39''s c
 INSERT INTO links (id, task_a, task_b, because) VALUES (577, 171, 211, 'Retire''s return is set by D211''s write-result table, so a change to that table changes what D36 states retire returns.');
 INSERT INTO links (id, task_a, task_b, because) VALUES (578, 52, 284, 'D10''s edit_append exception is why D284''s delta rule also covers edit-history writes; reversing the exception changes which clause keeps edit_append''s delta required.');
 INSERT INTO links (id, task_a, task_b, because) VALUES (579, 52, 255, 'D10''s edit_append exception is safe for fold-backs only because D255 makes append meta-only; widening append to another kind reopens the exception.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (665, 172, 258, 'D172 routes impl-time discoveries through D258''s fold-back routing (decision to slice, correction rewrites the body, progress to git); a change to those routes changes what D172 tells an implementer to do.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (666, 172, 255, 'D172 sends a correction of a production task''s forecast to an edit/edit_replace_substring rewrite, which exists because D255 makes production bodies correction-only and refuses append; a change to D255''s production-edit rule changes that route.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (667, 207, 245, 'D245''s four skill surfaces take the form D207 sets for the skill (plain rules, no task-id citations); a change to D207''s form changes how those surfaces must read.');
 INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (80, 37, NULL, 'open', '2026-05-31T04:11:47.873715+00:00');
 INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (81, 38, NULL, 'open', '2026-05-31T04:11:47.876334+00:00');
 INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (82, 39, NULL, 'open', '2026-05-31T04:11:47.876420+00:00');

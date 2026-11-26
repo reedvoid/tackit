@@ -2,344 +2,289 @@
 name: tackit
 description: Use whenever planning, tracking, or executing work in a project that
   uses tackit (a task + dependency tracker). Covers when to record work in tackit,
-  the reconcile-on-change discipline, the v0.5 verb taxonomy (edit / close /
-  wont_do / retire) over the kind/status partition (design+schema live at
-  status='spec'; production+meta at open/closed/wont_do), the bounded-obligation
-  cascade (terminal-status stale is record-only), the kind classification rule
-  (design/schema as living spec), and the mandatory code↔task naming convention.
+  kind classification (design/schema slices are living spec; production and meta
+  tasks open and close), the edit / close / wont_do / retire verbs, reconciling
+  stale tasks after a change, writing links and `because` rationales, fold-backs,
+  and the code↔task naming convention.
 ---
 
 # Working with tackit
 
-tackit is this project's single source of truth for tasks, their links, and
-plan/build state — a queryable store that survives sessions and context
-compaction, so truth doesn't scatter into files that drift and contradict each
-other.
-
-This file is **behavioral instructions, not documentation** — `why:` / `do:` /
-`don't-do:` per rule (the `why` is the context you need, encapsulated in the
-rule itself). Sections marked **reference** are mechanics/tables, not rules.
-Full incidents/examples live in the tackit task they're about (cited as `T###`),
-not retold here.
-
-## Use tackit — record, don't scatter; don't overload
-
-**Record in tackit, not in prose.**
-- why: loose tracking in markdown / scratch files / TODO-comments drifts out of sync — the exact failure tackit prevents. If it isn't in tackit, it isn't tracked.
-- do: record tasks, dependencies, and decisions via tackit's tools before treating them as written down.
-- don't-do: keep a roadmap, next-steps file, or status list outside tackit.
-
-**Keep tackit to tasks + dependencies.**
-- why: tackit is not a knowledge base.
-- do: put actionable tasks + dependencies here; put durable learnings and external references in your memory.
-
-**Import many tasks with `load`, not N `add()` calls.**
-- why: `load` is one atomic import (rolls back entirely on any bad row) and carries the full task — kind, multi-paragraph `desc` (blank-line paragraph breaks preserved, so impl-ready bodies round-trip), labels, and `depends_on` edges with `because` rationales. `depends_on` references a batch-local key OR an EXISTING task by prefixed-name (`S30`) or `#id` (T215, kind-letter validated), so a new slice and its links to existing anchors land in ONE call — no separate `link_add` round-trips.
-- do: reach for `load` whenever you're creating more than a couple of related tasks.
-- don't-do: hand-loop `add()` for a known set of tasks.
-
-## File side-door work the moment it appears (the reactive trigger)
-- why: every other trigger fires off something already in tackit — a plan you're loading, a task you're closing or folding back into. Net-new work that enters another way — a bug found in use, a change no task covers, a follow-up spotted mid-task, an ad-hoc decision — has no such trigger, so it lands in git and never the graph, right at the reactive moment where tracking is skipped and code↔task traceability breaks. The trap: the one trigger left is "recognize side-door work" — an internal judgment that goes quiet at exactly that moment — so anchor to an OBSERVABLE event instead.
-- do: the observable trigger is a write you can't miss — the moment you Edit/Write a version-controlled file the current task doesn't name, run the test and STATE the disposition out loud (new task / fold-back into <id> / not-tracked because <reason>); never silently skip it. File at diagnosis for a bug, before/with the edit for an unplanned change, parked for a follow-up, a D# for a decision — kind classified on its OWN scope. Same reflex as filing during planning.
-- don't-do: fix-first-track-maybe; inline an unrelated follow-up because you're "already here"; fold into whatever task you're in; skip stating the call because the change "felt like housekeeping." The test: an OPEN task already covers this? yes → fold-back; no → new task. (Actionless learning → memory, not a task.)
-
-## Kinds — every task is classified by what it touches
-
-**What each kind is *for* (D254 — the ontology).** Three tenses of one system: a
-spec is *what should be true*; code is *what is true*; a production task is *the
-change between them*; meta is *the thinking that hasn't become any of those yet*.
-
-- **spec** (design D# / schema S#) — **the decisions.** What should be true,
-  durably. It never "completes" — you `edit` to refine, `retire` only when 100%
-  abandoned. Not a checklist, not a task.
-- **production** (T#) — **the doing.** One unit of change that realizes an
-  *already-made* decision in code. A forecast while open; a frozen record once
-  closed. Must link the spec it realizes. Not for deciding (→ spec), not for
-  progress (git + status carry it), not a notepad (→ meta), not broadenable
-  (spawn a new task).
-- **meta** (M#) — **the thinking.** A notepad: experiments, investigations,
-  brainstorming, release bookkeeping — where a decision gets *reached* before
-  it's distilled into a spec. Anything goes.
-
-**When a task blurs, ask: is it deciding, doing, or thinking?** Deciding → spec;
-doing (a settled thing) → production; thinking / not-yet-settled → meta. The
-workflow only ever flows one way, never a shortcut: **meta → spec → production →
-code.**
-
-**Start unsettled work in meta; promote only when sure (D276).** Exploratory,
-not-yet-decided work belongs in a meta scratchpad FIRST; promote it to a spec
-slice — then a production task — only once the decision is settled. This is
-guidance, not a gate (a `provisional`-labeled spec slice is the tell you
-promoted early). But NOT every task starts in meta: work that *realizes an
-already-made decision* (a bug fix, a doc change) goes straight meta→production,
-LINKING the existing spec — it mints no new slice. Litmus: does this task DECIDE
-something new (→ author the spec first) or REALIZE something already decided
-(→ link the existing spec)?
-
-**Reference.** Every task carries a required `kind` (set at create, T94); kind is
-coupled to status by partition, enforced both typed (`Core.add` / `load` /
-`reclassify` default the partition-correct status) and by a DB CHECK on S1:
-
-| kind        | partition       | meaning                                   | terminal verb   |
-|-------------|-----------------|-------------------------------------------|-----------------|
-| design      | spec / retired  | specification: captures decisions         | retire (D36)    |
-| schema      | spec / retired  | specification: captures store shape       | retire (D36)    |
-| production  | open / closed / wont_do | implementation: realizes specs in code | close / wont_do |
-| meta        | open / closed / wont_do | bookkeeping: release tracking, exps    | close / wont_do |
-
-- **design** — a decision slice (D#): what is decided, not how it's built. Lives at `status='spec'`; `retire()` only when 100% abandoned. `close`/`wont_do` are refused on spec — update a decision with `edit()` (the D29/S7 audit table preserves prior verbatim).
-- **schema** — a store-shape slice (S#); the DDL contract. Same spec/retired partition; changes typically need migrations.
-- **production** — code that alters the running app: source under `tackit/`, contract-pinning tests, **and README/SKILL.md** (they alter the agent's behavior). Lives `open` → `close`/`wont_do`. `add`/`load` **REFUSE** a production task created with zero design/schema links (D256 creation-gate — it must link the spec it realizes).
-- **meta** — work that does NOT alter the app: release bookkeeping, experiments, observations. Same open/closed/wont_do partition.
-
-The partition invariant: `kind ∈ {production,meta} ⟹ status ∈ {open,closed,wont_do}`; `kind ∈ {design,schema} ⟹ status ∈ {spec,retired}`. Cross-partition `reclassify` auto-shifts open↔spec; a move with no clean target (e.g. closed-production → design) is refused — resolve the source state first.
-
-### Classify every new task by what it touches
-- why: a stray kind silently corrupts cascade reach (kind bounds the cascade via the meta-island).
-- do: ask "would landing this touch `core.py` / `models.py` / `SKILL.md` / `README.md` / contract tests?" → yes = **production**; sole output is editing a tackit task's description = **meta**; introduces a D#/S# slice = **design**/**schema**.
-- do: split a task that BOTH settles a design/schema-grade decision AND builds it — the decision is a design/schema slice, the build a production task that links to it (D245); don't let the decision ride inside the production body.
-
-### The inheritance trap
-- why: kind bounds the cascade, so a misclassified task silently corrupts cascade reach — and a task tends to inherit the kind of the thread it was spawned in (a meta thread once spawned production children mis-filed as meta; see T115).
-- do: run the classifier on **this task's own** scope at `add()` time.
-- don't-do: infer kind from the parent epic or the thread it was discussed in.
-
-### Meta is a notepad; the island bounds the cascade (D257)
-- why: meta is the THINKING layer — experiments, investigations, brainstorming, release bookkeeping. The island keeps that churn out of the spec/production graph: meta work must not drag spec/production tasks into stale review, or vice versa.
-- do: an append flags nobody (D10). That is a concession to reality, not necessarily the optimal decision: agents clear flags unread, and a cleared flag reads as a review that did not happen. The known cost is that an appended ruling can leave a neighbor wrong with nobody told, so when a note really changes what a neighbor should say, use `edit` or `edit_replace_substring`, which do flag.
-- do: link meta tasks only to other meta tasks (meta↔meta is fine — a multi-part note may cross-reference itself). Reach a decision in the notepad, then distill it OUT: author a design/schema slice, then a production task that links the slice.
-- don't-do: `link_add` between a meta and a non-meta task (refused); attach a kind name (`design`/`schema`/`production`/`meta`) as a label (refused — kind already encodes it). **Never ship code straight from a meta task** — code flows `meta → spec → production → code`, never a shortcut. Meta is where you decide, not where you build.
-
-## The verb taxonomy — which verb changes state
-
-**Reference.** Four verb families change a task's content or terminal state —
-`edit` (three diff-shaped variants), `close`, `wont_do`, `retire`. (`reopen` /
-`reconcile` / `reclassify` also change state; see their own rules.) Partition-
-aware refusals enforce the distinctions; each verb's full **refusal matrix
-lives in its MCP docstring**.
-
-| Verb                     | When                                   | Partition    | Cascade? | Reversible?      |
-|--------------------------|----------------------------------------|--------------|----------|------------------|
-| `edit` (+ append / replace_substring) | content change (NOT on closed/wont_do — D259; append is meta-only — D255) | spec or open (+retired) | **yes** (append: no, D10) | n/a              |
-| `close`                  | production/meta work shipped           | open/etc.    | no       | `reopen`         |
-| `wont_do`                | production/meta work dropped           | open/etc.    | no       | terminal forever |
-| `retire`                 | design/schema spec 100% abandoned      | spec/retired | no       | terminal forever |
-
-The three edit variants share the S7 audit row and the `delta` requirement; `edit` and `edit_replace_substring` fire the cascade, `edit_append` does not (D10). They also differ in how the new description is computed **and in partition** (append is meta-only — D255):
-- `edit(description=…)` — full new body; for sweeping rewrites or small bodies.
-- `edit_append(content, delta)` — append; **META-ONLY (D255)**: refused on design/schema (a coherent current-state body, D250) and on production (a forecast-then-record that must not accrete) — only meta, the notepad, appends. Flags no neighbor (D10). Only the snippet crosses the wire.
-- `edit_replace_substring(old, new, delta)` — replace an exact UNIQUE substring (non-unique refused with the count; empty `new` = deletion; `old == new` = no-op). Allowed on production (a rewrite, for correction / scope-shrink).
-- do: prefer the diff ops for large bodies — the transmission cost compounds over a session (see T179). They cut transmission; `edit_replace_substring` still cascades.
-- return is lean by default (D211): the focal task's scalars but NOT the body you just wrote, plus `newly_stale`, your new reconcile obligation: each neighbor this op moved from clear to flagged that is open or spec, as `{id, because}`. A neighbor already flagged is not relisted; it stays on the worklist and in the alert. Terminal neighbors get the flag as a record and are not listed. An `edit_append`'s list is always empty. Pass `include_description=True` only when you need to re-read the reconstructed body to verify the edit landed.
-
-### edit vs retire — the all-or-nothing rule (D36)
-- why: edit's cascade IS the partial-change re-evaluation mechanism; retire's no-cascade + open-neighbor refusal + immutable reason embodies a "100% gone" contract.
-- do: use `retire` ONLY when a design/schema spec is 100% gone with no replacement; use `edit` for ANY partial change, including big rewrites.
-- don't-do: retire when you actually want to migrate some links to a new spec — that's an edit. (If a premise is replaced by a too-different direction, file a fresh task and leave the old as record.)
-
-### edit — change content
-- why: keeps the task the source of truth; the D29/S7 audit preserves prior verbatim, so editing in place is safe and recoverable.
-- do: edit an OPEN production/meta task, a spec design/schema slice, or a RETIRED slice, with a `delta` naming the real semantic shift. On production, edit is for **correction / scope-shrink only** — a wrong forecast of the code path is a legitimate correction (D255); to ADD scope, spawn a new production task; to record a decision, edit the spec slice. Edits on design/schema fire the D31 code-check reminder — grep the slice id and verify the code. **Editing a production task is discouraged — a smell of thin prep (D277):** one correction is fine, but recurring edits mean the governing spec was underspecified; fix the spec / re-derive the task rather than keep iterating the body.
-- don't-do: edit a **closed or wont_do** task — they are frozen records (D259, refused). To change a closed task, `reopen` it first, edit while open, then close again; a wont_do task is terminal forever (create a new task). Never edit the frozen `wont_do`/`retire` reason (no API). Before any cosmetic edit, see *Edits aren't free*.
-
-### close — production/meta work shipped
-- why: close means "we did this" (distinct from wont_do = "we decided not to").
-- do: close a production/meta task when its deliverable shipped — that records "done", returns `{id, status}`, and does NOT cascade, so don't *also* edit the body with a completion note (`"done"` / `"committed <hash>"`); git carries the commit. Only a **fold-back** (a decision/constraint a future reader needs, not in git or the closed status) earns a pre-close edit.
-- don't-do: close a design/schema spec (refused — `edit` to refine, `retire` if 100% gone) or a stale / linked-stale task (the close-gate — reconcile the upstream first). Full refusal matrix: `close()` docstring.
-
-### reopen — resume closed work
-- why: reopen is for the SAME work resuming; a NEW direction is a fresh task, so the closed row stays an honest record of what was done.
-- do: reopen a closed production/meta task when there's more to do under the same premise.
-- don't-do: reopen to mean something new (file a fresh task); reopen a wont_do/retired row (refused — terminal forever).
-
-### wont_do — scope dropped
-- why: distinct from close; records a durable decision *not* to do something.
-- do: `wont_do` a production/meta task whose scope is dropped, with a durable `reason`. It returns `{id, status}`; `show` returns the neighbors.
-- don't-do: `wont_do` a spec (refused — `edit` or `retire`) or an already-terminal task (no double-decide). Change-of-mind path is a fresh task; the wont_do row stays as record.
-
-### retire — design/schema spec 100% abandoned
-- why: a terminal "this decision is dead and nothing replaces it" (see edit-vs-retire).
-- do: retire a design/schema spec only when 100% gone with no replacement, with a durable non-placeholder `reason`. It returns `{id, status}`. Clear the open-neighbor gate first — `link_rm` + `wont_do` the neighbor if its work is also dead, or `link_rm` alone if it has other live specs.
-- don't-do: retire when any partial replacement exists (`edit` instead). Full refusal matrix (6 checks) + the (i)/(ii) decision tree: `retire()` docstring. A worked retire: see D25.
-
-### Decision tree (reference)
-
-| Situation | Verb |
-|-----------|------|
-| Task's content needs to change (any status) | `edit` |
-| Production/meta deliverable shipped | `close` |
-| Closed production/meta work resuming (same premise) | `reopen` |
-| Production/meta scope dropped | `wont_do` |
-| Design/schema spec 100% gone, no replacement | `retire` |
-| Design/schema spec partially changed | `edit` (cascade prompts link review) |
-| Premise replaced, new direction too different to re-use | **new task**; leave the old as record |
-
-## Edits aren't free (FORCEFUL)
-
-- why: every `edit` and `edit_replace_substring` fires the cascade depth-1 (an `edit_append` flags nobody, D10, but stays in the note's audit trail for its next reader); open/spec neighbors land on the worklist and pressure the close-gate. Low-quality edits grow the worklist → pressure to bulk-reconcile → eroded per-row review → the `delta × because` filter becomes a rubber stamp, and then a *real* edit's cascade gets reconciled away the same way. The discipline that catches genuine drift dies by being **trained on noise**; the cascade is only as useful as the signal you feed it.
-- do: make every edit **consequential and necessary**; the `delta` must name a **substantive impact** — a real semantic shift (corrected fact, refined contract, fold-back finding, fixed stale reference). The test before editing: "what would a downstream reader, FAST-filtering this stale flag against the link's `because`, learn that justifies opening their task?" If "nothing" — don't edit.
-- don't-do: cosmetic polish (tone/flow, meaning unchanged); "while I'm here" cleanup (file a separate task); stylistic alignment to a neighbor; defensive elaboration with no observed misread; vague deltas (`"small fix"` / `"updated for clarity"` — same cascade cost, zero filter signal). Typo fix only if the wrong character impedes meaning. (Recording that work shipped is a `close()`, not an edit — see the `### close` rule.)
-
-## Reconciliation — keep the plan in sync
-
-**Reference.** Cascade-firing ops are `edit`, `edit_replace_substring` and
-`reclassify`; they mark directly-linked neighbors stale and record the `delta`.
-`edit_append` / `close` / `wont_do` / `reopen` / `reconcile` and the link ops do
-NOT cascade. The cascade is symmetric — editing either endpoint
-stales the other. The app surfaces the stale worklist on every call; that's the
-tool telling you the plan is currently inconsistent.
-
-**Bounded obligation (D28 + D36).**
-- why: terminal tasks (closed/wont_do/retired) CAN be stale, but the flag is record-only archaeology — "fixing" it would erase the signal that an upstream changed.
-- do: treat the worklist as `status IN ('open','spec')` only, and reconcile those. Reconciling a stale spec acknowledges its prose still holds after the upstream shift — but when the upstream was a production/meta edit that settled a decision, reconciling means PORTING that decision into the slice, not just acknowledging (D245).
-- don't-do: reconcile a terminal-status row (refused); chase closed-stale production/meta tasks.
-
-**Orient with `delta × because`.**
-- why: the link's `because` (coupling) and the upstream's `delta` (shift) tell you the specific aspect to check before opening a stale dependent.
-- do: read both; if the shift doesn't intersect the coupling, reconcile without re-reading (FAST path) — otherwise re-read with the question pre-formed.
-
-**Batch-reconcile a reviewed-clean set — `reconcile(ids=[...])` (D39).**
-- why: one edit can stale several fine neighbors; N separate calls is redundant transport (one review executed N×) — but auto-clearing *all* stale would automate the judgment the cascade depends on, the rubber-stamp that kills it.
-- do: pass the explicit list of ids you reviewed; it's atomic (one version bump) and emits a short alert.
-- don't-do: reconcile to empty the worklist without reading each `because × delta` — there is deliberately no "reconcile all" for this reason.
-
-**Never end a turn with obligation-bearing stale work.**
-- why: a task left closed while something it depends on changed is wrong AND invisible — it silently corrupts everything downstream until discovered later at far greater cost.
-- do: work the open/spec stale set to empty before declaring done; an empty filtered worklist is the only safe stopping point.
-- don't-do: end a turn or close work while an open/spec stale task remains. (Closed-stale production/meta is record-only — ignore it.)
-
-**The close-gate (reference).** `close`/`wont_do`/`retire` are refused if the task is itself obligation-bearing-stale, or a **direct (1-hop) linked neighbor** is — reconcile the named upstream first. Reach is 1-hop, symmetric with the cascade's affect-model (D56); a stale task further than one hop away does not block. A named closed/wont_do/retired neighbor is record-only and won't trip the gate.
-
-**Edit on a retired slice is safe; on closed/wont_do it is refused (D259).** Editing a *retired* design/schema slice fires the cascade (terminal neighbors flagged record-only) and writes the S7 audit row. Editing a **closed or wont_do** task is REFUSED (D259) — `reopen` a closed task to edit it, then re-close; a wont_do task is terminal (file a new task). The frozen `wont_do`/`retire` reason is never editable.
-
-## Discover dependencies with `links`, not search
-- why: keyword search misses coupling that doesn't share vocabulary; `links` surfaces candidates deterministically and you do the semantic judgment.
-- do: classify the new task's kind; for production, call `links` (no input) → the design+schema anchor layer, judge each, then `links(picked)` → the depth-1 neighborhood (filtered to open/spec targets), passing your judged set as `already_seen`; `link_add` each real coupling. For meta, scan the meta island; for design/schema, the same layer.
-- don't-do: use search for dependency discovery (recall-limited); force a link where the relationship isn't real. (`link_add` returns a compact confirmation, not the slice — `show` the endpoint if you want it.)
-
-## Code ↔ task traceability (MANDATORY)
-- why: there is no automatic link between code and the task it implements — tackit holds the intent, the code is the implementation, and if the two can't be connected the intent is lost the instant your context resets. The bridge is only how you write both.
-- do: name + describe every task with specific, distinctive terms (the component / function / table / feature), and mirror that exact vocabulary in file names, function names, and comments, so a search for one finds the other. When code and task disagree, edit the task — it's the source of truth.
-- don't-do: vague titles (`"fix bug"`, `"update logic"`) — unsearchable, intent unrecoverable; let code↔task vocabulary drift (treat a mismatch as a defect, not a style nit).
-
-## Fold-backs — route each learning to its home (D258)
-- why: no plan is complete — implementation reveals the missed call site, the unsimulated CHECK, the wording that reads wrong only in practice. That gap is the highest-value feedback the work produces. But "fold it into the task I'm in" is exactly how decisions strand: during build the active task is `production`, so a decision lands in the wrong layer (D245). Fold-back is a **routing** discipline, not an append-to-the-current-body reflex.
-- do: classify each learning and send it to its home —
-  - **a decision** (design/schema-grade — alters what's decided or the store's shape) → the spec slice: `edit` the governing D#/S#, or `add kind=design`/`schema` + link. NEVER the production body.
-  - **transient progress** (built X, verified Y, committed `<hash>`) → NOT tackit at all — git + `close`/status already carry it. (An actionless learning worth keeping → memory.)
-  - **a correction or scope-shrink** to the CURRENT production task (e.g. a wrong forecast of the code path) → rewrite its body with `edit` / `edit_replace_substring` (append is refused on production — D255). This is the only fold-back that touches a production body, and it corrects, never adds. When a correction reveals a systematic miss, grep for the pattern family (`status =`, `INSERT…status`), not the verb names.
-- don't-do: append a "Phase N finding" to the production task you're in (the strand vector — D255/D258 refuse it); leave a fix only in the commit message when it settled a decision that belongs in a slice.
-
-**Mandatory end-of-turn fold-back report.** Every turn with a code commit or behavior change states where each discovery was routed — or "none — verified no scope gap." Tag each: **decision** (name the spec slice it landed in), **correction** (the production body it fixed), or **progress** (git/memory — not tackit). A decision recorded in a production body is a defect (D245); an *additive* fold-back into a production body is a defect (D255/D258). Silence is an incomplete turn.
-
-### When findings outgrow the body — split at the boundary
-- why: a meta notepad accreting findings, or a spec slice accreting decisions, can dwarf its scope and make every edit expensive (T168 hit 57k chars unsplit). (Production bodies don't accrete at all now — correction-rewrite only, per D258.)
-- do: when findings outgrow the body — about the 3rd substantial finding — split at the logical boundary: for a meta notepad, file a sibling `<source> — findings` note and link it (meta↔meta); for a spec slice, carve finer slices. Rewrite a spec slice coherently (D250), never stack dated blocks.
-- don't-do: retroactively split a body that already grew when continuing costs less.
-
-## A decision homes in a spec slice, not a production body (D245)
-- why: a design/schema-grade decision folded into the production/meta task that surfaced it strands there — the governing spec slice silently goes stale, the decision isn't discoverable from the spec layer, and the link + a routine `reconcile` make the graph *look* maintained. Fold-back is what routes it wrong: during build work the active task is `production`, so "fold it into the task I'm in" lands a decision in the wrong layer.
-- do: when work settles something that alters what's decided or the store's shape, record it in the design/schema slice — `edit` the governing one, or `add kind=design`/`schema` + link. A production/meta body may *reference* a decision through its link; it is not the decision's home.
-- don't-do: append a decision to the production/meta task you're in because it's nearest; leave a settled decision living only in a production body with no spec slice.
-
-## A spec slice is current-state, not a changelog (D250)
-- why: appending dated "SUPERSEDES … above" blocks to a design/schema body makes it self-contradict — it asserts the old and the new at once, and a reader can't tell which is authoritative without diffing dates. `edit_append` is refused on design/schema for exactly this reason; `edit` / `edit_replace_substring`, which make you engage the existing body, are the path.
-- do: update a spec slice by rewriting it to ONE coherent current-state body — integrate the change and cut the superseded prose. Prior text is preserved in the revision audit (D29), so the removal is recoverable. A rewrite that still trips the D250 coherence nudge (stacked dates/markers, or a dangling reference) isn't done — fix the body, not the symptom.
-- don't-do (anti-pattern): tack a `━━ SUPERSEDES §X above (2026-…) ━━` block onto the end; leave the old claim standing above its correction.
-
-## Auto-id name prefix (D32) — reference
-Every task displays a synthesized `<kind-letter><id>` prefix (design→**D**, schema→**S**, production→**T**, meta→**M**), computed from kind+id, never stored, and indexed in FTS (so `search("T157")` resolves).
-- do: write a bare name; reference tasks in code / PRs / conversation by the synthesized prefix (`# T157: …`) so grep bridges code↔task.
-- don't-do: manually prefix the name (it double-prefixes at display). (Legacy pre-D32 design/schema names keep a manual slot prefix and display doubled — grandfathered, see T160.)
-
-## Right-size tasks
-- why: a task is a describable unit of work — a black-box feature. Too small (can't describe without listing impl steps) bloats the graph; too big (many independent parts) defeats clean cascade + granular description (T168 reached 57k chars unsplit before becoming 8 tasks).
-- do: file separate tasks when you'd reach for a second `###` heading to organize INDEPENDENT execution units; nested detail within one unit is fine.
-- don't-do: co-equal sections describing distinct units in one body; create a task with no deliverable or decision — a pure link-target or a status rollup of other tasks is a **fake task** (see *Links are coupling*).
-
-## Wire links explicitly — including within a batch
-- why: the cascade-ergonomics filter runs on the `because`; an unwired or placeholder edge degrades the cascade to "open every downstream."
-- do: wire each edge with a specific `because` — to existing tasks (found via `links`/`search`) AND among tasks you add together (the internal DAG is the case most forgotten). In a `load`, wire external anchors inline via `depends_on: <S30|#id> :: <because>` (T215) instead of a follow-up `link_add` pass. For a pure existing↔existing wiring pass (no new tasks), `links_add(edges=[{a, b, because}, …])` creates many links in one atomic, validate-all-first call (T216) — endpoints are id or prefixed-name, already-linked edges are benign no-ops.
-- don't-do: put an **ephemeral reference** anywhere in an edge — a link is durable graph structure, so every part of it must still resolve in a later session. Two traps: (1) the **ref token** — never reuse a *prior* `load`'s batch-local key (`g1`, `t5`) in a later load; that key existed only inside its own `load()` call and vanished when that call committed, so address the task by its now-persistent prefixed-name (`D532`) or `#id`. Use the canonical prefixed-name, not a legacy display slot-number written into a name (the slice titled `D38 — …` is task **D197**; `D38` resolves to the wrong row or none). (2) the **because** — name the durable coupling, never session-relative context (`"the task I just made"`, `"see Stage C"`, `"as discussed"`); a rationale the next reader can't resolve is a dead edge.
-
-## Write real `because` rationales
-- why: the cascade compares `because × delta`; a vague because filters nothing.
-- do: one sentence naming why the two tasks must be reviewed together when one changes — e.g. "citations' FK references `documents.id`; a column rename breaks the join."
-- don't-do: describe the implementation or work order (`"test fixture"`, `"setup"`); write a because that just restates a shared label — that's membership, attach a label, not a link (see *Links are coupling*).
-
-**`ls` vs `board` (reference):** `ls` for a quick filtered id/title list; `board` for each matching task as a slice (the single symmetric `links` set + labels) in one call. Both are **lean by default** (D211): no `description`, and `board` shows the neighbor graph SHAPE without `because`/`last_edit_delta`. Both take a `kind` filter. Opt into bodies with `include_description` (and `board`'s `include_neighbor_because` for edge rationales); for ONE full body use `show`. `stale` returns the same short rows, with no opt-in. Projection is include-or-omit — never truncated.
-
-**Aggregation + sort (reference, D283):** `summary` returns counts by status / kind / (status × kind) + the obligation-bearing stale count — the end-of-turn state line in one call, no hand-counting. `ls`/`board` take `order_by` over a **structured column only** (`id`/`kind`/`status`/`created_at`/`updated_at`/`stale`/`degree` — `degree` surfaces hubs first). The surface is **read-and-judge, not pattern-and-mutate**: there is deliberately no regex/content-query over bodies and no bulk `replace_all` — aggregation and sort work over metadata (they tell you *which* bodies to read); a body is read and judged, never pattern-scanned. A one-off content audit is a conscious admin query outside the loop, not a tackit op.
-
-## Labels — when one earns its existence
-- why: a label groups tasks along a meaningful axis you'd name out loud (a phase/milestone, an epic/theme, a use case); it's a dumb tag with no behavior.
-- do: run `labels` and reuse before creating; create one only when it's distinct, sizeable, consequential, and memorable; prefer a few broad labels. After a bulk `load`, review the new labels it reports and collapse near-duplicates in one pass.
-- don't-do: create a label that's an implementation detail (`regex`, `utf8`), something tackit already tracks (time = `created_at`, done = `status`, reopened = `history`), a one/two-task one-off, or a kind name (refused).
-
-## Group a cluster with a label, never a hub task
-- why: membership is the label's job; a task created to be linked-to by its whole cluster is a **hub**, and the membership edges into it are pure cascade noise.
-- do: give the cluster one shared label; answer "is it complete?" with `board(label=X)` / `ls(label=X)` against the expected set (which lives in the slice that defines it).
-- don't-do: make "the question" a task for the others to link to; hand-maintain a status table of other tasks inside a body (it's wrong the moment one closes).
-
-## Links are coupling, labels are membership (D38 — FORCEFUL)
-- why: a **link** is a claim about *consequence* — "if X's content changes, Y must be re-examined" — which is literally what the cascade fires. A **label** is a claim about *category* ("same grouping"), which carries no consequence: editing one sibling doesn't invalidate another. Confusing them poisons the cascade with false-positive stale flags that train the filter into rubber-stamping.
-- do: at every `link_add` ask — "if I edited X right now, would I genuinely need to re-open Y?" Yes → **link** (the `because` names the consequence). "No, just same epic" → **label**. A decision-bearing slice linked by the impl tasks that realize it is NOT a hub — those are real coupling links, so do NOT over-correct.
-- don't-do (the **fake task** family):
-  - **Hub task** — exists to be linked-to; ~N² false-positive stale flags over its life.
-  - **Membership link** — encodes category, not consequence; a permanent false-positive generator. Tell: the `because` just restates the cluster's label name.
-  - **Rollup task** — a body that's a hand-typed status ledger of other tasks; duplicates state tackit tracks and drifts the instant one closes.
-- (No auto-detector: a fake hub and a central decision slice are structurally identical — high degree, similar becauses — so the agent is the judge.)
-
-## Relationships are edges, not prose (companion to D38)
-- why: a link is structure the cascade traverses and `links`/`board`/reconcile act on; the `because` only supports it. A relationship narrated in a body is invisible to all of that — the graph can't cascade or reconcile what it can't see. A body holds the task's own work, not how it relates to others.
-- do: when you'd type "depends on / supersedes / see also <other>" into a body, wire it instead — `link_add` (or `depends_on:` in a load) with that sentence as the `because`.
-- don't-do: bury a relationship in prose, hand-list other tasks in a body (rollup), or name a parent for children to point at (hub). (D38 forbids the content-free *node*; this forbids the buried *edge*.)
-
-## Propagation — a discipline lives on every surface it's needed
-- why: each surface catches a different moment — SKILL.md at session-start, MCP docstrings at invocation, CLI help at the typed command, refusal messages at misuse, README at install. A rule in only one surface is skipped by agents who touch a different one.
-- do: when designing or modifying a discipline, restate it (scoped to each surface's altitude) everywhere an agent meets the rule. Per D41 the FULL discipline lives once in SKILL; docstrings carry the op's sharp edge + a cite.
-- don't-do: leave a rule only in SKILL (skipped by agents who jump straight to the tool) or only in a refusal message (that teaches by punishment, not prevention).
-
-## The granular-description discipline (D37 — FORCEFUL)
-- why: task descriptions must be **implementation-ready** — a fresh-session agent with only the task body + its linked neighbors must be able to implement (or judge completion of) the task without asking for clarification; re-deriving context that should be on the row is the failure tackit prevents.
-- do: write impl-ready detail at `add()` — design/schema: the decision + constraints + refusal patterns; production: files, call sites, signatures, predicate tables, error-message banks, SQL recipes, tests; meta: enough to interpret the result. Fold discovered detail back via `edit()` BEFORE close; re-read the body against what shipped before closing.
-- don't-do: vague verbs (`"fix bug"`); conversation references (`"as discussed"`); pointer-only bodies (`"see task X"`); TBD/TODO in a committed body (then it isn't ready to track); agreeing detail in conversation but never folding it into the task.
-
-## A spec slice holds decisions, not code's literals (D234)
-- why: design/schema kinds promise durability — they ARE the spec that survives `git clone` once the db is gitignored. A literal, OR a code LOCATION (a file path, a line number, a `see foo.py` pointer), whose authoritative home is code breaks that promise: it goes stale the instant code moves, turning the slice into a stale duplicate. A decision and its rationale change only when the *design* changes; a copied literal or a code pointer rots on any edit that touches the code.
-- do: write the decision + rationale + derivation rule (e.g. "pool sized K×parallel×2, raise in lockstep") and STOP — do not add a `see config.py:pool_size` pointer. Litmus before typing a literal: is this slice the *authority* for this value, or a *copy* of one that lives in code? Authority → state it, it's a decision. Copy → replace with the rule alone. **The spec↔code bridge is one-directional**: code names the spec (by its `D#`/`§`/id, grep-bridged via the naming convention); a spec NEVER names code, because code churns continuously while the slice is durable — a reader reaches the impl by grepping the slice id, not by following a pointer the slice carries. Keep enough concreteness to evaluate the decision (the formula, the policy, the required set).
-- don't-do: mirror code-owned values into a slice (defaults, full enumerated value lists); write a `file:line` / path / `see foo.py` code pointer into a slice (it rots like any copied literal — the code points to the spec, never the reverse); reconcile a slice by importing current literals — a reconcile updates the *decisions*, never re-snapshots derived values (this is how the anti-pattern sneaks back in); over-correct into vagueness ("we use pooling, see code") that strips the decision of reviewable substance.
-
-## Ship-on-pain — don't endure friction you can fix (the load-bearing rule)
-- why: if a deferred fix's absence is costing you NOW (large-body retransmits, "drop into Python" MCP bypass, repeated restarts, a manual step on the Nth iteration), the workaround compounds on every remaining unit and almost always exceeds the cost of pausing to ship the fix. It **OVERRIDES "finish the current bundle first"** — deferring pays the avoided cost on every remaining unit of the current work. This is the rule the others assume — without it, fold-backs / granular-description / propagation are patterns you can describe but won't act on under pressure. (Anchor: T179's diff ops sat open through 8 v0.5 phases, ~60k tokens re-paid per fold-back ×4, then shipped in ~30 min once named — see T179.)
-- do: when a workaround's cost × remaining occurrences > the cost to ship the fix, ship the fix NOW — it's the next task. Make the ship-this-release yes/no call (with a reason) at filing time. Grow a bundle when the addition is higher-leverage than the slip. When you tighten a rule that leans on a deferred mechanism, promote that mechanism.
-- don't-do: write "Standalone — NOT part of this bundle" (a smell — it classes the item background-deferred regardless of leverage); defer with "I'll deal with it in v(N+1)" dressed as planning; file a backlog row without a triage decision (a graveyard plot).
-
-## Report what changed (every turn that touches tasks)
-- do: report in a scannable, verb-grouped layout — per task an id + name, then one `what:` line (recall it) + one `did:` line (roughly what changed); name the `reason` for wont_do/retire and the `because` for links; end with the fold-back line and a state line (N open / done / stale, worry first).
-- don't-do: a wall of prose, or a bare id.
-
-**Format (reference):**
-
-    ━━━ changes ━━━━━━━━━━━━━━━━━━━━━━━━
-    ✓ Closed
-       T30 · label-discipline guidance
-            what: when a new label is worth creating
-            did:  wrote the rules into SKILL.md
-    + Added
-       T33 · <name> (kind=production)
-            what: <one line> · did: <one line>
-    + Linked
-       T127 ↔ T122 · because: "<coupling rationale>"
-    ✗ Wont_do
-       T130 · <name> · reason: <durable reason>
-    ━━━ Fold-backs ━━━━━━━━━━━━━━━━━━━━
-       <task ids edited> · <one line each> — OR — none — verified <why>.
-    ━━━ state ━━━━━━━━━━━━━━━━━━━━━━━━━━
-       N open · N done · ⚠ N stale (open + spec only — D28)
-       <worry first: stale ids + what they await, refused ops, new labels>
+tackit is the project's single record of tasks, their links, and plan and build
+state. It survives sessions and context compaction, so keep that state here
+rather than in files that drift. The tools refuse illegal moves with a message
+that says what to do instead; this file covers the judgment calls they can't make.
+
+## Record work in tackit
+
+- Record tasks, dependencies and decisions in tackit, not in markdown roadmaps,
+  next-steps files or TODO comments; anything outside it isn't tracked.
+- Keep tackit to actionable work and its links. Learnings with no action and
+  external references go to memory.
+- To create more than a couple of related tasks, use one `load`: it is atomic,
+  carries full bodies, labels and links, and its `depends_on` can point at
+  existing tasks by prefixed name.
+
+## File side-door work the moment it appears
+
+Work that enters outside a plan (a bug found in use, a change no task covers, a
+follow-up spotted mid-task, an ad-hoc decision) has no trigger of its own, so it
+lands in git untracked. Use an observable trigger instead: when you Edit/Write a
+version-controlled file the current task doesn't name, state the disposition out
+loud: new task, fold-back into <id>, or not tracked because <reason>. To choose:
+an open task already covers this? Yes, fold back into it; no, file a new task,
+classified on its own scope. File a bug at diagnosis and an unplanned change
+before or with the edit; park a follow-up rather than doing it because you're
+already there.
+
+## Kinds
+
+A spec says what should be true, code is what is true, a production task is the
+change between them, and meta is the thinking that hasn't become any of those.
+
+- **design** (D#) and **schema** (S#, the store's shape): the decisions. Living
+  spec at status `spec`; refine with `edit`, `retire` only when 100% abandoned.
+- **production** (T#): one unit of change that realizes an already-made decision.
+  It must link the spec it realizes. Not for deciding, progress notes or scratch
+  work, and not broadened: new scope is a new task.
+- **meta** (M#): the notepad for experiments, investigations, brainstorming and
+  release bookkeeping. Anything goes, but it links only to other meta tasks.
+
+Classify each task by its own scope, not the thread or parent it came from (a
+meta thread once spawned production children that were wrongly filed as meta).
+Would landing it change what the product does (source, tests that pin contracts,
+docs or agent instructions that change behavior)? Production. Is its only output
+an edit to a tackit task? Meta. Does it introduce a decision or a store shape?
+Design or schema. Kind bounds the cascade, so a wrong kind misroutes staleness
+without any error.
+
+Work flows one way: meta, then spec, then production, then code. Keep unsettled
+work in meta and promote it to a slice only once the decision is made (a
+`provisional` label on a slice marks one promoted early). Work that realizes an
+existing decision, such as a bug fix, goes straight to a production task linked
+to that spec. A task that both decides and builds splits into a slice plus a
+production task linked to it. Don't ship code straight from a meta task.
+
+## Verbs
+
+- `edit`, `edit_replace_substring`: change content; both flag every directly
+  linked neighbor stale. `edit_append` does not. That is a concession to
+  reality, since agents clear flags unread; when a note really changes what a
+  neighbor should say, use one of the other two so the neighbor is told. Append
+  works on meta only.
+- For a large body, prefer the diff ops: they cut what crosses the wire, not the
+  cascade.
+- An edit returns `newly_stale`, the open or spec neighbors it just flagged, as
+  `{id, because}`: that list is your reconcile obligation. An `edit_append`'s list
+  is always empty.
+- On a production task, edit only to correct or shrink scope; a repeated
+  need to edit one means the spec was thin, so fix the spec. To add scope, file a
+  new task; to record a decision, edit the slice.
+- `close` records that work shipped and does not cascade, so don't first edit the
+  body with a completion note ("done", "committed <hash>"); git and the status
+  carry that. Only a fold-back earns an edit before close.
+- `reopen` resumes the same work under the same premise. A new direction is a
+  new task, so the closed row stays an honest record.
+- `wont_do` records a durable decision not to do the work; write a reason a
+  later reader can use.
+- `retire` only when a slice is 100% gone with nothing replacing it. Any partial
+  change, even a big rewrite, is an `edit`, whose cascade is how neighbors get
+  re-checked. If a premise is replaced by something too different to reuse, file
+  a new task and leave the old one as record.
+
+## Edits aren't free
+
+Every `edit` and `edit_replace_substring` flags its neighbors, and each flag asks
+someone to review. Noise edits grow the worklist until reviewers clear flags
+unread; the review gets trained on noise and then waves through a real change
+too. So make each edit consequential and necessary, with a `delta` that names its
+substantive impact: a corrected fact, a refined contract, a fold-back finding, a
+fixed stale reference. Ask what a reader filtering the flag against the link's
+`because` would learn. Skip cosmetic polish, "while I'm here" cleanup (file it),
+alignment to a neighbor's style, defensive elaboration, and vague deltas such as
+"updated for clarity". Fix a typo only if it changes meaning.
+
+## Reconcile
+
+`edit`, `edit_replace_substring` and `reclassify` flag directly linked neighbors
+in both directions; other ops don't. Every tool result carries the stale count.
+
+- The worklist is stale open and spec tasks only; a flag on a closed, wont_do or
+  retired task is a record of upstream change. Leave it.
+- For each stale task, compare the upstream `delta` with the link's `because`. If
+  they don't intersect, reconcile without re-reading; otherwise re-read with that
+  question in mind.
+- If the upstream was a production or meta edit that settled a decision,
+  reconciling the slice means writing the decision into it, not just confirming
+  its prose.
+- `reconcile(ids=[...])` takes the explicit set you reviewed. Don't reconcile to
+  empty the list; there is deliberately no reconcile-all.
+- Don't call work done while an open or spec task is stale, because a task closed
+  on unreconciled drift is wrong and nobody can see it. The one exception is the
+  release cluster below.
 
 ### Release-cluster pattern
-- why: in multi-phase releases, production tasks reach "shipped, can't close" because the close-gate refuses on stale design/schema neighbors a later phase will sweep — that's the gate working, not a bug.
-- do: tag each "shipped pending Phase N close" in the turn summary; close the cluster after the final sweep clears the worklist (the v0.5 D35+D36+D37 batch ran this way).
-- don't-do: fight the gate with `link_rm` workarounds or premature closes; add a "close --acknowledge-stale" escape (rejected — it erodes the gate's guarantee that close-atop-unreconciled-drift can't happen).
+
+In a multi-phase release, a shipped task may refuse to close because a slice it
+links is stale until a later phase sweeps it. That is the gate working. Tag it
+"shipped pending Phase N close" in the report and close the cluster after the
+final sweep. Don't remove links or close early to get around the gate.
+
+## Discover dependencies with `links`, not search
+
+Search misses coupling that doesn't share vocabulary. For a new production
+task, call `links()` for the design and schema layer, judge each candidate, then
+`links(picked, already_seen=...)` for the next hop, and `link_add` the real
+couplings. For meta, look at the meta tasks; for a slice, the same spec layer.
+Don't force a link the relationship doesn't support.
+
+## Code ↔ task traceability
+
+Nothing connects code to its task automatically except vocabulary. Name and
+describe tasks with specific terms (the component, function, table or feature)
+and use the same terms in file names, function names and comments. Cite tasks
+in code by their prefixed id (`# T<id>: ...`). Write task names bare: the
+`D`/`S`/`T`/`M` prefix is computed, so a typed one doubles. When code and an open
+task or slice disagree, fix the record; treat drift as a defect.
+
+## Fold-backs
+
+Implementation finds what the plan missed. Route each finding to its home rather
+than into whatever task you're in:
+
+- **A decision** (changes what's decided or the store's shape): the slice. Edit
+  the governing D#/S#, or add one and link it. Never the production body.
+- **Progress** (built, verified, committed): not tackit; git and status carry it.
+  Learnings with no action go to memory.
+- **A correction or scope cut** to the current production task: rewrite its body
+  with `edit` or `edit_replace_substring`. This corrects and never adds. When a
+  correction shows a systematic miss, grep for the pattern family (`status =`,
+  `INSERT…status`), not the verb names.
+
+Don't leave a settled decision only in a commit message or a production body.
+
+**Mandatory end-of-turn fold-back report.** Every turn with a commit or behavior
+change says where each finding went (decision: which slice; correction: which
+body; progress: git or memory) or "none — verified no scope gap".
+
+When findings outgrow the body, at about the 3rd substantial finding, split at
+the logical boundary: a meta note gets a linked sibling `<source> — findings`
+note; a slice is carved into finer slices. Don't split a body after the fact
+when carrying on costs less.
+
+## A spec slice is current-state, not a changelog
+
+Rewrite a slice to one coherent body that integrates the change and cuts what it
+supersedes; prior text stays in the revision history. A slice with dated
+"SUPERSEDES" blocks asserts old and new at once. The coherence nudge only
+spots markers, so the rewrite is yours to finish.
+
+## The granular-description discipline
+
+A body must be implementation-ready: a fresh-session agent holding only the body
+and its linked neighbors can build the task, or judge it done, without asking.
+Write that detail at creation. Design and schema: the decision, constraints and
+refusal cases. Production: files, call sites, signatures, tables, error
+messages, tests. Meta: enough to interpret the result. No vague verbs ("fix
+bug"), no conversation references ("as discussed"), no pointer-only bodies ("see
+task X"), no TBD. Detail agreed in conversation goes into the record, routed as
+a fold-back.
+
+## A spec slice holds decisions, not code's literals
+
+A slice survives `git clone`; a literal or a code location copied into it goes
+stale the moment the code moves. Before writing a value, ask: is this slice the
+*authority* for this value, or a *copy* of one that lives in code? Authority:
+state it. Copy: state the rule that derives it. The bridge runs one way: code
+names the spec by its D#/S# id; a spec never names code (no paths, no `file:line`,
+no "see foo.py"). A reconcile updates decisions and never re-snapshots derived
+values. Keep enough concrete substance (the formula, the policy, the required
+set) for the decision to be reviewable.
+
+## Right-size tasks
+
+A task is one describable unit of work. If you'd reach for a second `###` heading
+to organize independent execution units, file separate tasks; nested detail
+within one unit is fine. Don't write co-equal sections describing distinct units
+in one body, and don't create a task with no deliverable or decision (see fake
+tasks below).
+
+## Wire links explicitly
+
+The cascade's usefulness rests on each link's `because`.
+
+- Wire every real edge, including among tasks created together (the edges most
+  often forgotten). In a `load`, wire existing anchors inline with
+  `depends_on: <prefixed id or #id> :: <because>`; for existing-to-existing
+  wiring, one `links_add` call.
+- A link is durable, so every part must still resolve in a later session. A
+  `load` batch key exists only inside that call; afterwards use the prefixed name
+  or `#id`. A number typed into a task's title is not its id; cite the prefixed
+  id tackit shows. A `because` names the durable coupling, never session context
+  ("the task I just made", "as discussed").
+- Write the `because` as one sentence on why the two must be reviewed together
+  when one changes: "citations' FK references `documents.id`; a column rename
+  breaks the join". Not work order ("setup"), and not a restated label.
+
+## Links are coupling, labels are membership
+
+A link is a claim about *consequence*: if X changes, Y must be re-examined. A
+label is a claim about category, with no consequence. Before each `link_add`,
+ask: if I edited X now, would I need to re-open Y? Yes: link, and the `because`
+names the consequence. No, just the same epic: label. A decision slice linked by
+the tasks that realize it is real coupling, so do not over-correct. The fake task
+family, which nothing detects for you:
+
+- **Hub task**: exists only to be linked to; every edit flags its whole cluster.
+- **Membership link**: encodes category; its `because` restates a label name.
+- **Rollup task**: a body that hand-tracks other tasks' status and is wrong the
+  moment one closes.
+
+Group a cluster with one label and check completeness with `board(label=...)`
+against the expected set.
+
+## Relationships are edges, not prose
+
+When you'd type "depends on", "supersedes" or "see also <task>" into a body, wire
+a link with that sentence as its `because`. The graph can't cascade or reconcile
+what it can't see. The fake-task rule above forbids the content-free *node*; this
+forbids the buried *edge*.
+
+## Labels
+
+Run `labels` and reuse one before creating another. Create a label only for an
+axis you'd name out loud (a phase, an epic, a use case) that is distinct and
+sizeable. Not for implementation details, not for what tackit already tracks
+(time, status, history), not for one or two tasks. After a `load`, review the
+labels it created and merge near-duplicates.
+
+## Ship-on-pain
+
+If a deferred fix's absence costs you now (large-body retransmits, working
+around the tool, repeated restarts, a manual step on its Nth run), and its cost
+times the remaining uses exceeds the cost of the fix, ship the fix next. This
+overrides "finish the current bundle first" (one fix once sat deferred through 8
+phases while its workaround was paid again on each). Make the ship-this-release
+call, with a reason, when you file anything for later. Grow a bundle when an
+addition is worth more than the slip, and when you tighten a rule that leans on
+a deferred mechanism, promote the mechanism. A row marked "Standalone — not part
+of this bundle", or a deferral to v(N+1) with no triage call, is that call
+dodged.
+
+## Report what changed
+
+Every turn that changes tasks ends with a verb-grouped report: per task its id
+and name, a `what:` line and a `did:` line; the reason for a wont_do or retire
+and the `because` for a link; then the fold-back line and a state line from
+`summary`, worries first.
+
+    Closed
+       <T#> · <task name>
+            what: <what the task is> · did: <what changed>
+    Linked
+       <T#> ↔ <D#> · because: "<coupling>"
+    ━━━ Fold-backs ━━━
+       <ids> · <one line each>, or none — verified <why>
+    ━━━ state ━━━
+       N open · N done · N stale (open and spec only)
+       worries first: stale ids, refusals, new labels

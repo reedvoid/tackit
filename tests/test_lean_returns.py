@@ -1090,8 +1090,13 @@ def test_the_readme_lists_every_envelope_field(store):
 
 
 def test_the_skill_states_what_edit_append_does():
-    skill = (REPO / "src" / "tackit" / "data" / "SKILL.md").read_text(encoding="utf-8")
-    assert "`edit_append` does not (D10)" in skill
+    # Whitespace-normalized like the other skill pins: a re-wrap is not a reword.
+    skill = " ".join(
+        (REPO / "src" / "tackit" / "data" / "SKILL.md").read_text(encoding="utf-8").split()
+    )
+    # M344 / D207: the skill cites no task ids, so the old "(D10)" cite is gone.
+    assert "`edit_append` does not." in skill
+    assert "`edit_append` does not (D10)" not in skill
     assert "An `edit_append`'s list is always empty." in skill
     assert "a concession to reality" in skill
     assert "as `{id, because}`" in skill

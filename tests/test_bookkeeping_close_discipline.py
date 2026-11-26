@@ -28,7 +28,10 @@ def test_skill_md_says_bookkeeping_is_a_close_not_an_edit():
     # the rule lives in the `### close` do-bullet: completion is a close(), not
     # an edit (close does NOT cascade); only a fold-back earns a pre-close edit
     assert "completion note" in text
-    assert "does NOT cascade" in text
+    # M344 / D207: plain register in the skill ("does not cascade"); the MCP
+    # docstring below keeps its own wording.
+    assert "does not cascade" in text
+    assert "does NOT cascade" not in text
     assert "fold-back" in text
 
 

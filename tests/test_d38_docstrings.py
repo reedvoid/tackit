@@ -78,7 +78,9 @@ def test_skill_md_contains_coupling_vs_membership_section():
     )
     # The do-not-over-correct boundary (decision-bearing linked-to slices are
     # NOT hubs) -- load-bearing so the rule doesn't break the dep model.
-    assert _contains(text, "do NOT over-correct"), (
+    # M344 / D207: plain register; the capitalized form must not return.
+    assert not _contains(text, "do NOT over-correct")
+    assert _contains(text, "do not over-correct"), (
         "SKILL.md D38 section must carry the legitimate-vs-fake boundary "
         "('do NOT over-correct') so the rule doesn't forbid decision-bearing "
         "slices that impl tasks legitimately link to."

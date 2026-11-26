@@ -296,7 +296,7 @@ that routes around broken things), at different moments.
   graveyard plots. The v0.5 release ate ~60k tokens × 4 fold-backs absorbing
   the cost the `edit_append` / `edit_replace_substring` ops would have cut ~10×
   — that fix sat at `status='open'` the entire time. See `SKILL.md`
-  "Ship-on-pain" for the full anchoring incident and the six application rules.
+  "Ship-on-pain" for the rule as agents load it.
 
 ### Read-path and wiring refinements
 
@@ -402,9 +402,10 @@ the task body and its linked neighbors — should be able to implement (or judge
 completion of) the task without asking for clarification. Vague verbs ("fix
 bug"), conversation references ("as discussed"), pointer-only bodies, and
 TBD/TODO placeholders are refused as defects, not style nits. The discipline
-applies at create time, *during* implementation (`edit()` folds back what impl
-reveals), and before close. (The full anti-pattern list and a worked example
-live in `SKILL.md`.)
+applies at create time and *during* implementation, where each discovery is
+routed as a fold-back: a decision to its spec slice, a correction of the task's
+forecast by rewriting the body. (The full anti-pattern list lives in
+`SKILL.md`.)
 
 One convention is worth explaining in full right here — it's the one people skip and
 then regret, and it belongs in your always-on settings, not just in tackit:
