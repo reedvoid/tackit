@@ -99,8 +99,8 @@ def test_shipped_text_does_not_cite_personal_configuration():
 @pytest.mark.parametrize(
     "filename, replacement",
     [
-        ("commands/firmup.md", '(a single-file upload made "some files saved, some rejected" impossible;'),
-        ("commands/orient.md", "goes here as a question, never in a list of defaults (check the record for what I said)."),
+        ("commands/firmup.md", '(an operation on one item made "some items succeeded, some failed" impossible;'),
+        ("commands/orient.md", "is a decision, never an item in a list of defaults (check the record for what I said)."),
         ("commands/trim.md", "A failure is a disagreement, so consult the AUTHORITY: the memory text is never the authority."),
         ("commands/trim.md", "`M12 → closed in tackit`, `D34 → superseded by D56`"),
         ("commands/diagnose.md", "(parse → validate → query)"),
@@ -112,6 +112,12 @@ def test_shipped_text_does_not_cite_personal_configuration():
         ("skills/test-audit/SKILL.md", "goes to a separate agent as ONE narrow question"),
         ("skills/test-audit/SKILL.md", 'can produce a delete-cascade "bug"'),
         ("skills/test-audit/references/llm-eval.md", "too little material for the expected label"),
+        # T336: the ported rules, in generic wording
+        ("commands/orient.md", "the part of the product involved"),
+        ("commands/orient.md", "what a user types or does, and what the product does with it now"),
+        ("commands/firmup.md", '(e.g. "a row is never deleted", "an id is set once, at creation")'),
+        ("commands/firmup.md", 'a change added after the test check leaves "tests rewritten: none"'),
+        ("commands/graduate.md", "a dropped item is a defect found only at the next orient."),
     ],
 )
 def test_each_genericizing_edit_landed(filename, replacement):
@@ -136,6 +142,16 @@ def test_each_genericizing_edit_landed(filename, replacement):
         ("commands/diagnose.md", "superpowers:systematic-debugging"),
         ("skills/test-audit/SKILL.md", "So this skill is NOT offered"),
         ("skills/test-audit/references/llm-eval.md", "Pass 5"),
+        # T336: rules ported from the deployed copies
+        ("commands/orient.md", "**DECISIONS FOR ME**"),
+        ("commands/orient.md", "CHECK BEFORE SENDING"),
+        ("commands/orient.md", "5. FINALLY, close the report with a short **BIG PICTURE** recap"),
+        ("commands/firmup.md", "CHECK EVERY TEST CLAIM BY RUNNING IT"),
+        ("commands/firmup.md", "the GUARANTEES REMOVED"),
+        ("commands/firmup.md", "a removed guarantee with a reader not judged"),
+        ("commands/firmup.md", "write every question in the shape /orient's DECISIONS step requires"),
+        ("commands/graduate.md", "RE-RUN the firm-up's recorded GUARANTEES REMOVED searches"),
+        ("commands/graduate.md", "RECONCILE the cascade RULE BY RULE, never in a batch"),
     ],
 )
 def test_the_opinions_survive(filename, opinion):

@@ -29,8 +29,20 @@ Get oriented:
      (e) other open task bodies that cite code which has since moved.
      Findings are REPORTED only; they go into the tracker after my go.
    - anything inherited-but-broken to fix first (fold-back notes, the last session's LEFT UNVERIFIED / UNBUILT list, stale/open items a prior session flagged as "next"); an open user call marked "ask now" goes in the decisions below.
-   - what you'd do first, and any decision you'd need from me before starting. A choice I already leaned on or reserved goes here as a question, never in a list of defaults (check the record for what I said).
-4. FINALLY, close the report with a short **BIG PICTURE** recap — the last thing I read, set off under its own heading. This is NOT a restatement of the precise report above (that stays as-is, jargon and all); it is the human-readable STORY that reorients me. Write it:
+   - what you'd do first (one line). Every decision you need from me goes in the DECISIONS block (step 4), not here. A choice I already leaned on or reserved is a decision, never an item in a list of defaults (check the record for what I said).
+4. **DECISIONS FOR ME**, under its own heading, right before the BIG PICTURE. I read this block cold, after a report full of ids and code names, and a decision written in that report's shorthand is one I cannot answer: I have had to ask "explain the decisions with more context" after nearly every orient. So write each decision so I can answer it having read NOTHING above it:
+   - Open with the question in one plain sentence that ends in a question mark.
+   - **What it's about:** the part of the product involved and what happens there today, in plain words, with ONE concrete example: what a user types or does, and what the product does with it now.
+   - **Why it's up now:** what surfaced it (the gap scan, a build, an earlier ruling of mine) and why you can't settle it as a default.
+   - **The options**, usually two or three, each with what changes: what the user sees, what it costs, what gets stricter or riskier. Drop any option whose consequence you can't state.
+   - **My recommendation:** the pick, and the one reason it wins.
+   - **If you don't decide:** what it blocks, or what happens by default.
+   - No task ids, §-refs, rule codes, code names or internal shorthand in these sentences ("R-7", "`missing_ref`", "the $0 proof", "seed", "arm"). If a code-only name can't be avoided, put it in backticks and say what it is in the same sentence. Ids go on one `Refers to:` line at the end of each decision.
+   - A decision the gap scan surfaced is restated here in full; never "see (a)" or "the R-7 finding".
+   - Number the decisions and say which ones block the next task and which can wait.
+   - Standing "ask now" calls from memory: one line each, saying what it is, why it matters and your recommendation; a batch of small housekeeping calls may be offered as one item, each still listed.
+   - CHECK BEFORE SENDING, as a separate pass: reread each decision as someone who skipped the whole report. Rewrite any sentence that leans on a term defined only above, and any option whose effect isn't said.
+5. FINALLY, close the report with a short **BIG PICTURE** recap — the last thing I read, set off under its own heading. This is NOT a restatement of the precise report above (that stays as-is, jargon and all); it is the human-readable STORY that reorients me. Write it:
    - in SIMPLE terms — NO code identifiers, D#/S#/§-refs, T# ids, or internal nouns; gloss them the way you'd explain it to someone who wasn't in the room. (If a reader who never opened the code couldn't parse a sentence, rewrite it.)
    - as a short arc, not a list: what we've been working on over the last session or two → how we got to right here (the turns/decisions that led in) → how that connects to the thing we're about to pick up now, and why it's the next move.
    - SUCCINCT — a few plain sentences, not a wall; the point of the paragraph must survive being skimmed.
