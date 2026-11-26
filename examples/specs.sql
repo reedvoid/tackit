@@ -7,14 +7,14 @@ Columns:
 - description (TEXT, the detail/body, stored in the DB — no external detail files).
 - kind (TEXT, NOT NULL, CHECK in (design, schema, production, meta) — required at create, classifies the task by whether it alters the running app; D26).
 - status (TEXT, NOT NULL, CHECK in (open, closed, wont_do), default open — lifecycle, informational, never gates traversal). v0.4 added wont_do as a distinct end state (decided not to do, with durable reason), separating it from closed (work shipped).
-- stale (BOOLEAN, NOT NULL, default false — dirty bit; carried regardless of status under v0.4 bounded-obligation D28: closed/wont_do stale=True is record-only historical signal, not on the worklist).
+- stale (BOOLEAN, NOT NULL, default false — dirty bit, set only on live rows (status open or spec) and cleared by reconcile, D137; schema version 11 cleared it on every closed, wont_do and retired row).
 - wont_do_reason (TEXT, NULL when status != wont_do, NOT NULL when status=''wont_do'' — durable reason captured at wont_do() time; no edit API, persists forever).
 - created_at (TIMESTAMP, NOT NULL).
 - updated_at (TIMESTAMP, NOT NULL).
 
-The v0.3.0 superseded_by column (FK → tasks.id) was added in mig 005 and DROPPED in mig 006 (v0.4). The supersede verb was retired (D29) because it required tasks to be atomic enough that "premise replaced" applied to the whole bundle, which broke down in practice when only one of several facets was invalidated. The description_revisions audit table (S7) — append-only rows recording the prior verbatim name+description+delta on every edit — replaces the marker mechanism: any edit (including edits to closed/wont_do tasks per D29) preserves prior state in S7, so editing in place no longer destroys history.
+The v0.3.0 superseded_by column (FK → tasks.id) was added in mig 005 and DROPPED in mig 006 (v0.4). The supersede verb was retired (D29) because it required tasks to be atomic enough that "premise replaced" applied to the whole bundle, which broke down in practice when only one of several facets was invalidated. The description_revisions audit table (S7) — append-only rows recording the prior verbatim name+description+delta on every edit — replaces the marker mechanism: any edit (edits to closed and wont_do tasks are refused, D259) preserves prior state in S141, so editing in place no longer destroys history.
 
-Backs: D1, D3, D7 (status + stale flag), D9, D12 (close), D13 (edit/cascade entry), D15 (queries), D26 (kind taxonomy), D29 (audit + edit-on-closed), D30 (perma-open for design/schema — enforced at the status-change verbs, not at the S1 level).
+Backs: D1, D3, D7 (status + stale flag), D9, D12 (close), D13 (edit/cascade entry), D15 (queries), D26 (kind taxonomy), D29 (audit), D259 (closed tasks immutable), D30 (perma-open for design/schema — enforced at the status-change verbs, not at the S1 level).
 
 ## v0.5 update (D35+D36 partition)
 
@@ -57,41 +57,41 @@ predicate in core.py honor it; Phase 2b (T174) added the retire() verb.
 
 Backs (v0.5 additions): D35 (T167 — spec status value), D36 (T171 — retired
 status + retire() verb + partition + propagation principle), T168 (Phase 1
-realization), T173 (Phase 2a predicates), T174 (Phase 2b retire verb).', 'spec', 0, '2026-05-31T04:11:47.872506+00:00', '2026-06-03T08:35:07.091894+00:00', 'schema', NULL);
+realization), T173 (Phase 2a predicates), T174 (Phase 2b retire verb).', 'spec', 0, '2026-05-31T04:11:47.872506+00:00', '2026-11-26T04:22:47.673074+00:00', 'schema', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (38, 'S2 — task_labels', 'Freeform many-to-many tags. No separate labels dimension table — labels carry no attributes or state, so a join table of plain strings is the whole thing (avoids over-normalization).
 Reserved label names (added v0.3.0; D26): the four kind values (design, schema, production, meta) are reserved — label_add and load refuse a label with any of these strings. The kind property on tasks (S1) absorbs that distinction; a stray label of the same string would silently disagree. Enforced in logic at the D14 boundary, not in DDL (to allow migration-time backfill).
 Columns: task_id (INTEGER, FK → tasks.id); label (TEXT, NOT NULL, the tag string, e.g. release, smoke-test); PRIMARY KEY (task_id, label) — a task can''t carry the same label twice.
-Backs: D4, D9, D15, D16.', 'spec', 0, '2026-05-31T04:11:47.874201+00:00', '2026-06-03T02:49:05.522265+00:00', 'schema', NULL);
+Backs: D4, D9, D15, D16.', 'spec', 0, '2026-05-31T04:11:47.874201+00:00', '2026-11-26T04:22:47.673074+00:00', 'schema', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (39, 'S3 — links', 'The single edge type. Symmetric — one row per unordered pair, stored in canonical order (lower id first). Queries return the same row regardless of which endpoint you start from (D6). Renamed from `dependencies` in v0.3.0; see migration 003 (T86).
 Columns: id (INTEGER, PK); task_a (INTEGER, NOT NULL, FK → tasks.id — canonical endpoint, lower id); task_b (INTEGER, NOT NULL, FK → tasks.id — canonical endpoint, higher id); CHECK (task_a < task_b) — symmetric pair, canonical order (also prevents self-link); UNIQUE (task_a, task_b) — a pair can be linked at most once.
 Note: under symmetric semantics there is no cycle invariant; an undirected edge has no cycle in the directed sense.
-Backs: D5, D6, D9, D10, D12, D13, D14, D27.', 'spec', 0, '2026-05-31T04:11:47.876369+00:00', '2026-06-03T02:49:05.536142+00:00', 'schema', NULL);
+Backs: D5, D6, D9, D10, D12, D13, D14, D27.', 'spec', 0, '2026-05-31T04:11:47.876369+00:00', '2026-11-26T04:22:47.673074+00:00', 'schema', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (40, 'S4 — status_transitions', 'Append-only history of status changes, so reopening a closed task never erases the fact that it was completed earlier. The live status on tasks is current working state; this is the record of how it got there.
 Columns: id (INTEGER, PK); task_id (INTEGER, FK → tasks.id); from_status (TEXT, NULL allowed on first transition/creation); to_status (TEXT, NOT NULL); changed_at (TIMESTAMP, NOT NULL); append-only — rows are never edited or deleted.
-Backs: D8.', 'spec', 0, '2026-05-31T04:11:47.876437+00:00', '2026-06-03T02:49:05.549960+00:00', 'schema', NULL);
+Backs: D8.', 'spec', 0, '2026-05-31T04:11:47.876437+00:00', '2026-11-26T04:22:47.673074+00:00', 'schema', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (41, 'S5 — tasks_fts', 'An FTS5 virtual table indexing tasks for ranked keyword search (D17). Kept in sync with tasks by triggers (insert/update/delete). No external dependency — FTS5 ships with SQLite.
 
 Columns: rowid (INTEGER, = tasks.id); name (TEXT, indexed); description (TEXT, indexed).
 
 The indexed `name` carries the synthesized D32 prefix (T161, v0.4): the INSERT and UPDATE triggers store `<kind_letter><id> — <name>` (design→D, schema→S, production→T, meta→M) into the FTS row, not the bare stored `tasks.name`. The DELETE trigger is unchanged. This lets `search("T238")` and `search("D23")` find the right row by id-prefix regardless of whether the stored name carries such a substring. Migration 008 rebuilt the FTS for all pre-existing rows; the `tasks.name` column itself is untouched.
 
-Backs: D17, D32.', 'spec', 0, '2026-05-31T04:11:47.876487+00:00', '2026-06-23T07:07:40.700381+00:00', 'schema', NULL);
+Backs: D17, D32.', 'spec', 0, '2026-05-31T04:11:47.876487+00:00', '2026-11-26T04:22:47.673074+00:00', 'schema', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (42, 'S6 — meta', 'Small key/value table for CLI bookkeeping. Holds version (monotonic generation counter, +1 per mutation — the ordering signal for sync, D18), synced_sql_hash (content hash of the decompressed text of the last-produced tackit.sql.gz — the integrity signal), and schema_version (for migrations).
 Columns: key (TEXT, PK); value (TEXT, NOT NULL).
 Backs: D18.', 'spec', 0, '2026-05-31T04:11:47.876525+00:00', '2026-11-04T02:46:58.356852+00:00', 'schema', NULL);
-INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (43, 'D1 — Persistent task store', 'tackit keeps all state in a single local SQLite file (WAL mode). A project''s truth lives in one place, outside the agent''s context window, and survives across sessions and compaction.', 'spec', 0, '2026-05-31T04:11:47.876559+00:00', '2026-11-04T02:46:58.356852+00:00', 'design', NULL);
+INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (43, 'D1 — Persistent task store', 'tackit keeps all state in a single local SQLite file (WAL mode). A project''s truth lives in one place, outside the agent''s context window, and survives across sessions and compaction.', 'spec', 0, '2026-05-31T04:11:47.876559+00:00', '2026-11-26T04:22:47.673074+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (44, 'D2 — Typed validation boundary', 'Every read and write passes through Pydantic models. Malformed data — a bad status, a missing required field, an edge pointing at a nonexistent task — is rejected at the boundary as a loud error, never stored. This is the "deterministic" guarantee in practice.
 Un-storable text is also refused (2026-05-30, closed-issue #22): a stored name/description/label may not contain a NUL byte (it breaks the D18 executescript rebuild from tackit.sql) or an unpaired UTF-16 surrogate (not valid UTF-8, so SQLite can''t encode it). Both are rejected loudly so the store always stays storable and rebuildable. (Both were found by the property-based round-trip test, not by example tests — see Testing.)
 
-Adapter param gate (T236, 2026-06-23): the fail-loud boundary extends to the MCP/CLI ADAPTER''s parameter surface, not just core-model data. A tool call carrying an UNRECOGNISED parameter (e.g. ls(query=...) when ls accepts status/label/kind/stale/name_prefix) is REJECTED loudly — the tool input schemas set additionalProperties:false and the error names the offending param plus the valid set — rather than silently dropped. Rationale: a silently-ignored unknown param ran the op UNFILTERED and masked the agent''s mistake (a dogfooding session: ls(query=...) returned all 525 tasks, read as "the filter is broken"), so the agent never learned the right syntax and resorted to a Python workaround. Loud rejection forces in-session self-correction. Value-level validation was already loud (status=''status:open'' errors helpfully); this closes specifically the unknown-param-NAME hole.', 'spec', 0, '2026-05-31T04:11:47.876596+00:00', '2026-11-05T00:28:47.130899+00:00', 'design', NULL);
-INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (45, 'D3 — Task create / read / update', 'Create a task (auto-assigned monotonic id, name, description, kind), read it back, and edit its name/description. **`kind` (design|schema|production|meta, D26) is REQUIRED at create time** (T94) and determines the row''s partition under D36 (kind ∈ {design,schema} ⟹ status ∈ {spec,retired}; kind ∈ {production,meta} ⟹ status ∈ {open,closed,wont_do}). The atomic unit of work; everything else attaches to it.', 'spec', 0, '2026-05-31T04:11:47.876630+00:00', '2026-11-04T22:48:32.215884+00:00', 'design', NULL);
+Adapter param gate (T236, 2026-06-23): the fail-loud boundary extends to the MCP/CLI ADAPTER''s parameter surface, not just core-model data. A tool call carrying an UNRECOGNISED parameter (e.g. ls(query=...) when ls accepts status/label/kind/stale/name_prefix) is REJECTED loudly — the tool input schemas set additionalProperties:false and the error names the offending param plus the valid set — rather than silently dropped. Rationale: a silently-ignored unknown param ran the op UNFILTERED and masked the agent''s mistake (a dogfooding session: ls(query=...) returned all 525 tasks, read as "the filter is broken"), so the agent never learned the right syntax and resorted to a Python workaround. Loud rejection forces in-session self-correction. Value-level validation was already loud (status=''status:open'' errors helpfully); this closes specifically the unknown-param-NAME hole.', 'spec', 0, '2026-05-31T04:11:47.876596+00:00', '2026-11-26T04:22:47.673074+00:00', 'design', NULL);
+INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (45, 'D3 — Task create / read / update', 'Create a task (auto-assigned monotonic id, name, description, kind), read it back, and edit its name/description. **`kind` (design|schema|production|meta, D26) is REQUIRED at create time** (T94) and determines the row''s partition under D36 (kind ∈ {design,schema} ⟹ status ∈ {spec,retired}; kind ∈ {production,meta} ⟹ status ∈ {open,closed,wont_do}). The atomic unit of work; everything else attaches to it.', 'spec', 0, '2026-05-31T04:11:47.876630+00:00', '2026-11-26T04:22:47.673074+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (46, 'D4 — Labels', 'Attach zero or more freeform text labels to a task and list tasks by label. Labels are dumb tags — no status, no rules, no behavior — used only for human grouping/scoping (e.g. design, smoke-test). A task may wear several.', 'spec', 0, '2026-05-31T04:11:47.876663+00:00', '2026-06-23T06:16:02.558639+00:00', 'design', NULL);
-INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (47, 'D5 — Symmetric link', 'Declare "task A is linked with task B" as a single symmetric edge type — no other relationship kinds, no direction. Each link is stored once in canonical order (lower id first, S3); the two argument orderings link_add(a, b) and link_add(b, a) produce the same row and are indistinguishable thereafter. Replaces the v0.2.0 directed depends_on edge; see migration 003 (T86).', 'spec', 0, '2026-05-31T04:11:47.876699+00:00', '2026-11-04T22:48:32.215884+00:00', 'design', NULL);
-INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (48, 'D6 — Linked-tasks traversal', 'Given a task, return its linked tasks — every task it shares a link with — in one call, as a single set (not partitioned into "dependencies" vs "dependents"; symmetric links have no such partition). This is the primitive the slice fetch (D9), the close gate (D14), and the change-cascade (D13) are built on. Traversal is status-blind — a closed neighbor is still returned.', 'spec', 0, '2026-05-31T04:11:47.876732+00:00', '2026-11-05T00:28:47.130899+00:00', 'design', NULL);
-INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (49, 'D7 — Status + stale flag', 'A task''s status is one of open, closed, or wont_do (v0.4 added wont_do as a distinct terminal state for "decided not to do" work, separate from closed which means "work shipped") — informational only; it never gates traversal. A separate stale flag marks a task as having an upstream that changed under it.
+INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (47, 'D5 — Symmetric link', 'Declare "task A is linked with task B" as a single symmetric edge type — no other relationship kinds, no direction. Each link is stored once in canonical order (lower id first, S3); the two argument orderings link_add(a, b) and link_add(b, a) produce the same row and are indistinguishable thereafter. Replaces the v0.2.0 directed depends_on edge; see migration 003 (T86).', 'spec', 0, '2026-05-31T04:11:47.876699+00:00', '2026-11-26T04:22:47.673074+00:00', 'design', NULL);
+INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (48, 'D6 — Linked-tasks traversal', 'Given a task, return its linked tasks — every task it shares a link with — in one call, as a single set (not partitioned into "dependencies" vs "dependents"; symmetric links have no such partition). This is the primitive the slice fetch (D9), the close gate (D14), and the change-cascade (D13) are built on. Traversal is status-blind — a closed neighbor is still returned.', 'spec', 0, '2026-05-31T04:11:47.876732+00:00', '2026-11-26T04:22:47.673074+00:00', 'design', NULL);
+INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (49, 'D7 — Status + stale flag', 'A task''s status is informational only; it never gates traversal. Production and meta tasks use open, closed or wont_do (wont_do: decided not to do, with a durable reason; closed: work shipped). Design and schema slices use spec or retired (D171). A separate stale flag marks a task whose linked neighbor changed under it.
 
-Under D28 (v0.4 bounded obligation) the stale flag rides on tasks of ANY status, but the WORKLIST is filtered: `status=''open'' OR kind in {design, schema}`. Closed/wont_do production/meta tasks carrying stale=True are RECORD-ONLY historical signal — an upstream changed, but the terminal task is not on the worklist and does not trip the close-gate. The v0.3-era invariant `stale ⇒ open` (cascade force-reopens) is retired (T123): the cascade no longer touches status. open-because-new-work and open-because-stale are still queryable apart.', 'spec', 0, '2026-05-31T04:11:47.876765+00:00', '2026-11-05T00:28:47.130899+00:00', 'design', NULL);
-INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (50, 'D8 — Status transition history', 'Every status change is recorded with a timestamp. Reopening a closed task therefore does not erase the fact that it was completed earlier: the live status is current working state; the log is the history.
+Only live tasks (status open or spec) carry the flag (D137): the cascade never flags a closed, wont_do or retired task, so every stale task is on the worklist. The v0.3-era invariant `stale ⇒ open` (the cascade force-reopening closed tasks) stays retired (T123): the cascade never changes status. Open-because-new-work and open-because-stale stay queryable apart.', 'spec', 0, '2026-05-31T04:11:47.876765+00:00', '2026-11-26T04:22:47.673074+00:00', 'design', NULL);
+INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (50, 'D8 — Status transition history', 'Every status change is recorded with a timestamp. Reopening a closed task therefore does not erase the fact that it was completed earlier: the live status is current working state; the log is the history. Valid production/meta transitions include closed to open (reopen, a record correction, D259) and closed to wont_do (a close that should have been a drop, D56); the log keeps the close in both.
 
 ## v0.5 update (D35+D36 — extended status enum + mig 009 backfill)
 
@@ -120,13 +120,13 @@ append a row (D20 no-op guard, partition-aware per Phase 4 fix in
 d0f1cf7).
 
 Backs (v0.5 additions): D35 (T167), D36 (T171), T168 (mig 009 backfill),
-T174 (retire verb writes the new to_status).', 'spec', 0, '2026-05-31T04:11:47.876797+00:00', '2026-06-03T02:49:05.661959+00:00', 'design', NULL);
+T174 (retire verb writes the new to_status).', 'spec', 0, '2026-05-31T04:11:47.876797+00:00', '2026-11-26T04:22:47.673074+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (51, 'D9 — Slice fetch', 'Fetch a single task plus its directly-linked context — its dependencies, dependents, and labels — as one small payload. This is what lets the agent read only what a task needs (a step-sized slice) instead of loading a whole monolithic document. The core anti-context-bloat feature.
 
-Neighbour projection — a single `links` list (T237, 2026-06-23): under D5 symmetric links a task''s dependencies and dependents are the IDENTICAL set, so the slice surfaces them as ONE `links` field, not two duplicated `dependencies`/`dependents` fields. (The "its dependencies, dependents, and labels" phrasing above predates this collapse; under it an agent read every edge twice and a high-degree slice doubled its payload — the show/board self-demonstration: "depends on" and "depended on by" print identical lists.) The single symmetric `links` list is the honest shape and halves the neighbour payload.', 'spec', 0, '2026-05-31T04:11:47.876833+00:00', '2026-11-05T00:28:47.130899+00:00', 'design', NULL);
+Neighbour projection — a single `links` list (T237, 2026-06-23): under D5 symmetric links a task''s dependencies and dependents are the IDENTICAL set, so the slice surfaces them as ONE `links` field, not two duplicated `dependencies`/`dependents` fields. (The "its dependencies, dependents, and labels" phrasing above predates this collapse; under it an agent read every edge twice and a high-degree slice doubled its payload — the show/board self-demonstration: "depends on" and "depended on by" print identical lists.) The single symmetric `links` list is the honest shape and halves the neighbour payload.', 'spec', 0, '2026-05-31T04:11:47.876833+00:00', '2026-11-26T04:22:47.673074+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (52, 'D10 — Stale propagation (mark-before-change)', 'Before a task is edited, mark its linked tasks (both endpoints'' view; D6) stale, leaving status untouched. Recording the obligation before the mutation makes an interrupted reconciliation crash-safe: the marks survive a dead session. Propagation is one hop: it does not cascade transitively on its own; it flows only where a real change actually happens (D13).
 
-Bounded obligation (D28): the staling WRITE is depth-1, both endpoints, regardless of neighbor status. What the status changes is which stale flags are obligation-bearing: the worklist is status IN (''open'',''spec''); closed, wont_do and retired neighbors with stale=True are RECORD ONLY (D7) and not on the worklist. reconcile() is refused on them, because clearing a record-only marker would erase the signal without meaning. What an edit RETURNS is narrower than what it writes (D13, D211).
+Bounded to live neighbors (D137): the staling write is depth-1, both endpoints, and only on neighbors whose status is open or spec. Closed, wont_do and retired neighbors are not written (no flag, no `updated_at` bump), so every stale flag is an obligation. What an edit RETURNS is narrower than what it writes: only the neighbors it moved from clear to set (D55, D211).
 
 `edit_append` does not stale neighbors. This is a concession to reality, not necessarily the optimal decision. Agents clear flags unread whether forced or not (97% of 2,276 cleared flags had no MCP edit or show of the neighbor first, measured over 20 real sessions), and a cleared flag reads as a review that did not happen, so flagging on every saved note bought little and misled. Append is overwhelmingly note-taking: 136 of 149 observed calls recorded a note, and 103 of 214 reconciles directly followed one. The known cost: an appended ruling can make a neighbor wrong with nobody told. The agent is relied on to use `edit` or `edit_replace_substring` when something really changes, and that reliance is not expected to be perfect. If agents start reading flags, reopen this. T224 rejected an edit-type-aware cascade to protect the fold-back path from implementation to design; that path is unaffected, because append is meta-only (D255) and meta links stay within meta (D26), so an append could only ever have flagged other metas. `edit_append` still writes its audit row and requires its delta (D284).
 
@@ -134,79 +134,42 @@ Cascade also bounded by kind (D26): the cascade fires both directions of any lin
 
 No-op discipline (see D20): staling here fires only on an actual content change. Edit field-diffs against the stored value and, if nothing differs, does not stale linked tasks and does not bump version. This is D10''s instance of the general no-op rule defined in D20.
 
-Edits to closed and wont_do tasks are refused (D259). Edits to retired slices are allowed and cascade depth-1 as usual; the description_revisions audit table (S7) records the prior verbatim name+description+delta on every edit, so the edit is recoverable.', 'spec', 0, '2026-05-31T04:11:47.876865+00:00', '2026-11-05T00:59:05.710189+00:00', 'design', NULL);
-INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (53, 'D11 — Reconciliation worklist', 'List all obligation-bearing stale tasks — the resumable worklist for a reconciliation pass that may outlive a session or context window: a new session asks "what''s stale?" and resumes exactly where the last left off. The pass is done when the list is empty (termination marker). Rows are the short form of D211, with no bodies; `show` opens one.
+Edits to closed and wont_do tasks are refused (D259). Edits to retired slices are allowed and cascade depth-1 as usual; the description_revisions audit table (S7) records the prior verbatim name+description+delta on every edit, so the edit is recoverable.', 'spec', 0, '2026-05-31T04:11:47.876865+00:00', '2026-11-26T04:22:47.673074+00:00', 'design', NULL);
+INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (53, 'D11 — Reconciliation worklist', 'List every stale task: the resumable worklist for a reconciliation pass that may outlive a session or context window. A new session asks "what''s stale?" and resumes exactly where the last left off. The pass is done when the list is empty. Rows are the short form of D211, with no bodies; `show` opens one.
 
-Under D28 (v0.4 bounded obligation) the worklist is FILTERED: it returns tasks where `status IN (''open'',''spec'')`. Closed, wont_do and retired tasks carrying stale=True are RECORD ONLY (D7, D36) — the cascade still wrote the flag, but the task is not on the worklist and does not pressure the close-gate. This bounds the obligation so terminal work doesn''t permanently appear unreconciled when its upstream edits later.', 'spec', 0, '2026-05-31T04:11:47.876896+00:00', '2026-11-05T00:28:47.130899+00:00', 'design', NULL);
-INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (54, 'D12 — Close operation', 'Closing a task sets status=closed and returns `{id, status}` (D211). The obligation that matters is enforced before the close, not printed after it: the close gate (D14) refuses while the task or a direct neighbor is obligation-bearing stale, so a successful close has no live stale neighbor to review. Closing does not cascade, so it creates no new obligation either. A neighbor list on success, which earlier versions returned as a review prompt, cost tokens with no next action attached; agents treated it as having no bearing on their next step in 66 of 68 observed close-type calls. `show` returns the neighbors when an agent wants them. `wont_do`, `retire` and `reopen` return the same shape.', 'spec', 0, '2026-05-31T04:11:47.876928+00:00', '2026-11-05T00:59:05.710189+00:00', 'design', NULL);
+The worklist is stale=1 AND status IN (''open'',''spec''). Only live tasks carry the flag (D137), so in a migrated store the status clause excludes nothing; it stays as a guard for flags loaded from an old spec-only dump.', 'spec', 0, '2026-05-31T04:11:47.876896+00:00', '2026-11-26T04:22:47.673074+00:00', 'design', NULL);
+INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (54, 'D12 — Close operation', 'Closing a task sets status=closed and returns `{id, status}` (D211). The obligation that matters is enforced before the close, not printed after it: the close gate (D14) refuses while the task or a direct neighbor is obligation-bearing stale, so a successful close has no live stale neighbor to review. Closing does not cascade, so it creates no new obligation either. A neighbor list on success, which earlier versions returned as a review prompt, cost tokens with no next action attached; agents treated it as having no bearing on their next step in 66 of 68 observed close-type calls. `show` returns the neighbors when an agent wants them. `wont_do`, `retire` and `reopen` return the same shape.', 'spec', 0, '2026-05-31T04:11:47.876928+00:00', '2026-11-26T04:22:47.673074+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (55, 'D13 — Change operation with cascade entry', 'Editing a task that has links first marks its linked tasks stale (D10), then applies the edit, then returns the neighbors this op newly flagged. This is the entry point of the change-time cascade: reconciling each stale task may, if it too changes, mark its own linked neighbors. Propagation flows only where real changes occur, and is bounded by the kind boundary (D10/D26). The cascade-entry ops are `edit`, `edit_replace_substring` and `reclassify`. `edit_append` is not one (D10).
 
-The returned set is the new obligation: a neighbor appears only when this op moved its flag from clear to set and it is live (status IN (''open'',''spec'')), as `{id, because}` (D211). The flag itself is still written on every direct neighbor regardless of status (D10). Closed, wont_do and retired neighbors are record-only (D7, D28): not returned, not on the worklist, not on the close-gate, not reconcilable. A neighbor already stale stays on the worklist and in the alert but is not listed again, so an agent editing one task several times, or several tasks sharing a neighbor, reads each obligation once. Which task flagged a neighbor is not stored (D34), so a neighbor flagged by one task and then by another shows only the first note in edit results; `show` on that neighbor returns every note.
+The returned set is the new obligation: a neighbor appears only when this op moved its flag from clear to set and it is live (status IN (''open'',''spec'')), as `{id, because}` (D211). Closed, wont_do and retired neighbors are not flagged at all (D137), so they are never returned. A neighbor already stale stays on the worklist and in the alert but is not listed again, so an agent editing one task several times, or several tasks sharing a neighbor, reads each obligation once. Which task flagged a neighbor is not stored (D34), so a neighbor flagged by one task and then by another shows only the first note in edit results; `show` on that neighbor returns every note.
 
 The edit''s required `delta` (one sentence describing the semantic shift) is compared against each surfaced link''s `because` rationale (T116) by the agent to filter false positives during reconciliation. Auto-diff is worthless here; the agent already knows what it did.
 
-Edits to closed and wont_do tasks are refused (D259); edits to retired slices are allowed, and the description_revisions audit table (S7) records the prior verbatim row on every edit. If the edited task has kind in {design, schema}, the envelope includes a code-check reminder (D31) naming the slice id+name and prompting a grep against the code that realizes it (via the code↔task naming convention).', 'spec', 0, '2026-05-31T04:11:47.877035+00:00', '2026-11-05T00:28:47.130899+00:00', 'design', NULL);
-INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (56, 'D14 — Invariant enforcement', 'Refuse operations that would leave the graph inconsistent and surface the violation loudly.
+Edits to closed and wont_do tasks are refused (D259); edits to retired slices are allowed, and the description_revisions audit table (S7) records the prior verbatim row on every edit. If the edited task has kind in {design, schema}, the envelope includes a code-check reminder (D31) naming the slice id+name and prompting a grep against the code that realizes it (via the code↔task naming convention).', 'spec', 0, '2026-05-31T04:11:47.877035+00:00', '2026-11-26T04:22:47.673074+00:00', 'design', NULL);
+INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (56, 'D14 — Invariant enforcement', 'Refuse operations that would leave the graph inconsistent, and surface the violation loudly.
 
-Graph integrity:
-- FK: a link to a nonexistent task is rejected.
-- No self-link: link_add(a, a) refused by S3 CHECK task_a < task_b.
-- No duplicate link: S3 UNIQUE on the canonical pair.
+GRAPH INTEGRITY
+- A link to a nonexistent task is rejected.
+- No self-link and no duplicate link: the links table''s CHECK (task_a < task_b) and UNIQUE on the canonical pair.
+- No cycle check: links are symmetric (D47), so there is no directed cycle to detect.
 
-Kind taxonomy (D26):
-- Reserved-label refusal: label_add or load with a label string equal to a reserved kind name (design/schema/production/meta) is refused; those four are reserved for the kind property on S1.
-- Meta-island constraint: link_add between a meta task and a non-meta task is refused. Keeps the meta bookkeeping graph clean of production/spec coupling (under v0.4 the cascade-reach-bounding role is shared with the worklist filter D28).
+KIND TAXONOMY (D110)
+- A label equal to a kind name (design, schema, production, meta) is refused at label_add and load.
+- Meta-island: link_add between a meta task and a non-meta task is refused, keeping meta bookkeeping out of the spec/production graph.
+- Partition (D171): production/meta rows hold open, closed or wont_do; design/schema rows hold spec or retired. A schema CHECK and the model validator both enforce it.
 
-Status-change refusals:
-- Close-gate (v0.4 bounded per D28; reach narrowed to 1-hop 2026-07): close, wont_do, and retire are refused if the task is itself obligation-bearing-stale, OR if a DIRECT (1-hop) linked neighbor is obligation-bearing-stale. The reach is SYMMETRIC with the D10/D13 staling cascade, which marks staleness at 1 hop only (non-transitive): a stale flag more than one hop away was raised about ITS neighbors, not this task, so it must not block this task''s closure. (Prior behavior walked the whole transitive component — one stale hub could freeze an entire connected set of otherwise-done work; the 1-hop gate matches the affect-model the cascade actually asserts.) The direct-neighbor stale check filters to status IN (''open'',''spec'') — closed/wont_do/retired record-only stale neighbors (D28/D36) do NOT trip the gate. The agent must reconcile the named obligation-bearing stale neighbor(s) before closing.
-- Design/schema perma-open (D30 v0.4): close() and wont_do() are refused on any task with kind in {design, schema}. Those are living spec, not work items; the verb for updating them is edit() (D29). To "retire" a decision, edit the slice to reflect its current state — the description_revisions audit table (S7) preserves the prior verbatim version.
-- No double-decide (T132): close() refused if status is already closed or wont_do; wont_do() refused if status is already closed or wont_do. The change-of-mind path on a wont_do task is to create a fresh task with the new direction.
-
-reconcile refusal (D7 v0.4 + T156 v0.4): reconcile() is refused iff (status closed/wont_do) AND (kind in {production, meta}). The filter mirrors D28''s worklist filter exactly so what surfaces as obligation-bearing is what can be reconciled. Closed/wont_do production/meta stale is record-only historical signal; clearing it would erase the signal without meaning. Closed/wont_do design/schema (legacy pre-D30 rows) IS reconcilable, since design/schema is living spec by kind and reconciling acknowledges the slice still describes truth after the upstream changed.
-
-Under symmetric link semantics (D5) there is no dependency cycle to detect — an undirected edge has no cycle in the directed sense. The v0.2.0 acyclicity check is retired.
-
-## v0.5 update (D35+D36 — status-derived refusals + 5 new refusal classes)
-
-**Pattern shift:** the v0.4 refusal patterns enumerated as
-`(status, kind)` predicates are now **status-derived** under D36''s partition.
-The kind clause is redundant because kind and status are coupled by the
-partition CHECK. Refusal predicates that used `kind IN (''design'',''schema'')`
-now use `status=''spec''` (or `status IN (''spec'',''retired'')` for the broader
-"design/schema row" cases). See T173 Phase 2a for the 6 call sites swept
-in `core.py`; T180 for the `Core.links()` anchor-query residual.
-
-**5 NEW refusal classes added by D36:**
-
-| Op | When refused | Refusal message gist |
-|---|---|---|
-| `retire(id)` | `status != ''spec''` | "retire is only valid on living specs (status=''spec''); if the decision returned, file a fresh D# instead of reanimating." |
-| `retire(id)` | ANY linked neighbor has `status=''open''` | Lists each open neighbor with its `because` rationale and presents the (i)/(ii) decision tree (link_rm+wont_do vs link_rm alone) inline. |
-| `link_add(a, b, …)` | Either endpoint has `status=''retired''` | "Retired specs accept no new edges — there is no realization relationship to a dead decision (D36)." |
-| `reconcile(id)` | `status IN (''closed'',''wont_do'',''retired'')` | "Reconcile is not allowed on terminal tasks; their stale flag is record-only archaeology (D28 + D36); clearing would erase the historical signal that an upstream changed." |
-| `reclassify(id, new_kind)` | Cross-partition kind change with no clean status target | When source status has no partition-valid equivalent on the new kind side (e.g. closed-production → design has no clean target since ''closed'' isn''t in the design partition). |
-
-**Reason-validation refusal (D33 extension, applies to retire):**
-- `retire(id, reason='''')` / `''TBD''` / `''TODO''` / `''obsolete''` / `''no longer
-  needed''` is refused at the validation boundary — placeholder strings
-  carry no signal. See D33''s v0.5 update for the placeholder list.
-
-**Terminal-state generalized (T132 generalization under D36):**
-- `reopen / close / wont_do / retire` are ALL refused on a `status=''retired''`
-  row — no double-decide on a terminal state. The v0.4 lock on wont_do
-  generalizes to wont_do + retired uniformly.
-- `Core.reopen()`''s no-op guard ALSO had to be partition-aware: a spec
-  row''s "live" status is `spec`, not `open`, so reopen on spec is a no-op
-  (was a partition CHECK violation pre-d0f1cf7; pinned by
-  test_reopen_on_spec_is_noop). See T176 Phase 4 findings + T173 Phase 4
-  fold-back for the scope-gap analysis.
-
-Backs (v0.5 additions): D35 (T167), D36 (T171), T173 (Phase 2a sweep),
-T174 (Phase 2b retire verb + new refusals), T176 Phase 4 (the
-partition_holds property invariant catches regressions).', 'spec', 0, '2026-05-31T04:11:47.877070+00:00', '2026-07-20T03:51:07.426543+00:00', 'design', NULL);
+STATUS-CHANGE REFUSALS
+- Close gate (1-hop): close, wont_do and retire are refused while the task itself is stale or a DIRECT linked neighbor is stale. Reach is symmetric with the cascade, which flags at 1 hop only (D52): a flag further away was raised about its own neighbors and must not block this task. Only live tasks carry the flag (D137); the gate keeps its status filter (open, spec) as a guard. The neighbor refusal names each stale neighbor with its link''s `because` and says to show it, read it against that coupling, then edit or reconcile it before retrying. The own-flag refusal points to `show` on the task, whose links then carry each neighbor''s `because` and latest delta (D165). Wording is fixed in D171''s refusal bank.
+- close and wont_do are refused on status=''spec'': a living decision is edited, or retired if 100% abandoned.
+- No double-decide (T132): close is refused on wont_do and retired and is a no-op on closed (D62). wont_do is refused on wont_do and retired. wont_do on a CLOSED task is allowed: a close that should have been a drop is recorded as dropped, with the same reason rule and the same close gate as on an open task, and the close stays in status_transitions (D50). reopen is refused on wont_do and retired; all four status verbs are refused on retired.
+- reconcile is refused on closed, wont_do and retired tasks: they carry no stale flag (D137), so a list naming one is wrong. A batch containing any such id is refused whole and names every offender (D199).
+- retire is refused unless status=''spec'', and while any linked neighbor is open; that refusal lists each open neighbor with its `because` and the link_rm / wont_do decision tree (D171).
+- link_add is refused when either endpoint is retired.
+- reclassify across the partition is refused when the source status has no clean target (for example closed production to design).
+- Placeholder retire reasons are refused (D163).', 'spec', 0, '2026-05-31T04:11:47.877070+00:00', '2026-11-26T04:22:47.673074+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (57, 'D15 — Task query / board (derived views)', 'List and filter tasks by status, by label, and by stale — e.g. "open tasks in the smoke-test label" or "everything currently stale." The work-queue and any grouping view are queries over the fields, not separately-maintained lists (single source of truth).
 
-T220 adds a `name_prefix` filter axis: a LITERAL, case-sensitive prefix match on the stored name, so a query can be scoped to one section of a large layer (e.g. `name_prefix=''§9.1''`) instead of pulling the whole kind. It matches the bare name, NOT the synthesized prefixed_name (which begins with the kind-letter + id). An empty prefix is refused (it would match everything — omit the filter instead).', 'spec', 0, '2026-05-31T04:11:47.877102+00:00', '2026-11-05T00:28:47.130899+00:00', 'design', NULL);
+T220 adds a `name_prefix` filter axis: a LITERAL, case-sensitive prefix match on the stored name, so a query can be scoped to one section of a large layer (e.g. `name_prefix=''§9.1''`) instead of pulling the whole kind. It matches the bare name, NOT the synthesized prefixed_name (which begins with the kind-letter + id). An empty prefix is refused (it would match everything — omit the filter instead).', 'spec', 0, '2026-05-31T04:11:47.877102+00:00', '2026-11-26T04:22:47.673074+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (58, 'D16 — Narrative render', 'Render the tasks carrying a given label (e.g. design), in id order, into a single readable markdown document — recovering a human-reviewable narrative from the decomposed slices without that narrative becoming a second source of truth. (This very document is the kind of thing it would regenerate.)', 'spec', 0, '2026-05-31T04:11:47.877134+00:00', '2026-06-03T08:35:58.334520+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (59, 'D17 — Full-text search', 'Find tasks by keyword over name + description, ranked, via SQLite FTS5 — in-process, no external service or GPU. Returns matching task ids + titles + scores. This is the agent''s entry point for finding tasks (e.g. the ids to depend on) before fetching a slice; search → show is tackit''s retrieval loop, replacing grep-over-a-monolith. Keyword only; semantic/vector search is explicitly out of scope (a recall optimization with heavy deps). FTS5 is strictly better than grep for this (tokenized, ranked, indexed), but it is only as good as how discoverably tasks are written — see the skill-pack note under "Deferred."
 
@@ -227,7 +190,7 @@ Legacy adoption. A tackit.sql from before this format is adopted on open and by 
 On startup, sync decision (db has Vdb + last hash; disk dump has embedded Vsql + computed hash): no .db yet (fresh clone) → build it from the dump; hash(dump text) == last synced_sql_hash → in sync, trust the .db (covers the normal case and a crash before a dump completes); else the dump changed externally, decide by version: Vsql > Vdb → strictly newer (a pull) → snapshot .db to a rotating backup (last ~20), then rebuild it from the dump; Vsql < Vdb, or Vsql == Vdb with differing content → ambiguous (older checkout, local .db work not yet exported, or a merge collision) → do not auto-clobber: refuse and direct the agent to resolve explicitly (tackit import to adopt the dump, or tackit export to write the .db out). version is what makes these dangerous cases detectable rather than guessed. A dump that cannot be decompressed or decoded is refused loudly, never treated as absent or empty.
 
 Net: auto-override only on unambiguous-newer; never a blind diff; backups guard the override path; merges route through import.', 'spec', 0, '2026-05-31T04:11:47.877198+00:00', '2026-11-04T02:46:58.356852+00:00', 'design', NULL);
-INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (61, 'D19 — Built-in stale surfacing (added 2026-05-30)', 'The stale check is code in the app, not advice: every invocation queries the outstanding stale set (D11) and emits it deterministically, before the requested op and again after if the op changed it. CLI emits to stderr (so --json stdout stays clean); MCP wraps every tool result as {stale_alert, result}. The wording is single-sourced in core.stale_alert_text / stale_alert_payload and names the required action (review each stale task against its depends_on neighbors, then edit-or-reconcile) plus the negative fallout. This is the "surface" tier of Enforcement — stronger than a skill reminder (cannot be skipped or compacted away), short of blocking. (Resolves closed-issue #19.)', 'spec', 0, '2026-05-31T04:11:47.877231+00:00', '2026-11-05T00:28:47.130899+00:00', 'design', NULL);
+INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (61, 'D19 — Built-in stale surfacing (added 2026-05-30)', 'The stale check is code in the app, not advice: every invocation queries the outstanding stale set (D11) and emits it deterministically, before the requested op and again after if the op changed it. CLI emits to stderr (so --json stdout stays clean); MCP wraps every tool result as {stale_alert, result}. The wording is single-sourced in core.stale_alert_text / stale_alert_payload and names the required action (review each stale task against its depends_on neighbors, then edit-or-reconcile) plus the negative fallout. This is the "surface" tier of Enforcement — stronger than a skill reminder (cannot be skipped or compacted away), short of blocking. (Resolves closed-issue #19.)', 'spec', 0, '2026-05-31T04:11:47.877231+00:00', '2026-11-26T04:22:47.673074+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (62, 'D20 — No-op discipline (mutate only on a real change) (added 2026-05-30)', 'A mutating op enters the D18 finalize path (version bump + tackit.sql re-dump) only when the requested end-state actually differs from what is stored — a field-level comparison against the current row, no diff machinery. Applies to every mutating op: edit (no field differs), close/reopen (already in target status), reconcile (already not stale), label_add/label_rm (label already present/absent), dep_add/dep_rm (edge already present/absent). Keeps version (D18''s ordering signal) advancing only on genuine mutations, so redundant calls don''t churn the committed dump or produce a false "newer" signal. (Resolves closed-issue #18.)', 'spec', 0, '2026-05-31T04:11:47.877263+00:00', '2026-11-04T02:46:58.356852+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (63, 'D21 — Label-usage view (added 2026-05-30)', 'labels (CLI tackit labels + MCP tool) lists every label with its usage: task count + a few example task names, most-used first. A label is thus self-documenting through its tasks — its meaning is derived from usage, so there is no label-description to maintain or drift (S2 stays a plain join table; a labels-dimension table with descriptions was deliberately rejected as a second source of truth). This is the "what exists and what does it mean" primitive that makes reuse-before-create possible; it underpins the label-discipline epic (the creation-time anti-sprawl nudge and the skill guidance build on it).', 'spec', 0, '2026-05-31T04:11:47.877302+00:00', '2026-06-01T01:57:16.212740+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (64, 'D22 — Board view (CLI, human-readable) (added 2026-05-30)', 'tackit board renders the state as a human-readable, dependency-aware board in the terminal: grouped by status (In Flight for open, Spec, Done for closed, Won''t Do, Retired), colored (open and spec=accent, stale=alert, done, wont_do and retired=dim; color only on a TTY), each task showing its labels and a single `links` edge list, matching the slice''s single `links` projection (D9, D5). A section with no rows is not printed. Every status has a section, so `board` never reports "no matching tasks" for tasks that matched. The header counts the whole store by every status plus the obligation-bearing stale count. Filter MODES cover the common questions: default (everything), --status open ("what''s outstanding," the #1 ask), --label X (a group), --stale (after big changes). --json emits the structured slices. CLI-only (the agent uses the structured ls/stale/show tools); it''s the human''s at-a-glance view, the visual cousin of D16 render. (HTML export was considered and dropped — the CLI board + the agent''s change-summaries cover the need.)', 'spec', 0, '2026-05-31T04:11:47.877336+00:00', '2026-11-05T00:28:23.405401+00:00', 'design', NULL);
@@ -236,7 +199,7 @@ INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at,
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (109, 'D25 — Supersede marker (added v0.3.0)', 'Mark an existing task superseded_by a newer task that replaces its premise. A nullable FK on tasks (S1) — not a separate edge type — because the relationship is one-to-one (a task points at at most one successor) and the marker itself does not participate in close-gate or graph traversal. The supersede(old, by) op sets the marker, refuses self-supersede, and does not auto-close old — supersede and close are independent decisions (close old separately if retiring it; reopen old later without un-superseding).
 Why a marker, not just close: a closed task remains in full-text search results (D17). When a later task inverts or replaces the closed task''s premise, a search hit on the closed task silently misleads the reader. The marker tags the hit so search can flag "superseded by T<new>" inline and show can display both directions (this task''s superseder + tasks superseded by this one via reverse lookup). It surfaces the displacement that close alone can''t.
 Fires the cascade on old''s links (T124, 2026-06-01): supersede is now a cascade-firing op. Replacing a task''s premise means every linked neighbor must walk the migrate-or-stay decision: link_add(by, neighbor) to migrate the relationship to the replacement (with a fresh because rationale describing the new coupling); link_rm(old, neighbor) if the relationship is fully replaced (or leave both, treating old''s edge as historical record). Closed neighbors stay closed + stale=True per T123''s relaxed D7 — no force-reopen. The cascade obligation rides in the op''s result as newly_stale, mirroring ChangeResult.newly_stale from edit. Empty delta is refused per T117 like edit/link_add/link_rm.
-Surfacing: superseded_by rides in the slice envelope of show, ls, board, and search results (not search-only). Search flags each superseded hit with the superseder''s id+name; show includes both directions; ls/board show the marker as a small annotation. Resolves T69.', 'retired', 1, '2026-06-01T01:51:35.831916+00:00', '2026-06-03T08:33:36.697017+00:00', 'design', 'v0.4 retires supersede entirely; the description_revisions audit table (D29 / T138) replaces the marker''s archaeology role under the same task id. The marker mechanism tagged search hits with a superseder pointer to prevent misleading hits on closed tasks whose premise was inverted; v0.4 addresses the same concern by allowing edit-on-closed with verbatim prior-version preservation in an append-only audit table. Simpler model, same archaeology capability. T109''s prose stays as historical record of what v0.3.0 supersede was.');
+Surfacing: superseded_by rides in the slice envelope of show, ls, board, and search results (not search-only). Search flags each superseded hit with the superseder''s id+name; show includes both directions; ls/board show the marker as a small annotation. Resolves T69.', 'retired', 1, '2026-06-01T01:51:35.831916+00:00', '2026-11-26T04:22:38.504819+00:00', 'design', 'v0.4 retires supersede entirely; the description_revisions audit table (D29 / T138) replaces the marker''s archaeology role under the same task id. The marker mechanism tagged search hits with a superseder pointer to prevent misleading hits on closed tasks whose premise was inverted; v0.4 addresses the same concern by allowing edit-on-closed with verbatim prior-version preservation in an append-only audit table. Simpler model, same archaeology capability. T109''s prose stays as historical record of what v0.3.0 supersede was.');
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (110, 'D26 — Task kind taxonomy (added v0.3.0)', 'Every task carries a required kind in {design, schema, production, meta}, set at create and refused if missing or invalid. The taxonomy splits tasks by whether they alter the running app''s behavior (the classifier rule):
 
 - design: a design.md slice (D#). Decisions, not code. Perma-open under D30 v0.4 (close/wont_do refused on this kind; edit() updates the slice and the description_revisions audit table S7 preserves the prior verbatim version).
@@ -246,9 +209,9 @@ INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at,
 
 Inheritance trap (T122): classify a NEW task by its OWN scope, not by the parent epic''s framing. A task spawned during a meta thread that itself includes impl work is production — not meta — regardless of where the discussion happened.
 
-Meta-island constraint: a link_add between a meta-kind task and a non-meta-kind task is refused (D14). Under v0.4 the load-bearing role of this constraint is NARROWER than v0.3.0 framed: the worklist filter (D28) bounds the OBLIGATION cascade — closed/wont_do production/meta stale is record-only and the worklist excludes non-{open|design|schema} — regardless of which kinds are linked. What the meta-island still does is keep the meta bookkeeping graph clean of production/spec coupling: meta tasks (release notes, observation writeups, dogfood logs) stay structurally separate from the app''s substance, so a release-tracking task can''t show up wired to a production source change. A meta task may link other meta tasks freely; a non-meta task may link any other non-meta task.
+Meta-island constraint: a link_add between a meta-kind task and a non-meta-kind task is refused (D14). Under v0.4 the load-bearing role of this constraint is NARROWER than v0.3.0 framed: the cascade itself flags only live tasks (D137), regardless of which kinds are linked. What the meta-island still does is keep the meta bookkeeping graph clean of production/spec coupling: meta tasks (release notes, observation writeups, dogfood logs) stay structurally separate from the app''s substance, so a release-tracking task can''t show up wired to a production source change. A meta task may link other meta tasks freely; a non-meta task may link any other non-meta task.
 
-Worklist filter scope (D28 v0.4): the worklist''s "status=''open'' OR kind in {design, schema}" rule means design and schema slices stay on the worklist when they go stale even though they don''t close (perma-open D30). Legacy pre-D30 closed design/schema rows that pre-date D30 still surface on the worklist for the same reason.
+Worklist scope (D53, D137): the worklist is stale=1 AND status IN (''open'',''spec''). Design and schema slices stay on it when they go stale, because spec is a live status; they never close (D171).
 
 Reserved label names: the four kind names are reserved as label strings (S2): label_add and load refuse a label with the same string. This prevents the v0.2.0 convention where design/schema were labels — the kind property absorbs that distinction and a stray label would silently disagree.
 
@@ -287,7 +250,7 @@ the partition layer is orthogonal. A meta row''s status is open/closed/
 wont_do — meta is in the production/meta partition.
 
 Backs (v0.5 additions): D35 (T167), D36 (T171), T168 (Phase 1 — partition
-CHECK + reclassify auto-shift), T176 (Phase 4 — property invariant).', 'spec', 0, '2026-06-01T01:51:47.643672+00:00', '2026-11-26T03:05:52.786920+00:00', 'design', NULL);
+CHECK + reclassify auto-shift), T176 (Phase 4 — property invariant).', 'spec', 0, '2026-06-01T01:51:47.643672+00:00', '2026-11-26T04:22:47.673074+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (111, 'D27 — Link discovery via `links` op (added v0.3.0)', 'Replaces the v0.2.0 "search-before-create" workflow with a deterministic candidate-surfacing loop. The links op: with no input → returns all design + schema kind tasks (the anchor layer — the spec tasks that production work should link to); with a list of task ids → returns every task linked at depth=1 to any input id, filtered to viable link targets, minus the input ids themselves and minus any "already-seen" set the caller passes back. Iteration is caller-driven — tackit holds no state between calls; the agent loops links(anchors), links(next_layer), … until satisfied.
 
 Candidate filter (D27 v0.4 / D28): the expansion-hop output restricts to status=''open'' OR kind in {design, schema}. Closed/wont_do production/meta neighbors are NOT surfaced as candidates — they cannot be productive link targets going forward (the work is done or dropped; coupling to them would be archaeology, not coupling). The anchor-layer query (links() with no input) is unchanged — design/schema slices are perma-open under D30 so the question doesn''t arise there. This filter aligns the surface with the worklist-filter scope (D28) so what you''d reconcile and what you''d link to share the same boundary.
@@ -335,110 +298,23 @@ regression where retired rows leak into the anchor layer.
 
 Backs (v0.5 additions): D35 (T167), D36 (T171), T173 (Phase 2a sweep),
 T180 (anchor residual), T174 (link_add retired refusal), T176 (Phase 4
-invariant).', 'spec', 0, '2026-06-01T01:52:06.009742+00:00', '2026-11-04T22:48:32.215884+00:00', 'design', NULL);
-INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (133, 'D7 — Status + stale flag (v0.4 bounded-obligation)', 'A task''s status is one of {open, closed, wont_do} — informational only; it never gates traversal. A separate stale flag marks a task as one whose linked neighbors changed under it.
+invariant).', 'spec', 0, '2026-06-01T01:52:06.009742+00:00', '2026-11-26T04:22:47.673074+00:00', 'design', NULL);
+INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (133, 'D7 — Status + stale flag (v0.4 bounded-obligation)', 'STATUS. Production and meta tasks use open (work outstanding), closed (shipped) and wont_do (dropped, with a durable reason). Design and schema slices use spec (a living decision) and retired (100% abandoned). The partition is enforced by a schema CHECK and the model validator (D171); add, load and reclassify apply the partition default. Status is informational and never gates traversal. Every transition is recorded in status_transitions (S40, D50).
 
-Bounded obligation (D28 v0.4): the cascade still writes stale=True on neighbors mechanically (depth-1, both endpoints per D6 symmetric semantics, regardless of status). What v0.4 changed is which stale flags carry an obligation. The obligation worklist filter restricts to status=''open'' OR kind in {design, schema}.
+STALE FLAG. A single boolean on every row, set by the cascade (D52) and cleared by reconcile. Only live rows carry it (D137): the cascade flags open and spec neighbors only, so a stale task is always live, every stale task is on the worklist (D53), the close gate (D56) sees every flag, and reconcile can clear every flag. Reconcile on a closed, wont_do or retired task is refused: there is nothing to clear.
 
-Closed and wont_do production/meta tasks carrying stale=True are RECORD ONLY: the flag stays as historical signal that an upstream changed (visible via show()), but they are not on the worklist and do not pressure the close-gate (D14 v0.4). reconcile() is refused on closed/wont_do PRODUCTION/META — clearing a record-only marker would erase the signal without meaning.
+EDITS. edit() is refused on closed and wont_do tasks (D259) and allowed on open, spec and retired rows; the description_revisions audit table (S141) keeps the prior verbatim name, description and delta on every edit. The supersede verb is gone.
 
-Closed and wont_do DESIGN/SCHEMA tasks (T156 v0.4 refinement, 2026-06-02): are obligation-bearing per D28''s kind clause AND reconcilable. The original v0.4 D28 spec admitted them onto the worklist (kind∈{design,schema}) but refused reconcile on terminal status across all kinds — leaving legacy pre-D30 closed-design/schema rows pinned on the worklist with no exit path. T156 resolves the contradiction by mirroring the reconcile-refusal filter to the worklist filter: reconcile is refused iff (status closed/wont_do) AND (kind in {production, meta}). Design/schema slices stay reconcilable regardless of status — consistent with their "living spec" framing — so the worklist can drain.
+The no-op rule (D62) and the 1-hop close gate (D56) apply in their own scopes.', 'spec', 0, '2026-06-01T06:06:38.590496+00:00', '2026-11-26T04:22:47.673074+00:00', 'design', NULL);
+INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (137, 'D28 — Bounded-obligation cascade: only live tasks carry the stale flag', 'RULE. The cascade flags only live neighbors: status IN (''open'',''spec''). A closed, wont_do or retired neighbor is never written: no stale flag and no `updated_at` bump. So stale=1 implies status IN (''open'',''spec''), and every stale flag is an obligation: it is on the worklist (D53), the close gate sees it (D56), and reconcile can clear it.
 
-Status semantics: open = work outstanding; closed = work shipped; wont_do = scope dropped with durable reason. Status transitions are recorded in status_transitions (S4). edit() is refused on closed and wont_do tasks (D259) and allowed on open, spec and retired rows; the description_revisions audit table (S7) preserves the prior verbatim name+description+delta on every edit. The supersede verb is gone.
+WHY. Terminal tasks used to keep the flag as record-only history. It saturated (downstream, 1,202 of the 1,287 closed tasks linked to a live spec carried it), named neither the neighbor nor the change, never cleared (reconcile refuses terminal tasks), and duplicates facts the store already keeps in status_transitions and description_revisions. It also broke the no-op close (D62): a flagged closed task could not be closed again, because close refuses a stale task and reconcile refuses a closed one. Earlier data (T120) had already shown cascade-through-closed paying its cost without a payoff.
 
-The no-op rule (D20) and the close-gate (D14 v0.4: close/wont_do refused if the task is itself obligation-bearing-stale, or a direct (1-hop) linked neighbor is — closed/wont_do record-only stale neighbors do not trip the gate) are unchanged in their respective scopes.
+EXISTING FLAGS. Schema version 11 clears stale on every closed, wont_do and retired row, leaving `updated_at` untouched. A store rebuilt from an older dump keeps that dump''s schema version, so the migration runs at the next open. Accepted residual: a spec-only dump written before version 11 has no schema version, so loading one by hand can bring back flags on retired rows; readers keep their status filters for that case.
 
-## v0.5 update (D35+D36 — 5-value taxonomy + partition rule)
+ENFORCEMENT. Code only, plus a property-test invariant (stale implies a live status). No database trigger: no raw-SQL write path was observed in use.
 
-D7''s three-value taxonomy (open, closed, wont_do) is **extended to five
-values under v0.5**: open, closed, wont_do, spec, retired. The new values
-are partitioned by kind:
-
-| Kind | Live status | Terminal-shipped | Terminal-dropped |
-|---|---|---|---|
-| production / meta | `open` | `closed` (work done) | `wont_do` (scope dropped) |
-| design / schema   | `spec` (living decision) | — | `retired` (decision 100% gone) |
-
-**The partition is enforced by the schema-level CHECK** on S1 (see the v0.5
-update on S1/T37): a production row cannot have status=''spec''/''retired'';
-a design row cannot have status=''open''/''closed''/''wont_do''. Core.add(),
-Core.load(), and Core.reclassify() apply the partition-default at row
-creation / kind change so a fresh design slice lands at ''spec'' by default
-(commit 3a92904 Phase 1).
-
-**Perma-open framing (the v0.4 D30 mechanism) is retired by D35+D36:**
-- Pre-v0.5, design/schema slices used the ''open'' status with a refusal at
-  close/wont_do that called them "perma-open" — i.e. status was the same
-  shape as production/meta but the verbs were blocked at the boundary.
-- Under v0.5, design/schema slices use the dedicated `spec` status —
-  perma-openness IS encoded by the partition. The close/wont_do refusal
-  is now a status-derived predicate (`status=''spec''` is refused), and a
-  spec row can be retired via the new `retire()` verb (D36) when 100%
-  abandoned with no replacement.
-- The historical D30 framing is retained (see D30''s own v0.5 update for
-  the redirect note) but the canonical statement of the rule lives in
-  D35+D36 going forward.
-
-**stale flag (unchanged shape, new partition semantics):**
-- The flag itself is still a single BOOLEAN on every row regardless of
-  status. The bounded-obligation D28 framing under v0.5 says: stale
-  carries obligation iff `status IN (''open'',''spec'')`. Stale on
-  closed/wont_do/retired rows is **record-only archaeology** — the
-  worklist filter excludes them; the close-gate doesn''t trip on them.
-- See D28''s v0.5 update for the worklist-filter predicate change
-  (status=''open'' OR kind IN (design,schema)  →  status IN (''open'',''spec'')).
-
-Backs (v0.5 additions): D35 (T167), D36 (T171), T168 (Phase 1 schema +
-partition CHECK), T173 (Phase 2a worklist/refusal predicates).', 'spec', 0, '2026-06-01T06:06:38.590496+00:00', '2026-11-04T22:47:41.677231+00:00', 'design', NULL);
-INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (137, 'D28 — Bounded-obligation cascade: closed-stale as record-only', 'Cascade still writes stale=True on linked neighbors depth-1 on edit/reclassify (unchanged). What changes is OBLIGATION: closed and wont_do tasks carrying stale=True are RECORD ONLY — visible in show, not on the stale() worklist, not triggering the close-gate. Worklist filter: status=''open'' OR kind in {design,schema}. The close gate''s direct (1-hop) ''linked to stale'' check uses the same filter. Reason: T120''s pre-ergonomics data (7 stale / 5 rubber-stamps / 1 true-positive / 0% FAST) showed cascade-through-closed was paying its cost without delivering its payoff. The bounded model preserves the dependency-check value (catches schema-mediated coupling) while eliminating recursive-supersede-through-history.
-
-## v0.5 update (D35+D36 — status-derived worklist filter + retired record-only)
-
-**Worklist-filter predicate change** (the central D28 invariant):
-
-| Era | Worklist predicate (stale + obligation-bearing) |
-|---|---|
-| v0.4 | `stale=1 AND (status=''open'' OR kind IN (''design'',''schema''))` |
-| v0.5 | `stale=1 AND status IN (''open'',''spec'')` |
-
-The two predicates are **equivalent for live data** under the D36 partition
-(design/schema rows live at status=''spec''; production/meta at ''open''), but
-the v0.5 form correctly **excludes retired design/schema rows** which the
-v0.4 form would have wrongly kept on the worklist via the kind clause.
-
-**Record-only stale set is now 3 statuses (was 2):**
-
-| Era | Statuses where stale=true is record-only (NOT obligation) |
-|---|---|
-| v0.4 | closed, wont_do (production/meta only) |
-| v0.5 | closed, wont_do, **retired** |
-
-A retired row that gets cascade-staled by a downstream edit keeps stale=1
-as historical signal that an upstream changed — but the flag does NOT
-pressure the worklist (the agent is not obliged to revisit a retired
-decision) and does NOT trip the close-gate on linked neighbors (a closed
-production task with a linked retired-design neighbor can still close).
-
-**The close gate (D14) honors the same filter:** it checks direct (1-hop)
-neighbors for obligation-bearing stale, `status IN (''open'',''spec'')` only.
-Closed-stale-production and retired-stale-design neighbors do not count. The
-gate refuses iff that set is non-empty.
-
-**`reconcile()` follows the same partition** (D28 + T156 v0.4 + D36 v0.5):
-- Refused when `status IN (''closed'',''wont_do'',''retired'')` — clearing the
-  flag on those rows would erase the historical archaeology.
-- Allowed on `status IN (''open'',''spec'')` — these are the rows for which
-  stale carries obligation and reconcile clears it after review.
-
-See T173 Phase 2a for the implementation sweep (the 6 call sites that
-realize this filter in core.py) and T180 for the `Core.links()` anchor-
-query residual. T176 Phase 4 added a property invariant
-(`worklist_filter_holds`) that re-checks `status IN (''open'',''spec'')` after
-every randomized op so a future regression on the filter shape gets caught
-in CI.
-
-Backs (v0.5 additions): D35 (T167), D36 (T171), T173 (Phase 2a sweep),
-T180 (anchor-query residual), T176 Phase 4 (property invariant).', 'spec', 0, '2026-06-01T22:22:03.373143+00:00', '2026-11-26T03:05:52.786920+00:00', 'design', NULL);
+PREDICATE. The worklist, the close gate''s 1-hop check and reconcile''s allowed set all use stale=1 AND status IN (''open'',''spec''). Reconcile on a terminal task is refused because it has nothing to clear (D56). A task returns to a live status only by reopen (closed to open, D259), and it arrives unflagged.', 'spec', 0, '2026-06-01T22:22:03.373143+00:00', '2026-11-26T04:22:47.673074+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (138, 'D29 — Description revisions audit table', 'Append-only audit table capturing every successful edit''s prior name and description plus the delta rationale. Backstop for edit archaeology: while a task is OPEN its description can be updated in place with the verbatim prior state recoverable. (D259 REVERSES D29''s original v0.4 stance that also permitted editing CLOSED and wont_do tasks in place — the three edit ops now refuse on status IN (''closed'', ''wont_do''); reopen to change. The audit table therefore backstops open-edits and retired-slice edits, not closed tasks.) Replaces the v0.3.0 supersede marker (D25) — the marker addressed ''don''t get misled by old prose'' via inline-tagging hits with a superseder id; the audit table addresses it by preserving the prior verbatim version under the SAME task id. Simpler model, same archaeology capability. history() op extends to return description_revisions alongside status_transitions.
 
 ## v0.5 update (D35+D36 — retire interaction with audit table)
@@ -464,14 +340,14 @@ shape as `close()` and `wont_do()` at the audit layer:
 v0.5):
 - Editing a retired row''s name/description appends a description_revisions
   row exactly as for any other edit.
-- The cascade fires depth-1 (record-only on retired neighbors per D28''s
-  v0.5 update).
+- The cascade fires depth-1 on the retired slice''s open and spec
+  neighbors (D137).
 - D31''s code-check reminder also fires on retired edits (see D31 v0.5
   update — "verify no lingering code references this dead decision").
 
 Backs (v0.5 additions): D36 (T171 — retire verb shape), T174 (Phase 2b
 retire impl writes wont_do_reason without touching description_revisions),
-S1 (T37 v0.5 — wont_do_reason dual-role partition semantics).', 'spec', 0, '2026-06-01T22:22:03.373244+00:00', '2026-11-04T22:48:32.215884+00:00', 'design', NULL);
+S1 (T37 v0.5 — wont_do_reason dual-role partition semantics).', 'spec', 0, '2026-06-01T22:22:03.373244+00:00', '2026-11-26T04:22:47.673074+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (139, 'D30 — Design/schema as perma-open: kind-based close + wont_do refusal', 'close() and wont_do() refuse on any task with kind in {design, schema}, structured error directing the user to edit() (audit table preserves prior state). Design and schema slices are LIVING SPEC — they represent decisions in effect; updating a decision is edit, not close. Retiring a decision means editing the slice to reflect ''no longer in effect''; the audit table preserves the prior version. Belt-and-suspenders: the worklist filter (D28) is robust to any design/schema task that somehow ends up closed (via tests or migration shim) — the kind clause keeps them visible regardless of status.
 
 ## v0.5 update (D35+D36 — redirect to canonical framing)
@@ -505,7 +381,7 @@ the spec-graph entry point that explains "why we ended up with a typed
 partition for design/schema status".
 
 Backs (v0.5 additions): D35 (T167), D36 (T171), T168 (Phase 1 — partition
-+ mig 009), T173 (Phase 2a — status-derived refusals).', 'spec', 0, '2026-06-01T22:22:03.373312+00:00', '2026-11-04T22:48:32.215884+00:00', 'design', NULL);
++ mig 009), T173 (Phase 2a — status-derived refusals).', 'spec', 0, '2026-06-01T22:22:03.373312+00:00', '2026-11-26T04:22:47.673074+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (140, 'D31 — Code-check reminder on design/schema edit', 'When edit() succeeds on a task with kind in {design, schema}, the response envelope includes a structured reminder: ''this slice''s number (D#/S#) is referenced in code by convention; double-check the associated files for drift.'' Replaces agent-instinct (which fails — SKILL.md guidance alone doesn''t reliably fire) with tool-side mechanical nudge. No code-introspection; tackit doesn''t know which files reference D# — the reminder names the slice id+name and trusts the agent to grep. Sibling concept to label_nudge and stale_alert.
 
 ## v0.5 update (D35+D36 — reminder fires on retired edits too)
@@ -539,7 +415,7 @@ logic.
 Backs (v0.5 additions): D35 (T167), D36 (T171), D29 (edit-on-retired
 allowed), T173 (Phase 2a — D31 predicate unchanged, noted in T173''s
 6-call-site table as "No change needed").', 'spec', 0, '2026-06-01T22:22:03.373374+00:00', '2026-06-03T02:49:05.801742+00:00', 'design', NULL);
-INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (141, 'S7 — description_revisions', 'Append-only audit table backing D29. Columns: id (INTEGER, PK); task_id (INTEGER, FK -> tasks.id); prev_name (TEXT, NULL — pre-edit name, NULL if unchanged); prev_description (TEXT, NULL — pre-edit description, NULL if unchanged); delta (TEXT, NOT NULL — rationale from the edit op); edited_at (TIMESTAMP, NOT NULL); rows never updated or deleted. Written by core.edit() on every edit that actually changes name or description (no-op edits skipped per D20). Read by core.history(). Migration 007 adds this table.', 'spec', 0, '2026-06-01T22:22:03.373434+00:00', '2026-07-08T01:57:32.186539+00:00', 'schema', NULL);
+INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (141, 'S7 — description_revisions', 'Append-only audit table backing D29. Columns: id (INTEGER, PK); task_id (INTEGER, FK -> tasks.id); prev_name (TEXT, NULL — pre-edit name, NULL if unchanged); prev_description (TEXT, NULL — pre-edit description, NULL if unchanged); delta (TEXT, NOT NULL — rationale from the edit op); edited_at (TIMESTAMP, NOT NULL); rows never updated or deleted. Written by core.edit() on every edit that actually changes name or description (no-op edits skipped per D20). Read by core.history(). Migration 007 adds this table.', 'spec', 0, '2026-06-01T22:22:03.373434+00:00', '2026-11-26T04:22:47.673074+00:00', 'schema', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (156, 'v0.4 gap: legacy closed/wont_do design/schema slices stuck on worklist (no reconcile path)', '**RESOLVED** by reconcile()-mirrors-worklist refinement (v0.4 cluster commit 583df90, code lives at core.py:820-852).
 
 **Gap** (surfaced 2026-06-01): D28''s worklist filter admitted a stale task as obligation-bearing when `status=''open'' OR kind in {design, schema}`, which pulled closed/wont_do design/schema slices onto the worklist. But reconcile() refused unconditionally on all closed/wont_do tasks. The refusal message claimed "(not on the worklist)" while the worklist explicitly listed them. The two rules contradicted, leaving 5 legacy rows pinned on the worklist with no exit path (T37, T44, T49, T59, T109 in the dogfood DB at the time).
@@ -550,7 +426,7 @@ INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at,
 
 Equivalently: reconcile is allowed iff `status=''open'' OR kind in {design, schema}` — the same predicate D28 uses to define the worklist. So what surfaces as obligation-bearing is exactly what can be reconciled, by construction.
 
-For closed/wont_do **design/schema** (perma-open in spirit per D30 but legacy-closed pre-D30), the slice IS the obligation: reconciling it acknowledges the slice still describes truth after the upstream change. For closed/wont_do **production/meta**, the original D28 rationale stands: their stale flag is record-only archaeology — clearing it would erase the historical signal that an upstream changed.
+For closed/wont_do **design/schema** (perma-open in spirit per D30 but legacy-closed pre-D30), the slice IS the obligation: reconciling it acknowledges the slice still describes truth after the upstream change. For closed/wont_do **production/meta**, reconcile stays refused; since schema version 11 they carry no stale flag at all (D137).
 
 **Why not (A)** tighten the worklist filter to just `status=''open''`: would hide legitimate spec drift on closed design/schema slices, which are still the live contract under D30. The legacy 5-row population would silently carry stale=True forever and the agent would never review it.
 
@@ -598,7 +474,7 @@ the rewrite list.
 
 Backs (v0.5 additions): D35 (T167), D36 (T171), T168 (mig 009), T173
 (Phase 2a — predicate simplified to status-derived form), T176 (Phase 4
-— 5 D156-mirror tests rewritten).', 'spec', 0, '2026-06-01T23:30:39.270432+00:00', '2026-06-03T02:48:30.168180+00:00', 'design', NULL);
+— 5 D156-mirror tests rewritten).', 'spec', 0, '2026-06-01T23:30:39.270432+00:00', '2026-11-26T04:20:50.690606+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (160, 'D32 — Auto-id task name prefix (deterministic display + FTS)', 'Every task carries a deterministic `kind_letter + task_id` prefix in its agent-facing identifier. Letters: design→D, schema→S, production→T, meta→M. The id is the task row''s primary key (auto-increment), not a separately-managed slot.
 
 The prefix is **synthesized by tackit**, not stored in the user-supplied `name` field:
@@ -624,7 +500,7 @@ Edge cases:
 - User-supplied name that already looks prefixed (e.g., user writes "T157 — Fix ls() …" out of habit): allowed as raw text, but display will double-prefix to "T157 — T157 — Fix ls() …". A future refinement could refuse or strip; v0.4 just lets users learn the convention.
 - FTS rebuild for legacy rows: the search-by-synthesized-prefix property requires the FTS index to carry the prefix even for rows inserted before this slice landed. Migration 008 rebuilds tasks_fts with the synthesized prefix included.
 
-Backs: D17 (search) — search must find by synthesized prefix. D26 (kind taxonomy) — the kind letter comes from kind.', 'spec', 0, '2026-06-02T01:23:31.673423+00:00', '2026-11-05T00:28:47.130899+00:00', 'design', NULL);
+Backs: D17 (search) — search must find by synthesized prefix. D26 (kind taxonomy) — the kind letter comes from kind.', 'spec', 0, '2026-06-02T01:23:31.673423+00:00', '2026-11-26T04:22:47.673074+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (163, 'D33 — Link creation requires explicit `because`: refuse placeholder rationales at all creation paths', 'Every link-creation path in tackit must require a real, caller-supplied `because` rationale. Placeholder/convenience-default rationales (e.g. `"(established at task creation)"`, `"(established via bulk load)"`) are refused at the boundary.
 
 **Why:** the cascade-ergonomics filter (T116) compares `delta × because` to FAST-skip a stale neighbor without re-reading it. A placeholder rationale carries zero signal — it filters nothing, so every cascade hit through such an edge must take the slow path. Convenience shortcuts that ship placeholders silently corrupt the SNR of the entire cascade system: the link LOOKS wired but is functionally dead-weight to the reconciler. Concretely: of 312 links in this DB at the time of writing, 269 (86%) carry a placeholder or pre-T116 marker; the 36 add-deps placeholders are the recurring failure mode this rule prevents.
@@ -671,7 +547,7 @@ _RETIRE_PLACEHOLDERS`. Pinned by 10 parametrized test cases in
 `tests/test_d36_retire.py::test_retire_refused_on_placeholder_reason`.
 
 Backs (v0.5 additions): D36 (T171 — defines the retire reason
-requirement), T174 (Phase 2b retire impl with the placeholder check).', 'spec', 0, '2026-06-02T03:07:55.251363+00:00', '2026-07-20T03:52:36.160873+00:00', 'design', NULL);
+requirement), T174 (Phase 2b retire impl with the placeholder check).', 'spec', 0, '2026-06-02T03:07:55.251363+00:00', '2026-11-26T04:22:47.673074+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (165, 'D34 — Surface cascade-ergonomics rationales (link `because` + upstream edit `delta`) with a DRY FAST-filter reminder', 'The cascade-ergonomics FAST filter (T116/T117) compares an upstream''s `delta` (semantic shift) against a link''s `because` (coupling axis) to orient the reconciliation of a stale task. Both inputs are persisted: `because` on `links` (T116), edit `delta` in S7 `description_revisions` (D29). This slice decides how they reach the agent during a reconciliation walk.
 
 **The rule:**
@@ -682,7 +558,7 @@ Reads of a slice surface, on each neighbor entry where the read is a reconcile r
 
 A reconcile read means the entry or the focal task is OBLIGATION-BEARING STALE: stale=1 AND status IN (''open'',''spec'') (D28/D36). Both conditions are needed because an edit stales the edited task''s neighbors, not the edited task. Reconciling stale task A uses A''s entry for the edited neighbor B, and B is not stale, so a stale-entry test alone would strip the fields from that read; the focal condition keeps them. Viewing B, the entry for stale A carries the coupling axis, and B''s own delta is what the agent just wrote. Which neighbor staled a task is not tracked, so a stale focal task keeps the fields on every entry.
 
-Outside a reconcile read the two fields are absent, per the lean default in D211, and `show` returns them on every entry on request. Record-only stale flags on closed, wont_do or retired tasks (D7) cannot be reconciled and do not trigger any of this.
+Outside a reconcile read the two fields are absent, per the lean default in D211, and `show` returns them on every entry on request. Closed, wont_do and retired tasks carry no stale flag (D137), so they never make a read a reconcile read.
 
 3. **Top-level `because_reminder` field** — a single DRY-sourced string explaining what those two fields are for. Same envelope position as `code_check_reminder` / `label_nudge` / `stale_alert` / `delta` (the per-op fields). Set iff the focal task or at least one neighbor is obligation-bearing stale; otherwise null. The lean `board` projection drops the two fields from every entry, so it returns the reminder as null, since there is nothing for it to explain. A stale task with no links left still gets the reminder on `show`: it still owes a reconcile. Not on every show (noisy on read-only browsing); not gated on top-level `stale_alert` (which misses a stale task viewed while reading other work, and has no per-slice view).
 
@@ -709,7 +585,7 @@ DRY: the reminder text is defined exactly once (`core.LINK_BECAUSE_REMINDER`); r
 **Why this isn''t D33''s job:**
 D33 enforces rationale QUALITY at link creation. D34 surfaces the rationales AND deltas so the FAST/orientation pipeline can actually run. They''re complementary: D33 makes the data worth surfacing; D34 makes it accessible.
 
-Backs: D9 (slice fetch), D11 (reconciliation worklist), D28/D36 (the obligation predicate), D29 (description_revisions, the source of persisted deltas), D211 (the lean projection that governs when the fields are returned), T116 (per-edge because), T117 (delta concept).', 'spec', 0, '2026-06-02T03:19:44.306327+00:00', '2026-11-05T00:28:47.130899+00:00', 'design', NULL);
+Backs: D9 (slice fetch), D11 (reconciliation worklist), D28/D36 (the obligation predicate), D29 (description_revisions, the source of persisted deltas), D211 (the lean projection that governs when the fields are returned), T116 (per-edge because), T117 (delta concept).', 'spec', 0, '2026-06-02T03:19:44.306327+00:00', '2026-11-26T04:22:47.673074+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (167, 'D35 — Spec status value: design/schema slices use status=''spec'' (retires the kind-conditional perma-open framing)', '**The problem D35 fixes** (surfaced 2026-06-02): the current model conflates two orthogonal things in the `status` column — lifecycle (open/closed/wont_do) and kind-driven liveness (design and schema are perma-spec, not work items). Counts of "open" mislead because they include perma-spec slices that aren''t work items, and every report has to caveat: "of N open, only M are actual work items." That caveat is a structural tax on every count, every dogfood pass, every report. The mechanics work correctly — worklist filter, close-gate, reconcile refusal all do the right thing — but the framing is confusing and propagates user-visible noise.
 
 **The decision:** add a new status value `spec`. Design and schema slices live at `status=''spec''` permanently. `open` regains its plain meaning ("work item to do"). The kind-conditional clauses in the worklist filter, close-gate, wont_do refusal, and reconcile refusal collapse into clean status-derived predicates.
@@ -744,7 +620,7 @@ INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at,
 
 - D7 (status taxonomy gains ''spec''; full 5-value taxonomy lands jointly with D36''s ''retired'').
 - D14 (refusal predicates change to status-derived for the spec half; D36 adds the retire/link-to-retired/reconcile-on-retired refusal patterns).
-- D28 (worklist filter simplifies; D36 adds retired to record-only set).
+- D28 (worklist filter simplifies; retired is off the worklist).
 - D30 (reframed: the perma-open rule is now spelled status=''spec''; mechanism shifts from kind to status. D30''s body redirects to D35+D36 as the canonical framing).
 - S1 (status CHECK extended; partition CHECK joint with D36).
 - D8 (transition history gains ''spec'' as a valid to_status value; ''retired'' joins via D36).
@@ -761,7 +637,7 @@ INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at,
 
 Path 1 (default filter in ls()/board() to kind in {production, meta}; split counts as "X work items, Y spec slices"; reword docs) is cheaper but doesn''t fix the underlying model. Anyone reading the DB directly or building a new surface re-encounters the confusion. Path 2 (this slice) fixes it at the column.
 
-Backs: D7, D14, D28, D30, S1, D8 (prose edits required to align with new framing); D26 (cross-references the partition rule that arrives under D36); D156 (kind exception now obviated).', 'spec', 0, '2026-06-02T04:54:12.306635+00:00', '2026-11-04T22:48:32.215884+00:00', 'design', NULL);
+Backs: D7, D14, D28, D30, S1, D8 (prose edits required to align with new framing); D26 (cross-references the partition rule that arrives under D36); D156 (kind exception now obviated).', 'spec', 0, '2026-06-02T04:54:12.306635+00:00', '2026-11-26T04:22:47.673074+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (171, 'D36 — Retired status + retire() verb + kind/status partition + all-or-nothing edit/retire discipline', '**The problem D36 fixes** (surfaced 2026-06-02 during D35 impl brainstorming): D35''s framing — "design/schema = perma-living spec" — works for decisions that remain TRUE about the system. It does NOT account for design decisions that are fully abandoned with no replacement. The gap surfaced when D109/D25 (supersede marker, retired in v0.4) was reviewed for the mig 009 plan: D25 is not a living spec; the decision was tried and dropped. Under D30''s perma-open framing it can''t be close()''d or wont_do()''d, but calling it status=''spec'' falsely promotes a retired decision back into the living-spec set.
 
 The fix: add a second terminal status for design/schema slices — ''retired'' — with a new verb retire() to reach it, plus the kind/status partition invariant that arrives jointly with this addition.
@@ -832,8 +708,8 @@ This discipline lives on every agent-facing surface (the propagation principle b
   - `links()` candidate filter narrows from `(status=''open'' OR kind IN (''design'',''schema''))` (D28-aligned) to `status=''spec''` for design/schema — excludes retired.
   - `stale()` worklist (D28) uses `status IN (''open'',''spec'')` — retired is off the obligation list.
   - `link_add()` refused if either endpoint has status=''retired'' — no realization relationship to a dead decision. Refusal message: "link_add refused: endpoint {id} is retired. Retired specs accept no new edges — there is no realization relationship to a dead decision. Prior content lives in description_revisions."
-- Cascade behavior on retired: edits to a neighbor mark a retired endpoint stale at depth-1, but it''s **record-only** (D28 generalizes — stale-record-only applies to status NOT IN (''open'',''spec''), which covers closed/wont_do/retired).
-- `reconcile()` refused on retired (same logic as closed/wont_do — flag is record-only archaeology; clearing it would erase the historical signal). Message: "reconcile refused on retired tasks. stale on these is record-only archaeology — clearing it would erase the historical signal that an upstream changed."
+- Cascade behavior on retired: a retired slice is never flagged by a neighbor''s edit (D137).
+- `reconcile()` refused on retired, as on closed and wont_do: none of them carries a stale flag (D137). Message: see the refusal bank below.
 
 **Refusal-message bank (the agent-facing teaching surface):**
 
@@ -862,9 +738,24 @@ reopen() on status=''retired'':
    decision returned."
 
 reconcile() on status IN (''closed'',''wont_do'',''retired''):
-  "reconcile refused on {status} tasks. stale on these is record-only
-   archaeology — clearing it would erase the historical signal that an
-   upstream changed."
+  "REFUSED: {X} is {status}; closed, wont_do and retired tasks carry no
+   stale flag, so there is nothing to reconcile. Drop it from the list
+   (D137)."  The batch form names every offender and ends "No row was
+   changed."
+
+close()/wont_do()/retire() on a stale task (own flag):
+  "REFUSED: {X} is stale: a task it links to changed since it was last
+   reviewed. Run `show {X}`: on a stale task each link carries its
+   `because` (why that neighbor matters here) and the neighbor''s latest
+   delta. Read them against {X}; `edit` it if it is now wrong, or
+   `reconcile` it if it still holds; then {verb} (D56)."
+
+close()/wont_do()/retire() with stale direct neighbors:
+  "REFUSED: {verb}ing {X} would decide on top of a change nobody has
+   reviewed. Its directly linked stale neighbors:
+     - {Y} -- because: "{because}"
+   Show each and read it against that coupling; `edit` it if it is now
+   wrong, or `reconcile` it if it still holds; then {verb} {X} (D56)."
 
 reclassify() cross-partition with no clean target:
   "reclassify refused: source status ''{src}'' has no clean target in the
@@ -913,14 +804,14 @@ D33''s placeholder-rationale refusal exemplifies this: the rule fires in `link_a
 - D14 (refusal taxonomy — new refusals: retire on non-spec, retire on open-neighbor, link_add on retired, reconcile on retired, reclassify cross-partition).
 - D26 (kind taxonomy — adds cross-reference to the partition rule).
 - D27 (link discovery — candidate filter narrows to `status=''spec''`).
-- D28 (worklist filter — joint with D35; D36 adds retired to record-only set).
+- D28 (worklist filter — joint with D35; retired is off the worklist).
 - D29 (description_revisions — note retire() does NOT append a revision row; durable reason lives in wont_do_reason column).
 - D30 (perma-open framing — replaced by D35+D36 jointly; D30 redirects to the new canonical framing).
 - D31 (code-check reminder — fires on retired edits too as "verify no lingering code references this dead decision").
 - D33 (placeholder rationale refusal — extends to retire''s reason field).
 - S1 (partition CHECK joint with D35; wont_do_reason column documented as terminal-verb-reason regardless of which verb wrote it).
 
-Backs: D7 (status taxonomy joint with D35), D14, D26, D27, D28, D29, D30, D31, D33, S1.', 'spec', 0, '2026-06-02T07:22:12.812393+00:00', '2026-11-26T03:05:52.786920+00:00', 'design', NULL);
+Backs: D7 (status taxonomy joint with D35), D14, D26, D27, D28, D29, D30, D31, D33, S1.', 'spec', 0, '2026-06-02T07:22:12.812393+00:00', '2026-11-26T04:22:47.673074+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (172, 'D37 — Granular-description discipline: task bodies must be impl-ready on fresh-session revisit; impl-time discoveries are routed as fold-backs', '**The granular-description discipline** (added 2026-06-02): task descriptions must be implementation-ready. On a new-session revisit, an agent reading the description should not be confused, should not feel the need to do additional scoping work, and should not encounter ambiguity that could be resolved. Under-defined task descriptions force fresh-session agents to re-derive context that should already be on the row — which is exactly the failure tackit exists to prevent.
 
 **The rule (forceful):**
@@ -969,7 +860,7 @@ The 2026-06-02 D35/D36/T168/T169/T170 persistence pass demonstrated the failure 
 
 D37 is a writing-time discipline, not a runtime mechanism — there are no refusal predicates to pin. The "tests" that matter are surface-presence tests: assert that SKILL.md contains the forceful instruction; assert that the add() and edit() MCP docstrings contain the granularity guidance; assert that the README''s writing-tasks walkthrough includes the discipline demonstration. These are documentation-presence tests in tests/test_docs.py or similar.
 
-Backs: D3 (task create/read/update — discipline applies at create time), D26 (kind taxonomy — granular descriptions are how each kind achieves its purpose), D29 (description_revisions — audit trail of edits captures granularity improvements over time and is the safety net for missed pre-close refinements), D36 (propagation principle — D37 follows the same multi-surface pattern: SKILL + MCP docstrings + CLI help + README).', 'spec', 0, '2026-06-02T07:26:37.592198+00:00', '2026-11-26T03:05:52.786920+00:00', 'design', NULL);
+Backs: D3 (task create/read/update — discipline applies at create time), D26 (kind taxonomy — granular descriptions are how each kind achieves its purpose), D29 (description_revisions — audit trail of edits captures granularity improvements over time and is the safety net for missed pre-close refinements), D36 (propagation principle — D37 follows the same multi-surface pattern: SKILL + MCP docstrings + CLI help + README).', 'spec', 0, '2026-06-02T07:26:37.592198+00:00', '2026-11-26T04:22:47.673074+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (197, 'D38 — Links are coupling, labels are membership: the rollup / hub / membership-link anti-patterns', 'Names and forbids the "fake task" family that the dogfood surfaced, and removes the SKILL.md endorsement (the "epic pattern" snippet) that caused it.
 
 ## The core distinction (the thing that''s easy to miss)
@@ -1009,7 +900,7 @@ Backs/refines: D34 (because semantics + FAST filter) — coupling link to it.
 - **Fix (T219).** (a) Reworded findings-overflow `<umbrella>` -> `<source-task>` (behavior unchanged). (b) Added a companion SKILL rule `## Relationships are edges, not prose` — a SECOND AXIS to this slice: D38 forbids the content-free *node* (hub/rollup); the companion forbids a relationship *narrated in body prose* instead of wired as an *edge* (the cascade traverses links, never prose). (c) Vocabulary-collision fix: "anchor" was overloaded — it is the term-of-art for the GOOD design/schema layer that `links()` surfaces, yet the grouping heading + README reused it for the BAD node. Renamed those usages to "hub" (the name this slice''s body already uses), reserving "anchor" for the good layer. (d) Propagated the companion to README + `add()` / `link_add()` docstrings.
 - **Why missed.** T198''s removal targeted the snippet by name/content with no synonym sweep; the "anchor" overload was never flagged as a collision.
 - **Pinning.** `test_d38_docstrings::test_skill_md_contains_relationships_are_edges_rule` + extended `add()`/`link_add()` docstring pins. SKILL.md "umbrella" count is now 0.
-- **Status.** SKILL new rule + reword + first pins in 3076890; the remaining surfaces (anchor→hub, README, docstrings, extra pins) in the T219 commit. 525 tests pass.', 'spec', 0, '2026-06-04T16:44:45.843164+00:00', '2026-11-04T22:48:32.215884+00:00', 'design', NULL);
+- **Status.** SKILL new rule + reword + first pins in 3076890; the remaining surfaces (anchor→hub, README, docstrings, extra pins) in the T219 commit. 525 tests pass.', 'spec', 0, '2026-06-04T16:44:45.843164+00:00', '2026-11-26T04:22:47.673074+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (199, 'D39 — Bulk-sweep ergonomics: compact link_add return, batch reconcile(ids), short alert on reconcile', 'Cuts the per-op token tax that makes bulk/sweep operations expensive — the T179 large-body pattern resurfacing on the RESPONSE and SWEEP side. From dogfood friction on a large schema backfill (#2/#1/#6 of that report). tackit was built interactive-single-op-first; its origin use case (import a large plan) and the messy-backfill reality are bulk.
 
 ## #2 — link_add returns a compact confirmation, not the full slice
@@ -1038,7 +929,7 @@ Today MCP `reconcile` emits the full forceful stale_alert on every call; across 
 - README for-agents block: one-liner.
 - Tests: reconcile_many (atomic validate-all-first, one version bump, no-op rows, terminal-id refusal lists all); link_add compact-return shape; reconcile short_alert + compact payload; update the 3 MCP + 2 CLI reconcile call sites to the list form.
 
-Couples to: the edit-quality / reconciliation discipline (the guard-rail is why this isn''t a pure ergonomic change) and M181 #8b (short_alert, reused for #6).', 'spec', 0, '2026-06-04T17:17:46.466807+00:00', '2026-11-05T00:28:47.130899+00:00', 'design', NULL);
+Couples to: the edit-quality / reconciliation discipline (the guard-rail is why this isn''t a pure ergonomic change) and M181 #8b (short_alert, reused for #6).', 'spec', 0, '2026-06-04T17:17:46.466807+00:00', '2026-11-26T04:22:47.673074+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (202, 'D40 — Bulk import is first-class: load is the documented path + the plan format carries D37-grade multi-paragraph bodies', 'Resolves the load-vs-D37 tension surfaced by dogfood feedback #5: tackit''s origin use case is importing a large plan, yet `load` was (a) undiscoverable — agents make N `add()` calls instead — and (b) UNUSABLE for the rich bodies the granular-description discipline (D37) demands.
 
 ## The bug (verified 2026-06-04)
@@ -1076,9 +967,9 @@ INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at,
 
 **`ls`, `board` and `stale`:** task scalars only: id, prefixed_name, kind, status, stale, wont_do_reason. No `description`, no bare `name` (the computed prefixed_name `<L><id> — <name>` carries it), no `created_at`/`updated_at`. `show(id)` is the path for one row''s full name and timestamps. `board` neighbors are the graph SHAPE: id, prefixed_name, status, stale, kind. `stale` returns the worklist rows in this short form, with no bodies and no opt-in: an overflowing worklist is useless at the moment there is something to review, and the alert already carries the ids.
 
-**`show`:** the focal task is returned in full, with its name, timestamps and body. Each neighbor entry is the same graph SHAPE, plus `because` and `last_edit_delta` iff the entry or the focal task is OBLIGATION-BEARING STALE: stale=1 AND status IN (''open'',''spec''), the worklist predicate (D28/D36). That is the reconcile read D34 serves. An edit stales the edited task''s neighbors, not the edited task, so reconciling a stale task needs the fields on its entries for neighbors that are not themselves stale; hence the focal condition. Record-only stale flags on closed, wont_do or retired tasks (D7) cannot be reconciled and do not earn the fields. Neighbors are never filtered out of `show` by status: closed, wont_do and retired entries stay, lean, with their `stale` value intact (D9, D7, D36), because a reader wants that history and `stale` is a cheap single field.
+**`show`:** the focal task is returned in full, with its name, timestamps and body. Each neighbor entry is the same graph SHAPE, plus `because` and `last_edit_delta` iff the entry or the focal task is OBLIGATION-BEARING STALE: stale=1 AND status IN (''open'',''spec''), the worklist predicate (D28/D36). That is the reconcile read D34 serves. An edit stales the edited task''s neighbors, not the edited task, so reconciling a stale task needs the fields on its entries for neighbors that are not themselves stale; hence the focal condition. Closed, wont_do and retired tasks carry no stale flag (D137), so they never earn the fields. Neighbors are never filtered out of `show` by status: closed, wont_do and retired entries stay, lean, with their `stale` field (always false for them), because a reader wants to see everything the task links to.
 
-**Edit results (`edit`, `edit_append`, `edit_replace_substring`, `reclassify`):** the focal task''s scalars without its body, plus `newly_stale`, the obligation this op just created. An entry appears only when this op moved the neighbor''s flag from clear to set and the neighbor is live (status IN (''open'',''spec'')). Each entry is exactly `{id, because}`: `because` is the field built for deciding how much attention a flagged task needs, and the agent knows its own delta. Already-stale neighbors are not relisted and terminal neighbors are never listed; the former stay on the worklist and in the alert, the latter are record-only (D28). There is no size cap on the list. A neighbor whose flag is cleared and then set again by a later edit is first-time again and is listed again. `id` is an integer because `reconcile` takes integers. `edit_append` never flags (D10), so its `newly_stale` is always empty. The edit verbs take `include_description` to return the body; `reclassify` does not.
+**Edit results (`edit`, `edit_append`, `edit_replace_substring`, `reclassify`):** the focal task''s scalars without its body, plus `newly_stale`, the obligation this op just created. An entry appears only when this op moved the neighbor''s flag from clear to set and the neighbor is live (status IN (''open'',''spec'')). Each entry is exactly `{id, because}`: `because` is the field built for deciding how much attention a flagged task needs, and the agent knows its own delta. Already-stale neighbors are not relisted and terminal neighbors are never listed; the former stay on the worklist and in the alert, the latter are never flagged (D137). There is no size cap on the list. A neighbor whose flag is cleared and then set again by a later edit is first-time again and is listed again. `id` is an integer because `reconcile` takes integers. `edit_append` never flags (D10), so its `newly_stale` is always empty. The edit verbs take `include_description` to return the body; `reclassify` does not.
 
 Measured basis for the entry rule: across 20 real sessions, 27% of printed entries were terminal and 31% were already flagged, so 57% carried no new obligation, and `because` never reached the agent at decision time.
 
@@ -1100,9 +991,9 @@ No size guard: a byte-threshold refusal was REJECTED, since lean defaults remove
 
 Opt-in mechanism: `include_description` on `ls`, `board` and the edit verbs; `include_neighbor_because` on `board` and `show`, returning both fields on every neighbor entry. Other returns take no opt-in; `show` is the escape hatch. Resist a general `fields` whitelist: search''s `name_only` idiom and the lean default already cover the documented pain.
 
-Audit paths: `board` with both opt-ins reads the full graph; `board(stale=True)` includes record-only flags; `history(id)` returns a task''s status changes and prior text with each edit''s delta.
+Audit paths: `board` with both opt-ins reads the full graph; `board(stale=True)` lists every stale task, all of them live (D137); `history(id)` returns a task''s status changes and prior text with each edit''s delta.
 
-Deferred (triaged, revisit ONLY if lean defaults prove insufficient, not a graveyard backlog): general `fields` whitelist; pagination (limit/offset); total / count-only. Each was considered and set aside because the lean default + show(id) cover the 95% case (one body at a time = show).', 'spec', 0, '2026-06-05T08:04:29.435065+00:00', '2026-11-05T00:59:05.710189+00:00', 'design', NULL);
+Deferred (triaged, revisit ONLY if lean defaults prove insufficient, not a graveyard backlog): general `fields` whitelist; pagination (limit/offset); total / count-only. Each was considered and set aside because the lean default + show(id) cover the 95% case (one body at a time = show).', 'spec', 0, '2026-06-05T08:04:29.435065+00:00', '2026-11-26T04:22:47.673074+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (213, 'Bulk external-link + delta removal from link operations', 'Decision: three changes, one theme — make link creation bulk-friendly and stop link ops from carrying a vestigial `delta`.
 
 (1) DELTA REMOVAL (decision A, 2026-06-05): `link_add`/`link_rm` drop the required `delta`. Source-verified vestigial — link ops do NOT fire the cascade, so the delta has no reader; `link_add` persists via `_add_link(a, b, because)` (the delta never reaches the row), the `links` table (S3) has no delta column, and `load` already creates links with `because` only. `delta` exists to ride a cascade (reconcile compares the upstream edit''s `delta` × the link''s `because`); a non-cascading op produces a delta nobody reads. Applies UNIFORMLY: single ops + new bulk ops + load all agree on because-only. Folds back as a correction to T117, which over-applied `delta` to edge-mutating ops.
@@ -1155,7 +1046,7 @@ ENFORCED AT FOUR SKILL.md SURFACES (each one-purpose, each stating the rule in i
 
 DETECTION of an ALREADY-stranded decision is semantic (agent judgment), not deterministically computable; its fallback net is the stranded-decision audit (linked, provisional).
 
-ANTI-PATTERN: appending a decision to the nearest production task because that is where you are working; clearing a spec''s stale flag via reconcile when a decision still needs porting into it.', 'spec', 0, '2026-07-07T05:08:16.215200+00:00', '2026-11-26T03:05:52.786920+00:00', 'design', NULL);
+ANTI-PATTERN: appending a decision to the nearest production task because that is where you are working; clearing a spec''s stale flag via reconcile when a decision still needs porting into it.', 'spec', 0, '2026-07-07T05:08:16.215200+00:00', '2026-11-26T04:22:47.673074+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (247, 'stranded-decision audit — surface production/meta tasks harboring spec-grade decisions', 'PROVISIONAL (label: provisional) — design NOT settled; do not implement (see the linked provisional impl task). Fallback net for D245 (the decision-homing invariant): an after-the-fact, human-or-agent-triggered audit that surfaces production/meta tasks possibly harboring a design/schema-grade decision that belongs in — and is missing from — a spec slice.
 
 DIVISION OF LABOR: the tool NARROWS deterministically; the agent JUDGES. The tool never classifies prose or emits a verdict — "is there a stranded decision here?" is semantic. No accurate deterministic locator exists (tested: phrasing-grep is brittle and domain-polluted — "locked"/"canonical" are ordinary domain words; edit-graph churn has poor precision AND recall).
@@ -1194,7 +1085,7 @@ SCOPE (narrow, deliberately): LINKED neighbors only (rides the cascade reach). S
 
 DEPENDENCY: accuracy is gated on D245. In a clean, D245-compliant store the three triggers above are the complete cause list and detection is exact; with buried decisions the liveness set has no single source of truth, so the clean deterministic version requires the D245/D247 cleanup first.
 
-REALIZATION: SHIPPED in T252 (commit 9a9831e) — id-search + soft repoint/rationalize suggestion on retire / rename-edit / reclassify over the cascade''s linked-neighbor set, surfaced as deadref_suggestions in the envelope. v1 SCOPE NOTE: reclassify-out-of-spec emits on the SYNTHETIC id only (D#->T#, unambiguously dead); the §-name-convention token is NOT emitted on a reclassify, because a reclassified section MOVED to production rather than died — that moved-vs-died ambiguity is the buried-decision ambiguity (D245-gated) and belongs to the audit sweep (D247), not this inline mechanism.', 'spec', 0, '2026-07-07T18:05:54.321891+00:00', '2026-11-26T03:05:52.786920+00:00', 'design', NULL);
+REALIZATION: SHIPPED in T252 (commit 9a9831e) — id-search + soft repoint/rationalize suggestion on retire / rename-edit / reclassify over the cascade''s linked-neighbor set, surfaced as deadref_suggestions in the envelope. v1 SCOPE NOTE: reclassify-out-of-spec emits on the SYNTHETIC id only (D#->T#, unambiguously dead); the §-name-convention token is NOT emitted on a reclassify, because a reclassified section MOVED to production rather than died — that moved-vs-died ambiguity is the buried-decision ambiguity (D245-gated) and belongs to the audit sweep (D247), not this inline mechanism.', 'spec', 0, '2026-07-07T18:05:54.321891+00:00', '2026-11-26T04:22:47.673074+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (250, 'a spec slice is a coherent current-state body — rewrite, never append', 'DECISION: an update to a design/schema slice must yield ONE coherent current-state body. The slice is the CURRENT answer, not a changelog — superseded prose is removed and integrated, not stacked under a dated "SUPERSEDES ... above" block. Edit history lives in the description_revisions audit (D29), never inline.
 
 WHY: a spec slice that accretes dated blocks self-contradicts — it asserts the old and the new at once, and a reader can''t tell which sentence is authoritative without diffing dates. That is worse than a merely-stale slice (which is at least internally consistent). Measured: ~28% of spec slices in a real store carry the append fingerprint. Driver: the agent optimizes "is the new info now present" (which gets a completion signal) over "is the old, contradictory info now absent" (which nothing scores), and imitates the slice''s own established append house-style.
@@ -1206,7 +1097,7 @@ ENFORCEMENT — three surfaces:
 
 CHARACTER: non-destructive and PREVENTIVE — the inline half of the response. It prevents the anti-pattern at write-time without forcing any risky action (unlike a hard gate). Existing appended slices (the ~28% backlog) are remediated by the agent-driven audit sweep, not by this.
 
-BUILD ORDER: FIRST. It is the coherence quality-bar the dead-ref work (D249) depends on — a dead-ref suggestion resolved by a lazy deletion is a coherence failure this catches.', 'spec', 0, '2026-07-07T18:08:39.247451+00:00', '2026-11-26T03:05:52.786920+00:00', 'design', NULL);
+BUILD ORDER: FIRST. It is the coherence quality-bar the dead-ref work (D249) depends on — a dead-ref suggestion resolved by a lazy deletion is a coherence failure this catches.', 'spec', 0, '2026-07-07T18:08:39.247451+00:00', '2026-11-26T04:22:47.673074+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (254, 'The kind ontology — spec / production / meta as deciding / doing / thinking', 'Three tenses of one system: a SPEC is what should be true; CODE is what is true; a PRODUCTION task is the change between them; META is thinking that has not become any of those yet.
 
 - spec (design D# / schema S#) — THE DECISIONS. What should be true, durably: design = a decision, schema = the store-shape contract. The system of record for every design-grade decision. Never "completes" — edit to refine, retire only when 100% abandoned. Not a checklist, not a task.
@@ -1217,7 +1108,7 @@ DISCRIMINATOR when a task blurs: is it DECIDING, DOING, or THINKING? Deciding �
 
 WORKFLOW DIRECTION, never a shortcut: meta → spec → production → code.
 
-Grounding: a sweep of the dogfood store found "production" actually fused three species — pure build/checklist (the clean case), reconciliation/decision tasks (pose a spec↔code gap and adjudicate it — design-nature), and investigations (meta-nature). Only the first is truly production; this ontology draws the line so the other two route to spec/meta. Realized in SKILL.md as the conceptual anchor above the existing status-partition reference table.', 'spec', 0, '2026-07-08T01:32:03.124580+00:00', '2026-11-26T03:05:52.786920+00:00', 'design', NULL);
+Grounding: a sweep of the dogfood store found "production" actually fused three species — pure build/checklist (the clean case), reconciliation/decision tasks (pose a spec↔code gap and adjudicate it — design-nature), and investigations (meta-nature). Only the first is truly production; this ontology draws the line so the other two route to spec/meta. Realized in SKILL.md as the conceptual anchor above the existing status-partition reference table.', 'spec', 0, '2026-07-08T01:32:03.124580+00:00', '2026-11-26T04:22:47.673074+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (255, 'Production editing contract — no edit_append; rewrite only, for correction or scope-shrink', 'A production task is a forecast while open and a record once closed (see the kind ontology). Its body must not ACCRETE — accretion is how design decisions and progress-noise strand into production bodies (dogfood sweep: decisions ride in on progress appends; ~91% of production fold-backs are additive, ~47% of those are design decisions).
 
 DECIDED: edit_append is REFUSED on kind=production, extending the D250 / T251 refusal that already covers design/schema. Append becomes a META-ONLY operation — meta is the notepad; specs and production are rewrite-only.
@@ -1230,7 +1121,7 @@ NOT allowed via edit: adding scope/features (spawn a NEW production task), recor
 
 BOUNDARY: a correction fixes the task''s COPY of a decision; it never ORIGINATES one. If the spec itself turns out wrong, that is a slice edit + reconcile, not a production correction.
 
-Realized by (production tasks, later): extend the edit_append kind-guard in core.py to include ''production''; update SKILL surfaces + the fold-back discipline to route additive learnings away from production.', 'spec', 0, '2026-07-08T01:32:03.125626+00:00', '2026-11-26T03:05:52.786920+00:00', 'design', NULL);
+Realized by (production tasks, later): extend the edit_append kind-guard in core.py to include ''production''; update SKILL surfaces + the fold-back discipline to route additive learnings away from production.', 'spec', 0, '2026-07-08T01:32:03.125626+00:00', '2026-11-26T04:22:47.673074+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (256, 'Production creation gate — a production task must link a design/schema slice at creation', 'A production task realizes an ALREADY-MADE decision (see the kind ontology). DECIDED: add() and load() REFUSE creating a kind=production task with zero design/schema links — a hard gate, no escape flag.
 
 WHY: it removes the "no slice to promote into" excuse that lets a fully-formed decision strand at creation. Dogfood sweep: ~40% of confirmed strands had ZERO edits — the decision was dumped complete at creation, which the append-ban cannot catch; only a creation-time gate can.
@@ -1246,7 +1137,7 @@ INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at,
 
 2. NO SHORTCUT TO CODE (SKILL discipline, NOT a tackit gate — tackit has no working-tree/commit view, so it cannot refuse "you shipped code with only a meta task open"): code never ships straight from meta. A decision distills from meta into a spec slice; the spec spawns a production task; the task ships. Investigations and experiments live in meta, NOT production — much of what the dogfood store currently mis-files as production (reconciliation + investigation tasks) is meta-nature.
 
-Realized by (later): SKILL.md meta-guard text. The link boundary needs no code change — D110 already enforces it.', 'spec', 0, '2026-07-08T01:32:03.126458+00:00', '2026-11-26T01:46:00.088370+00:00', 'design', NULL);
+Realized by (later): SKILL.md meta-guard text. The link boundary needs no code change — D110 already enforces it.', 'spec', 0, '2026-07-08T01:32:03.126458+00:00', '2026-11-26T04:22:47.673074+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (258, 'Fold-back retargets by learning-type — decision → slice, progress → out, correction → production rewrite', 'The fold-back discipline (capture learnings as they surface) currently routes ~64% of learnings into production bodies and only ~6% into slices (dogfood sweep) — it is the primary delivery vehicle for stranded decisions. This is H1 promoted into a standing habit: the active task at discovery-time is production, so "fold it into the task I''m in" lands the learning in the wrong layer.
 
 Fold-back is RE-AIMED, not removed. A captured learning is exactly one of three things, each with a different home:
@@ -1257,15 +1148,19 @@ Fold-back is RE-AIMED, not removed. A captured learning is exactly one of three 
 RULE: a fold-back into a production task is ONLY for correction/shrink — never additive. Additive capture goes to a slice (if a decision) or nowhere in tackit (if progress). Meta is exempt — it is a notepad; fold anything.
 
 Realized by (later): rewrite the fold-back discipline text in SKILL.md and the mandatory end-of-turn fold-back report to route by learning-type; global CLAUDE.md + README carry the same discipline and move in lockstep.', 'spec', 0, '2026-07-08T01:32:03.126539+00:00', '2026-11-26T03:05:52.786920+00:00', 'design', NULL);
-INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (259, 'Closed tasks are immutable — no edit on a closed task; reopen to change', 'A closed task is a RECORD of a completed unit of work, and a wont_do task is a RECORD of a dropped one (kind ontology D254: a production/meta task in a terminal state is a frozen record). Editing such a record in place is how design decisions launder in and how a settled task silently acquires new content — the dogfood store showed ~67% of production edits land on already-closed tasks, ~35 of them folding a design decision into a closed body.
+INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (259, 'Closed tasks are immutable — no edit on a closed task; reopen only to correct its record', 'A closed task is a RECORD of a completed unit of work, and a wont_do task is a RECORD of a dropped one (kind ontology D254: a production/meta task in a terminal state is a frozen record). Editing such a record in place is how design decisions launder in and how a settled task silently acquires new content: the dogfood store showed ~67% of production edits landing on already-closed tasks, ~35 of them folding a design decision into a closed body.
 
-DECIDED: the content-edit ops — edit(), edit_append(), edit_replace_substring() — are REFUSED on any terminal production/meta status, i.e. status IN (''closed'', ''wont_do''). Period, no exceptions, no in-place-edit escape flag. To change a CLOSED task you REOPEN it first (an honest status transition flipping it back to open, visible in history), edit while open, then close again. A WONT_DO task is terminal FOREVER (reopen is refused, D36) — its body can never change; if the work revives, create a new task.
+DECIDED: the content-edit ops (edit, edit_append, edit_replace_substring) are REFUSED on any terminal production/meta status, status IN (''closed'', ''wont_do''). No exceptions, no in-place-edit escape flag.
 
-This replaces D29''s (D138) v0.4 stance that editing closed / wont_do tasks in place was allowed, and restores the pre-v0.4 no-edit-on-terminal refusal (M115) — but it KEEPS D29''s description_revisions audit table (S7): the table''s role narrows to backstopping edits made while a task is OPEN and edits to RETIRED slices, never terminal production/meta records.
+REOPEN corrects a closed record; it does not resume work. Its two uses: fixing a closed body''s text (reopen, edit while open, close again; there is no separate verb), and undoing a premature close. New work after a close is a NEW task linked to the closed one, so the closed record stays an honest account of what was done. A close that should have been a drop is recorded directly with wont_do on the closed task (D56). A reopened task arrives unflagged, because closed tasks carry no stale flag (D137). Measured basis: downstream, 66 reopens against 1,843 closes; 38 were one wording sweep, 6 went straight on to wont_do, 3 looked like resumed work.
 
-SCOPE (both original open questions resolved 2026-07-08): the refusal covers status IN (''closed'', ''wont_do'') — both are terminal production/meta records carrying the same laundering risk. Design/schema RETIRED slices are EXCLUDED — they stay editable, preserving the live annotate-a-dead-decision use case (D29 v0.5 + the D31 code-check); retire-then-edit is judged rare enough that its archaeology value outweighs the laundering risk there.
+A WONT_DO task is terminal forever (reopen refused, D56): its body never changes; if the work revives, create a new task.
 
-Realized by: refuse the three edit ops on status IN (''closed'', ''wont_do'') in core.py, with a fail-loud error naming the rule and the fix (reopen first); narrow the audit-table narrative + update SKILL / README surfaces.', 'spec', 0, '2026-07-08T01:51:40.804368+00:00', '2026-11-04T22:48:32.215884+00:00', 'design', NULL);
+This replaces D29''s (D138) v0.4 stance that editing closed and wont_do tasks in place was allowed, and restores the pre-v0.4 no-edit-on-terminal refusal (M115). It KEEPS D29''s description_revisions audit table (S141), whose role narrows to backstopping edits made while a task is open and edits to retired slices.
+
+SCOPE: the refusal covers status IN (''closed'', ''wont_do''). Design/schema RETIRED slices are excluded and stay editable, preserving the annotate-a-dead-decision use (D138 + the D140 code-check); retire-then-edit is rare enough that its archaeology value outweighs the laundering risk there.
+
+Surfaces: the refusal names the rule and the fix (reopen first); the skill, the reopen and wont_do docstrings, CLI help and README state reopen''s correction role.', 'spec', 0, '2026-07-08T01:51:40.804368+00:00', '2026-11-26T04:22:47.673074+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (276, 'The meta→spec→production promotion discipline — start in meta, promote only when sure (guidance, not gated)', 'DECISION. Unsettled / exploratory work STARTS in a meta scratchpad and is promoted to a spec slice (design/schema) — and only then to a production task — ONLY when the decision is settled ("sure"). This extends D254''s one-way meta→spec→production→code flow with (a) a start point (meta) and (b) a promotion-timing rule.
 
 DELIBERATELY GUIDANCE, NOT AN ENFORCED GATE. "Is this settled enough to promote?" is heavy semantic judgment; a code gate there would be costly and low-value. Contrast D256, whose gate is cheap precisely because "does this production task link a spec?" is STRUCTURAL. So this discipline lives as instructions on the agent-facing surfaces; the agent and the user hold each other to it. There is no refusal.
@@ -1311,7 +1206,7 @@ D213 already established this and applied it to link ops (link_add/link_rm carry
 
 SCOPE: the delta-bearing ops remain edit / edit_replace_substring / reclassify (cascade-firing) and edit_append (writes the audit row, does not cascade, D10). wont_do / retire drop the required delta; `reason` stays required and non-placeholder. This is a fold-back correction to T117, which over-applied delta to non-cascading ops — the same correction D213 made for edge ops, now completed for status verbs.
 
-RATIONALE beyond consistency: requiring TWO prose fields (reason + delta) on one terminal call is an ergonomic hazard — it invites front-loading one and dropping the other. Carrying only `reason` removes it.', 'spec', 0, '2026-07-20T03:52:06.056461+00:00', '2026-11-05T00:28:47.130899+00:00', 'design', NULL);
+RATIONALE beyond consistency: requiring TWO prose fields (reason + delta) on one terminal call is an ergonomic hazard — it invites front-loading one and dropping the other. Carrying only `reason` removes it.', 'spec', 0, '2026-07-20T03:52:06.056461+00:00', '2026-11-26T04:22:47.673074+00:00', 'design', NULL);
 INSERT INTO tasks (id, name, description, status, stale, created_at, updated_at, kind, wont_do_reason) VALUES (306, 'The workflow command set ships as plain files, installed by the agent on request', 'Decision: tackit ships its maintainer''s workflow as plain files inside the package, beside the tackit skill, and an agent copies them on the human''s request. Origin: most of the commands operate entirely on tackit''s metas, slices and production tasks, so they are only useful with it, and shipping them keeps tracker and workflow in step.
 
 The set: the /diagnose, /firmup, /graduate, /build, /orient, /handoff and /trim commands, and the test-audit skill with its reference files, which /firmup, /graduate, /build and /orient depend on. /handoff, /orient and /trim are in the set even though they mainly serve the agent''s memory file, because they carry tracker state between sessions and /handoff and /orient are two halves of one loop. Commands with no tracker coupling stay out.
@@ -1558,6 +1453,11 @@ INSERT INTO links (id, task_a, task_b, because) VALUES (579, 52, 255, 'D10''s ed
 INSERT INTO links (id, task_a, task_b, because) VALUES (665, 172, 258, 'D172 routes impl-time discoveries through D258''s fold-back routing (decision to slice, correction rewrites the body, progress to git); a change to those routes changes what D172 tells an implementer to do.');
 INSERT INTO links (id, task_a, task_b, because) VALUES (666, 172, 255, 'D172 sends a correction of a production task''s forecast to an edit/edit_replace_substring rewrite, which exists because D255 makes production bodies correction-only and refuses append; a change to D255''s production-edit rule changes that route.');
 INSERT INTO links (id, task_a, task_b, because) VALUES (667, 207, 245, 'D245''s four skill surfaces take the form D207 sets for the skill (plain rules, no task-id citations); a change to D207''s form changes how those surfaces must read.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (692, 53, 137, 'D53''s worklist predicate is the stale-implies-live rule D137 sets; if D137 let a terminal row be flagged again, D53''s status clause would stop being a mere guard.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (693, 56, 137, 'D56''s close gate and reconcile refusal rest on D137''s rule that only live tasks are flagged; the reconcile refusal''s reason (terminal tasks carry no flag) is D137''s rule.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (694, 62, 137, 'D137 makes the no-op close D62 promises reachable for a closed task after a neighbor edit; if terminal rows were flagged again, close on a closed task would be refused as stale.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (695, 56, 259, 'D259 sends a mistaken close to wont_do directly and D56 is where wont_do on a closed task is allowed; a change to either changes how a closed record is corrected.');
+INSERT INTO links (id, task_a, task_b, because) VALUES (696, 56, 171, 'D56 states what the close-gate and reconcile refusals must say and D171''s refusal bank holds their exact wording; changing either changes the other.');
 INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (80, 37, NULL, 'open', '2026-05-31T04:11:47.873715+00:00');
 INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (81, 38, NULL, 'open', '2026-05-31T04:11:47.876334+00:00');
 INSERT INTO status_transitions (id, task_id, from_status, to_status, changed_at) VALUES (82, 39, NULL, 'open', '2026-05-31T04:11:47.876420+00:00');
