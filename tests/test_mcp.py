@@ -125,7 +125,8 @@ def test_mcp_label_nudge_on_new_label(tmp_path, monkeypatch):
 
     env = _envelope(_drive(tmp_path, monkeypatch, scenario))
     assert env["label_nudge"] is not None
-    assert "brandnew" in env["label_nudge"] and "existing" in env["label_nudge"]
+    assert "brandnew" in env["label_nudge"]
+    assert "No existing label looks similar" in env["label_nudge"]  # D65: "existing" is not similar
 
 
 def test_mcp_stale_alert_rides_in_envelope(tmp_path, monkeypatch):

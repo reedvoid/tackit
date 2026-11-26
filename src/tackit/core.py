@@ -12,6 +12,7 @@ the ops, never left implicit.
 
 from __future__ import annotations
 
+import difflib
 import re
 import sqlite3
 from contextlib import contextmanager
@@ -324,20 +325,71 @@ def stale_alert_for_call(entry_ids: frozenset[int], after: list[Task]) -> dict |
 
 
 # --- D23: label-discipline creation nudge ------------------------------------
+_LABEL_SEPARATORS = re.compile(r"[\s_\-/:.]+")
+_LABEL_SIMILAR_CAP = 5
+
+
+def _label_norm(label: str) -> str:
+    """D65 - a label compared for similarity: lowercased, whitespace and _-/:. removed."""
+    return _LABEL_SEPARATORS.sub("", label.lower())
+
+
+def _label_similarity(a: str, b: str) -> float | None:
+    """D65 - how similar two labels are, or None when they are not similar: equal
+    normalized forms or one containing the other (the shorter at least 4
+    characters) score 1.0; otherwise the difflib ratio, if it is at least 0.8."""
+    na = _label_norm(a)
+    nb = _label_norm(b)
+    if na == nb:
+        return 1.0
+    if len(na) <= len(nb):
+        shorter, longer = na, nb
+    else:
+        shorter, longer = nb, na
+    if len(shorter) >= 4 and shorter in longer:
+        return 1.0
+    ratio = difflib.SequenceMatcher(None, na, nb).ratio()
+    if ratio >= 0.8:
+        return ratio
+    return None
+
+
+def similar_labels(created: list[str], existing: list[str]) -> list[str]:
+    """D65 - the existing labels similar to any just-created one, pooled across the
+    created labels (each keeps its best score), ordered by score then name, capped
+    at 5."""
+    best: dict[str, float] = {}
+    for new in created:
+        for label in existing:
+            score = _label_similarity(new, label)
+            if score is not None and score > best.get(label, 0.0):
+                best[label] = score
+    ordered = sorted(best.items(), key=lambda item: (-item[1], item[0]))
+    out: list[str] = []
+    for label, _score in ordered[:_LABEL_SIMILAR_CAP]:
+        out.append(label)
+    return out
+
+
 def label_nudge_text(created: list[str], existing: list[str]) -> str | None:
-    """Anti-sprawl nudge, surfaced when a brand-new label is created: name it and list
-    the labels that already exist, so reuse-before-create is in the agent's face (not
-    only in the skill). None when nothing new was created (label-discipline)."""
+    """D65 anti-sprawl nudge, surfaced when a brand-new label is created: name it
+    and list up to 5 SIMILAR existing labels (not every label), so a near-duplicate
+    is in the agent's face at the moment it would be born. None when nothing new was
+    created."""
     if not created:
         return None
     new = ", ".join(created)
     if not existing:
         return f"🏷 New label created: {new} (the first label in this store)."
-    ex = ", ".join(existing)
+    similar = similar_labels(created, existing)
+    if not similar:
+        return (
+            f"🏷 New label created: {new}. No existing label looks similar; "
+            f"`labels` lists them all."
+        )
     return (
-        f"🏷 New label created: {new}. {len(existing)} label(s) already exist: {ex}. "
-        f"If one of those fits, prefer it — a label should earn its name (a phase, "
-        f"epic, or use case), not multiply. Run `labels` to see their usage."
+        f"🏷 New label created: {new}. Similar existing labels: {', '.join(similar)}. "
+        f"If one fits, use it instead; `labels` lists them all."
     )
 
 

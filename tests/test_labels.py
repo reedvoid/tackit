@@ -56,7 +56,8 @@ def test_nudge_set_on_brand_new_label(core):
     core.label_add(3, "brandnew")
     assert core.last_label_nudge is not None
     assert "brandnew" in core.last_label_nudge
-    assert "existing" in core.last_label_nudge  # lists the pre-existing label to reuse
+    # D65: "existing" is not similar to "brandnew", so no label is listed
+    assert core.last_label_nudge.endswith("No existing label looks similar; `labels` lists them all.")
 
 
 def test_no_nudge_when_reusing_existing_label(core):
@@ -139,3 +140,74 @@ def test_load_with_reserved_label_refused_and_rollback(core, reserved):
         core.load(specs)
     rows = core.conn.execute("SELECT * FROM tasks").fetchall()
     assert rows == []
+
+
+# --- T366 (D65): the nudge lists up to 5 SIMILAR existing labels ------------
+
+from tackit.core import label_nudge_text  # noqa: E402
+
+NONE_SIMILAR = "No existing label looks similar; `labels` lists them all."
+
+
+def test_nudge_lists_a_similar_label_with_the_exact_wording():
+    assert label_nudge_text(["release-0.9.5"], ["release", "docs"]) == (
+        "🏷 New label created: release-0.9.5. Similar existing labels: release. "
+        "If one fits, use it instead; `labels` lists them all."
+    )
+
+
+def test_nudge_with_no_similar_label_has_its_own_wording():
+    assert label_nudge_text(["brandnew"], ["existing", "docs"]) == (
+        "🏷 New label created: brandnew. " + NONE_SIMILAR
+    )
+
+
+def test_first_label_wording_is_unchanged():
+    assert label_nudge_text(["x"], []) == "🏷 New label created: x (the first label in this store)."
+
+
+def test_no_nudge_when_nothing_was_created():
+    assert label_nudge_text([], ["a"]) is None
+
+
+@pytest.mark.parametrize("new,existing", [
+    ("Search", "search"),            # case
+    ("AB", "ab"),                    # case only: raw ratio 0
+    ("q-3-x", "q3x"),                # separators only: raw ratio 0.75
+    ("lean_returns", "lean-returns"),  # separators
+    ("testing", "test"),             # containment, shorter has 4 characters
+    ("labeldiscipline", "label-discipline"),  # normalized equality
+    ("contextcots", "context-cost"),  # close spelling only (ratio about 0.91, no containment)
+])
+def test_similar_pairs_are_listed(new, existing):
+    assert f"Similar existing labels: {existing}." in label_nudge_text([new], [existing])
+
+
+@pytest.mark.parametrize("new,existing", [
+    ("cli", "client"),     # containment needs the shorter at 4+ characters; ratio 0.67
+    ("search", "schema"),  # unrelated
+])
+def test_dissimilar_pairs_are_not_listed(new, existing):
+    assert label_nudge_text([new], [existing]).endswith(NONE_SIMILAR)
+
+
+def test_at_most_five_ordered_by_score_then_name():
+    existing = [f"found-in:m100{i}" for i in range(8, 0, -1)] + ["unrelated"]
+    msg = label_nudge_text(["found-in:m1009"], existing)
+    listed = msg.split("Similar existing labels: ", 1)[1].split(". If one fits", 1)[0]
+    assert listed == ", ".join(f"found-in:m100{i}" for i in range(1, 6))
+
+
+def test_several_new_labels_pool_their_matches():
+    msg = label_nudge_text(["release-x", "docs2"], ["release", "docs", "infra"])
+    assert msg == (
+        "🏷 New label created: release-x, docs2. Similar existing labels: docs, release. "
+        "If one fits, use it instead; `labels` lists them all."
+    )
+
+
+def test_a_higher_score_comes_before_a_lower_one_whatever_the_names():
+    # "reports" contains "report" (score 1.0); "aeport" is close spelling only
+    # (ratio about 0.83). Name order would put "aeport" first.
+    msg = label_nudge_text(["report"], ["aeport", "reports"])
+    assert "Similar existing labels: reports, aeport." in msg
