@@ -158,6 +158,54 @@ def _d256_gate_error(who: str) -> str:
     )
 
 
+# D56 + D171 refusal bank: how close / wont_do / retire name the stale task or
+# the stale neighbors that block them. One home for the wording so the six
+# call sites cannot drift apart. The leading phrase of the neighbor refusal
+# per verb (D171): "closing X", "marking X wont_do", "retiring X".
+_STALE_GATE_LEAD = {
+    "close": "closing {x}",
+    "wont_do": "marking {x} wont_do",
+    "retire": "retiring {x}",
+}
+
+
+def _stale_self_refusal(x: str, verb: str) -> str:
+    """The task itself is stale: point to `show`, whose links carry each
+    neighbor's `because` and latest delta (D165)."""
+    return (
+        f"REFUSED: {x} is stale: a task it links to changed since it was last "
+        f"reviewed. Run `show {x}`: on a stale task each link carries its "
+        f"`because` (why that neighbor matters here) and the neighbor's latest "
+        f"delta. Read them against {x}; `edit` it if it is now wrong, or "
+        f"`reconcile` it if it still holds; then {verb} (D56)."
+    )
+
+
+def _stale_neighbor_refusal(x: str, verb: str, neighbors: list[NeighborRef]) -> str:
+    """Direct neighbors are stale: name each with the `because` of its link
+    to ``x``, so the reader knows why that neighbor matters here (D56)."""
+    lines = []
+    for n in neighbors:
+        lines.append(f'  - {prefixed_id(n.kind, n.id)} -- because: "{n.because}"')
+    lead = _STALE_GATE_LEAD[verb].format(x=x)
+    return (
+        f"REFUSED: {lead} would decide on top of a change nobody has reviewed. "
+        f"Its directly linked stale neighbors:\n"
+        + "\n".join(lines)
+        + f"\nShow each and read it against that coupling; `edit` it if it is "
+        f"now wrong, or `reconcile` it if it still holds; then {verb} {x} (D56)."
+    )
+
+
+def _reconcile_terminal_refusal(x: str, status: str) -> str:
+    """D56 + D137: reconcile named a terminal task, which carries no flag."""
+    return (
+        f"REFUSED: {x} is {status}; closed, wont_do and retired tasks carry no "
+        f"stale flag, so there is nothing to reconcile. Drop it from the list "
+        f"(D137)."
+    )
+
+
 def _validate_text(value: str | None, field: str) -> None:
     """D2 fail-loud: refuse text that cannot be stored AND round-tripped. Two cases
     the property-based test surfaced, both rejected loudly at the boundary so the
@@ -915,45 +963,30 @@ class Core:
             # UNIQUE(task_a, task_b): the link already exists -- idempotent.
             pass
 
-    def _stale_linked_direct(self, task_id: int) -> list[tuple[int, str]]:
+    def _stale_linked_direct(self, task_id: int) -> list[NeighborRef]:
         """The DIRECT (1-hop) linked neighbors of ``task_id`` (in the symmetric
         graph) that carry an obligation-bearing stale flag, excluding
         ``task_id`` itself, id-sorted. Underpins the symmetric close-gate
-        (D14 / D56): close / wont_do / retire on a task whose direct neighbor
-        is unreconciled is refused.
+        (D56): close / wont_do / retire on a task whose direct neighbor is
+        unreconciled is refused.
 
-        Reach is 1-HOP, SYMMETRIC with the D10/D13 staling cascade
+        Reach is 1-HOP, SYMMETRIC with the D52 staling cascade
         (``_mark_linked_stale``), which marks staleness at 1 hop only
         (non-transitive): a stale flag more than one hop away was raised about
         ITS neighbors, not this task, so it must not block this task's
-        closure. (Prior behavior per D56 walked the whole transitive component,
-        where one stale hub could freeze an entire connected set of otherwise-
-        done work; the 1-hop gate matches the affect-model the cascade
-        actually asserts.)
+        closure.
 
-        v0.5 (D28 + D36): obligation iff status IN ('open','spec'). The
-        kind/status partition makes spec the open-equivalent for design/
-        schema; closed/wont_do production/meta and retired design/schema
-        neighbors carrying stale=1 are record-only -- they do NOT pressure
-        the close-gate.
+        Only live tasks carry the flag (D137); the status IN ('open','spec')
+        filter stays as a guard for flags loaded by hand from a spec-only dump
+        written before schema version 11.
 
-        Returns list of (id, kind) tuples (T162) so callers can synthesize
-        the D32 `<kind_letter><id>` prefix for refusal messages without a
-        second lookup."""
-        stale_found: list[tuple[int, str]] = []
+        Returns the NeighborRef entries from ``_linked_with``, so each carries
+        the ``because`` of its link to ``task_id``: the refusal quotes it
+        (D56, D171)."""
+        stale_found: list[NeighborRef] = []
         for neighbor in self._linked_with(task_id):
-            row = self.conn.execute(
-                "SELECT stale, status, kind FROM tasks WHERE id = ?",
-                (neighbor.id,),
-            ).fetchone()
-            if row is None or not bool(row["stale"]):
-                continue
-            # D28 + D36 (v0.5): obligation iff status IN ('open','spec').
-            # Terminal-status (closed/wont_do/retired) stale neighbors are
-            # record-only and do NOT trip the gate.
-            if row["status"] in ("open", "spec"):
-                stale_found.append((neighbor.id, row["kind"]))
-        stale_found.sort()  # tuples sort by id, then kind
+            if neighbor.stale and neighbor.status in ("open", "spec"):
+                stale_found.append(neighbor)
         return stale_found
 
     def _resolve_existing_ref(self, ref) -> int:
@@ -1445,12 +1478,9 @@ class Core:
         row = self._require_row(task_id)
         if row["status"] in ("closed", "wont_do", "retired"):
             raise InvariantError(
-                f"REFUSED: {prefixed_id(row['kind'], task_id)} has "
-                f"status={row['status']!r} -- reconcile is not allowed on "
-                f"terminal tasks (closed/wont_do/retired). Their stale flag "
-                f"is record-only archaeology (D28 + D36 + T156); clearing it "
-                f"would erase the historical signal that an upstream changed. "
-                f"No action needed."
+                _reconcile_terminal_refusal(
+                    prefixed_id(row["kind"], task_id), row["status"]
+                )
             )
         # No-op guard (D20): reconciling a task that isn't stale changes nothing.
         if bool(row["stale"]):
@@ -1493,17 +1523,16 @@ class Core:
                 continue
             rows[task_id] = row
             if row["status"] in ("closed", "wont_do", "retired"):
-                bad.append(
-                    f"{prefixed_id(row['kind'], task_id)} (status={row['status']!r})"
-                )
+                bad.append(f"{prefixed_id(row['kind'], task_id)} ({row['status']})")
         if bad:
+            # D56 + D137 + D199: the whole batch is refused so a partial sweep
+            # can't hide a skipped id; every offender is named.
             raise InvariantError(
-                "REFUSED: reconcile is only allowed on status IN "
-                "('open','spec') -- terminal-status stale is record-only "
-                "archaeology (D28 + D36). These ids cannot be reconciled: "
+                "REFUSED: these ids cannot be reconciled: "
                 + "; ".join(bad)
-                + ". No row was changed -- the whole batch is refused so a "
-                "partial sweep can't hide a skipped id."
+                + ". Closed, wont_do and retired tasks carry no stale flag, so "
+                "there is nothing to reconcile; an unknown id names no task. "
+                "Drop them from the list (D137). No row was changed."
             )
         # Only the genuinely-stale ids need an UPDATE (D20 no-op guard).
         to_clear: list[int] = []
@@ -1594,8 +1623,7 @@ class Core:
             )
         if bool(row["stale"]):
             raise InvariantError(
-                f"REFUSED: {prefixed_id(row['kind'], task_id)} is stale -- it has unreconciled upstream "
-                f"changes. Reconcile (review + `reconcile`) first, then close (D14)."
+                _stale_self_refusal(prefixed_id(row["kind"], task_id), "close")
             )
         # Close-gate (D14 extended, T86 symmetric; D56 1-hop): refuse to mark T
         # done while any DIRECT (1-hop) linked neighbor is stale. That
@@ -1603,12 +1631,10 @@ class Core:
         # 1-hop, symmetric with the D10/D13 cascade's affect-model.
         linked_stale = self._stale_linked_direct(task_id)
         if linked_stale:
-            id_list = ", ".join(prefixed_id(k, uid) for uid, k in linked_stale)
             raise InvariantError(
-                f"REFUSED: {prefixed_id(row['kind'], task_id)} has a directly-linked unreconciled "
-                f"stale neighbor(s) {id_list} -- closing it would mark work done on top "
-                f"of drift that may still change. Reconcile {id_list} first, then "
-                f"close (D14)."
+                _stale_neighbor_refusal(
+                    prefixed_id(row["kind"], task_id), "close", linked_stale
+                )
             )
         # No-op guard (D20): closing an already-closed task changes nothing -- still
         # return the obligation payload (deps/dependents), but don't bump version
@@ -1676,16 +1702,14 @@ class Core:
             )
         if bool(row["stale"]):
             raise InvariantError(
-                f"REFUSED: {prefixed_id(row['kind'], task_id)} is stale -- it has unreconciled upstream "
-                f"changes. Reconcile (review + `reconcile`) first, then wont_do (T132)."
+                _stale_self_refusal(prefixed_id(row["kind"], task_id), "wont_do")
             )
         linked_stale = self._stale_linked_direct(task_id)
         if linked_stale:
-            id_list = ", ".join(prefixed_id(k, uid) for uid, k in linked_stale)
             raise InvariantError(
-                f"REFUSED: {prefixed_id(row['kind'], task_id)} has a directly-linked "
-                f"unreconciled stale neighbor(s) {id_list}. Reconcile {id_list} "
-                f"first, then wont_do (T132)."
+                _stale_neighbor_refusal(
+                    prefixed_id(row["kind"], task_id), "wont_do", linked_stale
+                )
             )
         with self._mutate():
             self.conn.execute(
@@ -1770,17 +1794,14 @@ class Core:
             )
         if bool(row["stale"]):
             raise InvariantError(
-                f"REFUSED: {prefixed_id(row['kind'], task_id)} is stale -- "
-                f"it has unreconciled upstream changes. Reconcile (review + "
-                f"`reconcile`) first, then retire (D36)."
+                _stale_self_refusal(prefixed_id(row["kind"], task_id), "retire")
             )
         linked_stale = self._stale_linked_direct(task_id)
         if linked_stale:
-            id_list = ", ".join(prefixed_id(k, uid) for uid, k in linked_stale)
             raise InvariantError(
-                f"REFUSED: {prefixed_id(row['kind'], task_id)} has a "
-                f"directly-linked unreconciled stale neighbor(s) "
-                f"{id_list}. Reconcile {id_list} first, then retire (D36)."
+                _stale_neighbor_refusal(
+                    prefixed_id(row["kind"], task_id), "retire", linked_stale
+                )
             )
         linked = self._linked_with(task_id)
         open_neighbors = [n for n in linked if n.status == "open"]

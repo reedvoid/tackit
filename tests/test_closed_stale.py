@@ -45,7 +45,7 @@ def test_closed_task_reconcile_refused(core):
     """Reconcile is refused on a closed task: it carries no stale flag, so
     there is nothing to clear (D56, D137)."""
     _closed_neighbor_setup(core)
-    with pytest.raises(InvariantError, match=r"record-only|archaeology"):
+    with pytest.raises(InvariantError, match=r"carry no stale flag"):
         core.reconcile(3)
     t3 = core.get(3)
     assert t3.stale is False and t3.status == "closed"

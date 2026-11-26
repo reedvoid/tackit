@@ -240,7 +240,7 @@ def test_reconcile_refused_on_closed_production(core):
     core.add("anchor", kind="design")  # T1 -- D256 creation-gate anchor
     core.add("a", kind="production", deps={1: "realizes anchor"})  # T2
     core.close(2)
-    with pytest.raises(InvariantError, match=r"record-only|archaeology"):
+    with pytest.raises(InvariantError, match=r"carry no stale flag"):
         core.reconcile(2)
 
 
@@ -249,7 +249,7 @@ def test_reconcile_refused_on_wont_do_production(core):
     core.add("anchor", kind="design")  # T1 -- D256 creation-gate anchor
     core.add("a", kind="production", deps={1: "realizes anchor"})  # T2
     core.wont_do(2, reason="not pursuing")
-    with pytest.raises(InvariantError, match=r"record-only|archaeology"):
+    with pytest.raises(InvariantError, match=r"carry no stale flag"):
         core.reconcile(2)
 
 
@@ -257,14 +257,14 @@ def test_reconcile_refused_on_closed_meta(core):
     """Meta tasks follow the production rule -- closed-stale is record-only."""
     core.add("a", kind="meta")
     core.close(1)
-    with pytest.raises(InvariantError, match=r"record-only|archaeology"):
+    with pytest.raises(InvariantError, match=r"carry no stale flag"):
         core.reconcile(1)
 
 
 def test_reconcile_refused_on_wont_do_meta(core):
     core.add("a", kind="meta")
     core.wont_do(1, reason="dropped")
-    with pytest.raises(InvariantError, match=r"record-only|archaeology"):
+    with pytest.raises(InvariantError, match=r"carry no stale flag"):
         core.reconcile(1)
 
 
@@ -279,7 +279,7 @@ def test_reconcile_refused_on_retired_status(core):
     core.conn.execute(
         "UPDATE tasks SET status = 'retired', stale = 1 WHERE id = 1;"
     )
-    with pytest.raises(InvariantError, match=r"record-only|archaeology|retired"):
+    with pytest.raises(InvariantError, match=r"carry no stale flag"):
         core.reconcile(1)
 
 
@@ -331,7 +331,7 @@ def test_reconcile_refused_on_retired_design(core):
     core.conn.execute(
         "UPDATE tasks SET status = 'retired', stale = 1 WHERE id = 1;"
     )
-    with pytest.raises(InvariantError, match=r"record-only|archaeology|retired"):
+    with pytest.raises(InvariantError, match=r"carry no stale flag"):
         core.reconcile(1)
     # The retired+stale state is preserved.
     t = core.get(1)

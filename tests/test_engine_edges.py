@@ -301,7 +301,7 @@ def test_reconcile_refused_on_terminal_status(core, status, kind):
         "UPDATE tasks SET status = ?, stale = 1 WHERE id = ?;",
         (status, task_id),
     )
-    with pytest.raises(InvariantError, match=r"record-only|archaeology"):
+    with pytest.raises(InvariantError, match=r"carry no stale flag"):
         core.reconcile(task_id)
 
 

@@ -355,7 +355,7 @@ def test_reconcile_refused_on_wont_do(core):
     core.link_add(3, 2, because="setup")
     core.wont_do(3, reason="dropped")
     core.edit(2, description="x", delta="staling")
-    with pytest.raises(InvariantError, match=r"record-only|archaeology"):
+    with pytest.raises(InvariantError, match=r"carry no stale flag"):
         core.reconcile(3)
     t3 = core.get(3)
     assert t3.stale is False

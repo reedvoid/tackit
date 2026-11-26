@@ -442,7 +442,9 @@ def build_server() -> FastMCP:
     def close(id: int) -> dict:
         """Close a task (D12 + D14 + D36). For PRODUCTION + META tasks only.
         REFUSED if the task is stale, or if a DIRECT (1-hop) linked neighbor
-        is stale (reconcile that upstream first, D14 / D56). REFUSED if
+        is stale (D56). The refusal names each stale neighbor with its link's
+        ``because``: show it, read it against that coupling, then edit or
+        reconcile it before retrying. REFUSED if
         status='spec' -- design/schema slices are living spec, not work
         items. Use edit() to refine a decision; retire() if 100% abandoned
         with no replacement (D36). REFUSED on wont_do / retired (no double-
