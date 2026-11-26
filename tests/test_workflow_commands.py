@@ -340,3 +340,63 @@ def test_project_claude_md_names_the_repo_as_master():
     assert "Edit `src/tackit/data/workflow/`, then copy to `~/.claude`." in text
     assert "An edit made only in `~/.claude` drifts and never ships." in text
     assert "Everything in that folder is public: keep private project names and vocabulary out." in text
+
+
+# --- T338 / T340: shipped text must survive Claude Code's argument substitution ---
+
+# Claude Code replaces `$ARGUMENTS`, `$0`, `$1`, ... (and named `$name` arguments) in
+# command and skill text with what the user typed; a literal "$0" meaning "zero-cost"
+# reached the agent as the first argument word ("a M500 repro").
+ARGUMENT_PLACEHOLDER = re.compile(r"\$(?!ARGUMENTS\b)[0-9A-Za-z_]")
+
+
+@pytest.mark.parametrize("planted", ["a $0 repro", "see $1 here", "the $name value", "$ARGUMENTSX"])
+def test_placeholder_scan_can_fail(planted):
+    assert ARGUMENT_PLACEHOLDER.findall(f"text {planted} more") != []
+
+
+def test_placeholder_scan_allows_the_arguments_slot():
+    assert ARGUMENT_PLACEHOLDER.findall("Target: $ARGUMENTS\nand $ARGUMENTS again") == []
+
+
+def test_no_shipped_file_carries_a_stray_argument_placeholder():
+    shipped = _shipped()
+    arguments_slots = 0
+    for name, text in shipped.items():
+        assert ARGUMENT_PLACEHOLDER.findall(text) == [], name
+        arguments_slots += text.count("$ARGUMENTS")
+    assert arguments_slots >= len(COMMANDS)  # the scan really read the commands
+
+
+
+@pytest.mark.parametrize("name", COMMANDS)
+def test_each_command_keeps_its_arguments_slot(name):
+    """The converse of the placeholder guard: rewording "$0" must not cost a command
+    the one placeholder it needs, or the user's argument never reaches the agent."""
+    assert "$ARGUMENTS" in _shipped()[f"commands/{name}.md"]
+
+def test_no_shipped_command_cites_an_outside_methods_phases():
+    """T340: "Phase-4" was left over from the outside method T339 removed; the
+    commands have steps, not phases. (The T339 guard checks only the plugin's name.)"""
+    commands = {name: text for name, text in _shipped().items() if name.startswith("commands/")}
+    assert len(commands) == len(COMMANDS)
+    for name, text in commands.items():
+        assert "Phase-" not in text, name
+        assert "Phase " not in text, name
+
+
+@pytest.mark.parametrize(
+    "filename, phrase",
+    [
+        ("commands/diagnose.md", "fold the confirmed cause + a zero-cost repro INTO the meta body"),
+        ("commands/diagnose.md", "plus temporary instrumentation (step 4) that you remove before the report"),
+        ("commands/diagnose.md", "carries its evidence (a `file:line`, a commit hash, or a command with its output) or the word UNVERIFIED"),
+        ("commands/diagnose.md", "This repro IS the failing test the eventual fix must turn green"),
+        ("commands/diagnose.md", "If the cause is a commit with no task, name its hash in the meta body"),
+        ("commands/diagnose.md", "<meta id> now carries a PROVEN root cause + zero-cost repro"),
+        ("commands/diagnose.md", "Run probes so they leave tracked files untouched"),
+        ("commands/build.md", "a zero-cost scorer-can-fail self-test FIRST"),
+    ],
+)
+def test_diagnose_and_build_wording_fixes_landed(filename, phrase):
+    assert phrase in _shipped()[filename]

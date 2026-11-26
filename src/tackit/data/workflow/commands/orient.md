@@ -37,7 +37,7 @@ Get oriented:
    - **The options**, usually two or three, each with what changes: what the user sees, what it costs, what gets stricter or riskier. Drop any option whose consequence you can't state.
    - **My recommendation:** the pick, and the one reason it wins.
    - **If you don't decide:** what it blocks, or what happens by default.
-   - No task ids, §-refs, rule codes, code names or internal shorthand in these sentences ("R-7", "`missing_ref`", "the $0 proof", "seed", "arm"). If a code-only name can't be avoided, put it in backticks and say what it is in the same sentence. Ids go on one `Refers to:` line at the end of each decision.
+   - No task ids, §-refs, rule codes, code names or internal shorthand in these sentences ("R-7", "`missing_ref`", "the dry-run proof", "seed", "arm"). If a code-only name can't be avoided, put it in backticks and say what it is in the same sentence. Ids go on one `Refers to:` line at the end of each decision.
    - A decision the gap scan surfaced is restated here in full; never "see (a)" or "the R-7 finding".
    - Number the decisions and say which ones block the next task and which can wait.
    - Standing "ask now" calls from memory: one line each, saying what it is, why it matters and your recommendation; a batch of small housekeeping calls may be offered as one item, each still listed.
