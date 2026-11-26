@@ -174,9 +174,10 @@ CREATE TABLE IF NOT EXISTS meta (
 # --- S7 `description_revisions` ---------------------------------------------
 # Append-only audit log for edits (D29, v0.4). One row per successful edit()
 # that changed name or description; preserves the VERBATIM prior values plus
-# the agent's delta. The backstop that makes edit-on-closed safe: archaeology
-# recovers what the task used to say under the same id, replacing the v0.3
-# supersede marker's role. Never updated; rows are inserted only.
+# the agent's delta. Edits to closed and wont_do tasks are refused (D259), so
+# the table backstops edits to open tasks and to retired slices (D138):
+# archaeology recovers what the task used to say under the same id, replacing
+# the v0.3 supersede marker's role. Never updated; rows are inserted only.
 S7_DESCRIPTION_REVISIONS = """
 CREATE TABLE IF NOT EXISTS description_revisions (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
