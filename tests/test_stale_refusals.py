@@ -235,6 +235,7 @@ RETIRED_PHRASES = (
     "closed-stale",
     "record of upstream change",
     "stale flags as historical record",
+    "may still carry stale",
 )
 
 

@@ -1075,7 +1075,7 @@ def test_the_parser_really_refuses_a_stale_status_verb_flag():
 
 def test_the_readme_names_every_registered_tool():
     readme = (REPO / "README.md").read_text(encoding="utf-8")
-    section = readme.split("### MCP tools", 1)[1].split("## Examples", 1)[0]
+    section = readme.split("## MCP tools", 1)[1].split("## For humans: the CLI", 1)[0]
     names = []
     for tool in mcp_server.build_server()._tool_manager.list_tools():
         names.append(tool.name)
@@ -1086,7 +1086,7 @@ def test_the_readme_names_every_registered_tool():
 
 def test_the_readme_lists_every_envelope_field(store):
     readme = (REPO / "README.md").read_text(encoding="utf-8")
-    section = " ".join(readme.split("### MCP tools", 1)[1].split("## Examples", 1)[0].split())
+    section = " ".join(readme.split("## MCP tools", 1)[1].split("## For humans: the CLI", 1)[0].split())
 
     # D61: keys appear only when set, so one call's keys are not the full set; the
     # full set is the ENVELOPE_KEYS constant `_wrap` builds from.
@@ -1104,7 +1104,7 @@ def test_the_readme_envelope_sentence_names_only_envelope_keys():
     # name a key the envelope no longer carries (a removed `delta` or
     # `code_check_reminder` would pass the forward check alone).
     readme = (REPO / "README.md").read_text(encoding="utf-8")
-    section = " ".join(readme.split("### MCP tools", 1)[1].split("## Examples", 1)[0].split())
+    section = " ".join(readme.split("## MCP tools", 1)[1].split("## For humans: the CLI", 1)[0].split())
     sentences = []
     for sentence in re.split(r"(?<=[.;])\s", section):
         if "`stale_alert`" in sentence:

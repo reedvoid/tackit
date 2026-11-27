@@ -10,54 +10,43 @@ survives across sessions and context-window compaction, and a change to one task
 traceable to everything that depends on it. A typed boundary refuses malformed data,
 and a reconcile-on-change discipline surfaces what each change invalidates.
 
-> **Status: alpha (0.9.4).** The data model, interfaces, and sync design are
-> settled and implemented, with 1,000+ tests across unit / CLI / MCP / Hypothesis
-> property suites. The core shape — a kind/status partition (design/schema slices
-> live at `spec`/`retired`; production/meta at `open`/`closed`/`wont_do`) and the
-> `edit` / `close` / `wont_do` / `retire` verb taxonomy — is laid out under
-> [The model](#the-model-kinds-status-and-verbs) below. Expect rough edges.
+> **Status: alpha (0.9.4).** The data model, interfaces, and sync design are settled
+> and implemented, with 1,000+ tests. Expect rough edges.
 >
 > **Upgrading to 0.9.4: JSON results changed.** Writes return less, on MCP and in CLI
-> `--json`; see [Lean writes](#read-path-and-wiring-refinements). `edit_append` no longer
-> flags neighbors. Anything that reads a `close`, `add`, `edit` or `stale` result needs
-> checking; `show` returns what they used to carry. The store format is unchanged.
+> `--json`, and `edit_append` no longer flags neighbors. Anything that reads a `close`,
+> `add`, `edit` or `stale` result needs checking; `show` returns what they used to
+> carry. The store format is unchanged.
 
-## Contents
+**Contents:** [What it does](#what-it-does) · [Install](#install) · [Using it](#using-tackit-through-your-agent) · [For agents](#for-agents-the-rules-in-brief) · [MCP tools](#mcp-tools) · [CLI](#for-humans-the-cli) · [Migrating a project](#bringing-in-an-existing-project) · [Testing](#testing)
 
-**Everyone:**
-[Why it exists](#why-it-exists) · [Install](#install) · [Using it](#using-tackit-through-your-agent) · [Workflows](#the-rhythm-a-few-real-workflows) · [Examples](#examples-the-full-surface) · [CLI for humans](#for-humans-the-cli) · [Migrating a project](#bringing-in-an-existing-project) · [Testing](#testing) · [License](#license)
+## What it does
 
-**🤖 Agents — read these, especially during install (a critical juncture):**
-[Start here](#for-agents-start-here) · [Configure your agent's settings](#configure-your-agents-settings) · [MCP tools](#mcp-tools)
+Coding agents lose the plot across long projects: tracking scatters across files that
+drift apart, decisions vanish when the context window compacts, large plan documents
+get re-read every session, and dependencies are narrated in prose that goes stale.
+tackit's job is narrowly *correctness on the dev path*, not knowledge retrieval:
 
-## Why it exists
+- **One home per fact.** Every view (board, status, rendered narrative) is derived,
+  never hand-kept in parallel, so two copies can't disagree.
+- **Small slices.** The unit of access is a task plus its direct links, so context
+  cost stays bounded.
+- **Fail loud.** Malformed data and illegal transitions are refused at the boundary.
+- **Traceable change.** Editing a task flags its directly linked neighbors stale for
+  review (one hop, both directions), so a change can't silently leave the plan wrong.
 
-Coding agents lose the plot across long projects. They scatter task tracking across
-ad-hoc files that drift apart and start contradicting each other; they lose
-intermittent decisions when the context window compacts; they re-read large plan
-documents every session until context cost erodes accuracy; and they narrate
-dependency relationships by hand in prose that goes stale the moment something
-changes. tackit's job is narrowly *correctness on the dev path* — not knowledge
-retrieval — so it absorbs that scatter into one queryable, sliceable,
-single-source-of-truth store:
-
-- **One home per fact.** Every view (board, status, rendered narrative) is *derived*,
-  never hand-kept in parallel — so two copies can't come to disagree.
-- **Small slices.** The unit of access is a task plus its direct links, not a whole
-  document, so context cost stays bounded.
-- **Fail loud.** Malformed data and illegal transitions are refused at the boundary,
-  not silently absorbed.
-- **Traceable change.** Editing a task flags its directly-linked neighbors (depth-1,
-  symmetric — not transitive; the close-gate checks the same one hop) stale for review,
-  so a change can't silently leave the rest of the plan wrong.
+**The model.** One item type, a **task**, with a required `kind` that fixes which
+`status` values it can carry: design and schema slices (the decisions) live at
+`spec` / `retired`; production and meta tasks (the work and the thinking) live at
+`open` / `closed` / `wont_do`. One relationship, a **symmetric link** with a
+`because` rationale. Freeform labels. Every view is derived from these.
 
 ## Install
 
 Two parts: a human pulls the package, then **hands off to the coding agent**, which
-wires it in. That second step is what actually registers the MCP server and the
-skill — `pip install` alone does **not** make tackit usable by your agent.
+wires it in. `pip install` alone does **not** make tackit usable by your agent.
 
-**1. Human — pull the package, then tell your agent to set it up:**
+**1. Human — install the package and tell your agent to set it up:**
 
 ```bash
 pip install tackit
@@ -68,442 +57,19 @@ Then paste this to your coding agent (Claude Code, etc.):
 > I've installed the `tackit` Python package. Run `tackit setup` and carry out the
 > steps it prints to register it (MCP server + skill) for this project.
 
-You don't need to explain more than that — naming `tackit setup` is enough, because
-the command is self-documenting: it prints everything the agent needs.
+**2. Agent — register it.** `tackit setup` *prints* the post-install steps and edits
+no config itself: the MCP registration command for the agent's own config, where to
+drop the bundled `SKILL.md`, the always-on settings below, and `tackit init`. The agent
+carries them out, because it knows where its own config lives.
 
-**2. Agent — register it.**
+### Load the skill at session start
 
-Running `tackit setup` *prints* contextualized post-install steps (it edits no config
-itself): the MCP registration snippet (a portable, committable command) to add to the
-agent's own config, where to drop the bundled `SKILL.md`, a reminder to add the
-always-on discipline to its config (see [Configure your agent's
-settings](#configure-your-agents-settings)), and `tackit init`. The agent carries them
-out — it does the wiring because it knows where its own config lives — and should read
-[For agents: start here](#for-agents-start-here) while installing.
-
-### Optional: the workflow commands
-
-tackit ships the slash commands its maintainer works with: `/diagnose` proves a bug's
-root cause, `/firmup` settles a plan, `/graduate` turns it into specs and tasks, `/build`
-builds them test-first, and `/orient`, `/handoff` and `/trim` carry state between
-sessions. The `test-audit` skill comes with them. They are opinionated and Claude Code
-only. To install them, tell your agent:
-
-> Run `tackit setup` and carry out the optional workflow-commands step.
-
-## Using tackit (through your agent)
-
-Day to day you don't touch tackit directly — you tell your coding agent in plain
-language and it drives the tools. Common asks:
-
-- **"Add a task to rotate the JWT signing keys; it realizes our token-rotation design
-  slice."** → the agent searches for that governing spec, creates the production task,
-  and wires it to the slice it realizes (a production task must link the spec it
-  realizes — the D256 creation-gate).
-- **"What's open right now?"** / **"What's still outstanding?"** → it lists the open
-  tasks and flags anything stale.
-- **"I changed the token format — update that task."** → it edits the task, and tackit
-  marks its directly-linked neighbors *stale* for review.
-- **"What did that change affect?"** / **"What's stale?"** → it shows the reconciliation
-  worklist.
-- **"Mark the parser task done."** → it closes the task — *refused* if the task is stale
-  or sits on unreconciled work, so you can't silently mark broken work complete. Closed,
-  wont_do and retired tasks are never flagged, so a finished neighbor never trips it.
-- **"We're abandoning the spec for that legacy auth flow — retire it."** → it
-  calls `retire` on the design slice — *refused* if any linked production task
-  is still open (because then the work isn't actually dead), with the
-  obligation list and the resolve path inline. The retired row stays as a
-  graveyard marker, and `link_add` to it is refused going forward.
-- **"Show me everything under the `testing` label."** → it lists that group.
-
-After any change, the agent reports back what it did and what's outstanding, so you
-rarely have to ask. For the complete set, see
-[Examples: the full surface](#examples-the-full-surface).
-
-## The rhythm: a few real workflows
-
-Concrete loops, so the discipline reads as habits, not rules:
-
-- **Start a piece of work.** *"Add a task to rate-limit the login endpoint; it realizes
-  our auth-throttling design."* → the agent `search`es for that spec slice, creates the
-  production task, wires it to the slice it realizes (D256 — a production task must link
-  its governing spec), and echoes the task's vocabulary in the code it writes — so
-  later, `search "rate-limit"` lands on both the task and the code.
-- **Pick up after a break.** *"What's outstanding?"* → `board` / `stale` shows the open
-  work and anything flagged, in one screen — **without re-reading a plan document.**
-  (The whole point, if your "plan" is a 4000-line file today.)
-- **A change ripples.** *"Update the auth-token task — the format changed."* → the agent
-  edits it; tackit marks its directly-linked neighbors **stale** (depth-1, symmetric —
-  the close-gate checks the same one hop), and you walk each one against what changed and
-  either fix or reconcile it. You can't leave a directly-coupled task quietly wrong —
-  that's the core guarantee.
-- **Wrap up.** Nothing is "done" while the worklist `stale` (filtered to live
-  partition: `status IN ('open', 'spec')`) is non-empty; an empty worklist is the
-  only safe stopping point. Terminal tasks (`closed`, `wont_do`, `retired`) are never
-  flagged: a change only flags live neighbors, so every flag is an obligation. What
-  changed after a close is in the task's history (status transitions and edit
-  revisions).
-
-## For humans: the CLI
-
-The CLI is the human door — debugging, scripting, and a fallback for the agent.
-`tackit --help` (and `tackit <cmd> --help`) is the full, self-documenting surface.
-`--json`, before or after the subcommand, prints the same result the MCP tool returns;
-alerts and nudges go to stderr, so stdout stays parseable.
-
-```bash
-tackit init                                                              # create .tackit/ in this project
-tackit add "FTS5 search query contract" --kind design --label search     # a design slice (D1) — the decision to realize
-tackit add "parse FTS5 query" --kind production --label search \
-  --dep 1::"parser realizes the FTS5 query contract"                      # production links the spec it realizes (D256 gate)
-tackit add "rank search results" --kind production \
-  --dep 1::"ranking realizes the FTS5 query contract" \
-  --dep 2::"ranking consumes the parsed query"                            # links the spec + the upstream parser task
-tackit search "fts"                                                      # ranked keyword search
-tackit show 3                                                            # slice: task + linked tasks + labels
-tackit edit 1 --desc "tokenized MATCH contract" \
-  --delta "switched from prefix to tokenized query"                      # edits the spec — marks linked tasks stale
-tackit stale                                                             # the reconciliation worklist
-tackit reconcile 2                                                       # reviewed-OK; clear stale
-tackit close 2                                                           # refused while stale (or atop stale deps)
-tackit wont-do 3 --reason "redundant with T2"                            # decided NOT to do (production/meta)
-tackit retire 1 --reason "premise replaced by D99"                       # design/schema spec 100% abandoned
-tackit ls --status open                                                  # query/board; --status accepts open/closed/wont_do/spec/retired
-```
-
-The store lives at `.tackit/tackit.db` (binary, gitignored). Its git-canonical form
-is a deterministic SQL dump, `.tackit/tackit.sql.gz`, re-written on every change and
-committed. It is gzip compressed in chunks of rows, so git still stores each new
-version as a small delta. Any standard `gunzip` reads it. A store with an older text
-`tackit.sql` is converted the next time it opens; commit the removal and the new file
-together. A text dump older than the local db, as on a branch from before the upgrade,
-is refused with no file changed, so you can switch back. Sync is automatic; `tackit status` / `export` / `import` / `restore` exist
-only for the divergence cases auto-sync deliberately refuses to guess at.
-
-Git shows the dump as a binary file. For readable diffs, add this line to
-`.gitattributes`:
-
-```
-.tackit/tackit.sql.gz diff=gzip-text
-```
-
-and run this once in each clone:
-
-```bash
-git config diff.gzip-text.textconv "gzip -dc"
-```
-
-## For agents: start here
-
-If you are an agent installing or working in a tackit project, read this — install is
-the moment to absorb it. But this is orientation, not the operating manual: the
-**complete, canonical discipline ships as `SKILL.md`** (dropped into your skills path
-during install and loaded whenever you work in a tackit project), and the tools state
-your specific obligations in their own results. At work time, rely on those — not on
-this page.
-
-**The model, in one breath.** One item type — a **task** with a required `kind`
-(design / schema / production / meta) that determines which `status` values it
-can carry (the partition: design/schema get `spec`/`retired`; production/meta
-get `open`/`closed`/`wont_do`), plus a `stale` bit; one relationship — a
-**symmetric link** (each link is one undirected edge; traversal is the same in
-both directions); freeform labels. Every view (board, status, narrative) is
-*derived* from these, never hand-kept in parallel.
-
-**The mindset these mechanisms assume.** tackit's discipline assumes two general
-operating principles. They aren't tackit-specific — they apply to any work — but
-they're the mindset everything below depends on. Without them, the rest of this
-page is a set of patterns; with them, the patterns become a working discipline.
-Both are reactions to the same default failure mode (a bias toward forward motion
-that routes around broken things), at different moments.
-
-- **Fail loud — never degrade silently.** When something fails, do not continue
-  as if it did not. Diagnose the error and fix the root cause; never reason past
-  it ("probably not important") and move on. Surface failures to the user with
-  recovery options — do not produce "degraded output." Retry or auto-recover only
-  with a specific, stated justification. tackit is built for exactly the failure
-  mode this rule prevents: a stale link, an un-reconciled task, an unfinished
-  bundle that quietly looks finished. Without fail-loud, tackit's worklist and
-  close-gate are just refusable suggestions; with it, they're the mechanism that
-  makes silent drift impossible.
-- **Fix broken things first.** The entry-point variant of fail-loud. On entering
-  a session or starting a task, scan for inherited broken state — unshipped fixes
-  named in fold-back reports, deferred-action notes in memory, `status='open'`
-  items the prior session named as "next," loose ends called out in recent
-  commits. Those are the next task, not whatever forward planning the question
-  seems to invite. "What's next?" with a deferred fix in scope is "fix that" —
-  not "let me enumerate the backlog." Inherited state FEELS like old context
-  (it's from yesterday) even when it's the most actionable item in front of you;
-  the recognition pattern needs to fire deliberately. tackit's worklist is
-  exactly this rule's mechanism — a deferred fix sitting at `status='open'` is
-  the worklist telling you what to ship next.
-
-**What `SKILL.md` holds you to** (the short version — read it there in full):
-
-- **Single source of truth.** Everything goes in tackit, via its tools — never ad-hoc
-  markdown or TODO comments. If it isn't in tackit, it isn't tracked. It is *not* a
-  knowledge base; durable learnings live in your memory.
-- **Reconcile on change (bounded by partition).** A change marks the
-  task's directly linked neighbors **stale** (an `edit_append` on a meta note does
-  not, D10). tackit surfaces the outstanding
-  worklist on *every* call (deterministically — it's code in the app, not a
-  reminder you can skip). The worklist is status-derived: only stale tasks with
-  `status IN ('open', 'spec')` carry an obligation. Closed / wont_do / retired
-  rows may still carry stale=1 as historical record but they're off the worklist
-  and don't pressure the close-gate. Review each obligation-bearing stale task
-  with its linked neighbors and `edit` or `reconcile` it. **Never end a turn
-  while the worklist is non-empty** — a task left closed atop a changed
-  dependency is wrong *and* invisible. (Edits are **refused on closed / wont_do**
-  tasks — they are frozen records, D259: to change a closed task, `reopen` it,
-  edit while open, then re-close; a wont_do task is terminal, so create a new
-  task. Only *retired* design/schema slices stay editable, and every allowed
-  edit is preserved verbatim in the description_revisions audit table.)
-- **Find, wire, right-size.** Use `links` (no input → anchor layer of live
-  design+schema specs; with ids → depth-1 neighbors filtered to viable targets
-  `status IN ('open','spec')`) to discover dependencies deterministically;
-  wire links explicitly with a real `because` rationale (including among tasks
-  you add together); keep tasks describable units of work.
-- **Fold back what implementation reveals — route it by type (D258).** No plan is
-  complete; the call site nobody listed, the partition CHECK nobody simulated, the
-  message wording that reads wrong only in practice — these emerge only at
-  implementation time, and they are the *highest-value* signal the work produces.
-  Fold-back is a **routing** discipline, not an append-to-the-current-body reflex:
-  classify each learning and send it to its home. A **decision** (alters what's
-  decided or the store's shape) → the design/schema slice it belongs in — `edit`
-  the governing D#/S#, **never** the production body (a decision stranded in a
-  production body is a defect — D245). A **correction** to the current production
-  task (a wrong forecast of the code path) → rewrite its body (append is refused on
-  production — D255). Transient **progress** (built X, committed `<hash>`) → git +
-  `close`/status, not tackit at all. The end-of-turn summary must include a
-  fold-back line naming where each discovery was routed (or *none — verified*);
-  silence on fold-backs is not reassurance. See `SKILL.md` "Fold-backs" for the
-  per-discovery format and the enumeration meta-lesson (grep the pattern family,
-  not the verb name).
-- **Ship on pain — don't endure friction you can fix.** This is **the rule the
-  other discipline rules serve**. If you're feeling friction *right now* from a
-  deferred fix's absence — a workaround eating tokens (large-body retransmits,
-  "drop into Python" bypass, repeated session restarts, manual step on the Nth
-  iteration) — the workaround itself is the forcing function. The next task is
-  already chosen for you: stop, ship the fix, then continue with the friction
-  gone. This **overrides "finish the current bundle first"**: deferring the fix
-  means paying its avoided cost on every remaining unit of work, and that
-  compounding cost almost always exceeds the cost of pausing to ship. The
-  smell: a task body that opens with "Standalone — NOT part of the current
-  bundle" is classed background-deferred regardless of leverage. Either fold
-  it into current work with a reason, or write the explicit "defer because X"
-  reason — never passive. Backlog filing is *also* a "ship-this-release? yes/no
-  with reason" decision made **at filing time**; default-deferred items become
-  graveyard plots. The v0.5 release ate ~60k tokens × 4 fold-backs absorbing
-  the cost the `edit_append` / `edit_replace_substring` ops would have cut ~10×
-  — that fix sat at `status='open'` the entire time. See `SKILL.md`
-  "Ship-on-pain" for the rule as agents load it.
-
-### Read-path and wiring refinements
-
-Three refinements on top of [the model](#the-model-kinds-status-and-verbs) below affect
-which op you reach for (the partition and verb taxonomy are unchanged):
-
-- **Lean reads by default (D211).** `ls` and `board` return a *lean* projection —
-  task scalars and graph shape, **no `description` bodies** (and `board` omits
-  neighbor `because` / `last_edit_delta` too). That's what keeps a board query
-  bounded as a project grows past a couple hundred tasks. Opt back in per call with
-  `include_description=True` (both) / `include_neighbor_because=True` (`board`);
-  for one full body, use `show`. `show` returns the full task with lean links, keeping
-  `because` / `last_edit_delta` only on open/spec stale reads;
-  `include_neighbor_because=True` returns them on every link. `ls`/`board` also gained a `name_prefix` filter
-  (T220) to scope a query to a single name prefix. `stale` returns the same short rows.
-- **Lean writes too (D211).** A write returns what your next step needs and nothing
-  you already have, identically on MCP and CLI `--json`. An edit returns the task's
-  scalars plus `newly_stale`: each neighbor it moved from clear to flagged that is open
-  or spec, as `{id, because}`. A neighbor already flagged stays on the worklist and in
-  the alert; a terminal neighbor is not flagged at all. `close`, `wont_do`,
-  `retire` and `reopen` return `{id, status}`; `add` returns `{id}`; `label_add` and
-  `label_rm` return `{id, labels}`; `link_add` returns `{linked: {a, b, because}}` with
-  the stored rationale; `link_rm` returns `{unlinked: {a, b}}`. `show` is the path to
-  anything else.
-- **Bulk-link existing tasks with `links_add` (D213).** Where `load` creates *new*
-  tasks with their edges in one atomic import, `links_add` wires edges between tasks
-  that **already exist** — the pass `load` can't cover. It takes a flat list of
-  `{a, b, because}` edges (ids or prefixed-names like `S30`), each with its own
-  mandatory `because`; there is deliberately no batch-wide rationale (a shared
-  `because` is the membership-link anti-pattern, D38). It validates the whole batch
-  first and names *every* structural offender at once, so a bad edge rolls back the
-  lot instead of half-wiring the graph.
-
-Search also got more forgiving: FTS5 query input is now sanitized (T222), so a
-keyword carrying a dot, colon, hyphen, or apostrophe (e.g. a dotted config key) is
-searchable rather than raising an FTS5 syntax error.
-
-### The model: kinds, status, and verbs
-
-How design/schema slices relate to the lifecycle is the shape worth the few
-minutes — it changes which verb you reach for, and the wrong choice gets refused
-at the boundary. (The full discipline is in `SKILL.md`; this is the orientation.)
-
-**What each kind is for (the ontology).** A spec is *what should be true*; code
-is *what is true*; a production task is *the change between them* (a forecast
-while open, a frozen record once closed); meta is *the thinking* — a notepad
-where a decision gets reached before it's distilled into a spec. When a task
-blurs: is it **deciding** (→ spec), **doing** a settled thing (→ production), or
-**thinking** (→ meta)? Work flows one way — `meta → spec → production → code`.
-
-**The creation-gate (D256).** Because a production task realizes an
-*already-made* decision, it **must link the spec it realizes**: `add` and `load`
-**refuse** a `kind='production'` task created with zero design/schema links,
-before any mutation. Author (or find) the governing design/schema slice first,
-then wire the production task to it. Genuinely spec-less mechanical work (a typo
-fix, a dependency bump) isn't a production task — leave it untracked or a meta
-note.
-
-**The kind/status partition.** Every row is in one of two partitions, by kind:
-
-| kind            | partition (status set)             | terminal verbs        | what it means          |
-|-----------------|------------------------------------|-----------------------|-------------------------|
-| design / schema | `spec` / `retired`                 | `retire`              | specifications: capture *decisions* |
-| production / meta | `open` / `closed` / `wont_do`    | `close` / `wont_do`   | implementations: realize specs in code |
-
-Cross-partition pairs are illegal at the schema-level CHECK constraint: you
-cannot have a `kind='design'` row with `status='open'`, nor a `kind='production'`
-row with `status='spec'`. The boundary refuses the impossible combinations so
-the rest of the system can rely on them. (Cross-partition `reclassify`
-auto-shifts status `open ↔ spec` when the source state has a clean target;
-no-clean-target reclassify — e.g. closed-production → design — is refused;
-resolve the source state first.)
-
-**The verb taxonomy.** Four state-changing verbs; the right one follows the
-partition:
-
-| Verb     | When                                   | Partition  | Cascade? | Reversible?       |
-|----------|----------------------------------------|------------|----------|--------------------|
-| `edit`   | content change (NOT on closed/wont_do — D259) | spec or open (+retired) | **yes** (`edit_append`: no, D10) | n/a                |
-| `close`  | production/meta work shipped           | open / etc.| no       | `reopen`           |
-| `wont_do`| production/meta work dropped           | open / etc.| no       | terminal forever   |
-| `retire` | design/schema spec 100% abandoned      | spec / retired | no   | terminal forever   |
-
-**The all-or-nothing rule (D36).** Is the spec 100% gone, with no replacement?
-→ `retire`. *Any* partial change — including big rewrites — uses `edit`. Edit's
-cascade IS the partial-change re-evaluation mechanism; retire's "no cascade +
-open-neighbor refusal + immutable reason" embodies the 100%-gone contract. If
-you find yourself wanting to migrate some links to a new spec, you weren't
-retiring — you were editing.
-
-**Retiring a spec.** retire is uncommon — most "spec change" scenarios are
-partial and use edit. It runs a 6-step refusal matrix whose load-bearing check is
-the **open-neighbor gate**: a spec with open tasks linked to it can't be retired
-until each is resolved, and the refusal lists every open neighbor with its
-`because` and an (i)/(ii) resolve path inline. Once it lands the row stays as a
-graveyard marker — `link_add` to a retired endpoint is refused, and a returning
-decision is a fresh `D#`, never a reanimated row. (Full matrix: the `retire()`
-docstring / `SKILL.md`.)
-
-**Granular-description discipline (D37).** Task descriptions must be
-**implementation-ready**: a fresh-session agent — no conversation history, only
-the task body and its linked neighbors — should be able to implement (or judge
-completion of) the task without asking for clarification. Vague verbs ("fix
-bug"), conversation references ("as discussed"), pointer-only bodies, and
-TBD/TODO placeholders are refused as defects, not style nits. The discipline
-applies at create time and *during* implementation, where each discovery is
-routed as a fold-back: a decision to its spec slice, a correction of the task's
-forecast by rewriting the body. (The full anti-pattern list lives in
-`SKILL.md`.)
-
-One convention is worth explaining in full right here — it's the one people skip and
-then regret, and it belongs in your always-on settings, not just in tackit:
-
-### Code ↔ task traceability (the opinionated bit)
-
-tackit stores *intent* — what a task is, and why. Your code is the *implementation*.
-**Nothing automatically connects the two:** tackit can't see your code, and your code
-doesn't know which task it came from. The instant your context window resets, that
-connection is gone — unless you built it into how you wrote both. A future you, or
-another agent, looking at a function with no memory of why it exists, has no path back
-to the decision that created it.
-
-So make the link yourself, on both sides:
-
-- **Name tasks so they're findable.** Tasks are located by keyword `search`. A task
-  called "fix bug" or "update logic" is effectively invisible — it surfaces for no
-  reasonable search, so its history and dependents become unrecoverable. Use
-  distinctive, specific terms: the component, table, function, or feature ("rotate JWT
-  signing keys on the auth token endpoint"), never vague verbs.
-- **Mirror that vocabulary in the code, and cite the task id.** When you implement
-  task `T42`, reference `T42` in the code and comments, and echo the task's
-  distinctive words in file and function names. If the task says "token rotation," the
-  code says "token rotation" — not "key cycling." Now a `search` from either side
-  lands on the other.
-
-It's a small tax at write time that buys back the one thing a context reset destroys:
-the ability to recover *why*. Treat a vague task title, or a code↔task vocabulary
-mismatch, as a **defect**, not a style nit. Because this holds even when the tackit
-skill isn't loaded, put it in your agent's always-on settings too:
-
-### Configure your agent's settings
-
-Add the tackit discipline to your agent's *always-on* instructions (`CLAUDE.md` for
-Claude Code; the equivalent for other agents) so it holds even when the skill isn't
-loaded — especially the code↔task traceability, which is global by nature. A starting
-point:
-
-```markdown
-## tackit
-- tackit is this project's single source of truth for tasks + dependencies. If it
-  isn't in tackit, it isn't tracked. It is not a knowledge base.
-- Importing many tasks at once (a plan, a backfill)? Use `load`, not N `add()` calls —
-  one atomic import carrying full multi-paragraph descriptions, labels, and
-  `depends_on` edges with `because` rationales (D24/D40).
-- Code ↔ task traceability is MANDATORY. When you implement a tackit task, cite its
-  id (e.g. `T42`) and reuse the task's distinctive vocabulary in file/function names
-  and comments, so a future session can grep from code to intent and back. Treat a
-  vague task title or a code↔task vocabulary mismatch as a defect, not a style nit.
-- Search before creating; wire dependencies explicitly (including among tasks added
-  together); right-size tasks to describable units of work. Use `links` to discover
-  candidate connections deterministically — the op surfaces the viable target set
-  (status IN ('open','spec')); your judgment picks among them.
-- Links are for coupling, labels for membership. A link means "edit one ⇒ re-check the
-  other" — that is what the cascade fires; grouping tasks under a shared theme is a
-  *label*, not links to a hub. A relationship belongs on a link + `because`, never narrated
-  in a description — the cascade can't see prose. Never create a hub task (one whose purpose
-  is to be linked-to) or a rollup task (a body that re-types other tasks' status); coverage
-  is a `board`/`ls`-by-label query, not a hand-typed ledger (D38).
-- Reconcile on change: a change marks linked neighbors stale; an `edit_append` note does
-  not, so use `edit` when a note really changes what a neighbor should say. The worklist filter is
-  `status IN ('open','spec')`, and terminal tasks (closed/wont_do/retired) are never
-  flagged in the first place, so every flag is an obligation. Review each stale task against its
-  linked neighbors, then `edit` or `reconcile`. Never end a turn while obligation-
-  bearing stale remains. Clear a reviewed-clean set in one call with
-  `reconcile(ids=[...])` (atomic, short alert) — but the list is explicit by design;
-  there is no "reconcile all" shortcut, because that would automate the judgment the
-  cascade depends on (D39).
-- Reuse labels before creating new ones (run `labels` first). A label must earn its
-  name — a phase, epic, or use case — never an implementation detail or a one-off.
-- After any task change, report back in a scannable, verb-grouped layout
-  (Added/Edited/Closed/…): per task show the id + name, then two short lines —
-  `what:` (enough to recall it) and `did:` (roughly what changed); end with the state
-  (N open/done/stale) and any worry up front (stale ids, refused ops). Not prose, not
-  a bare id.
-- Fold-back is mandatory and goes in the report. When a code change teaches something
-  the task graph doesn't record, ROUTE it by type: a decision → the design/schema slice
-  it belongs in (never a production body); a correction to the current production task
-  (a wrong forecast of the code) → rewrite its body (append is refused on production);
-  transient progress → git/memory, not tackit. Every turn with a code change names where
-  each fold-back was routed, or states "Fold-backs: none — verified." Silence is not
-  reassurance. Implementation discoveries are higher signal than any plan; routing them
-  to the right layer is how the next session inherits the lesson.
-```
-
-### Load the discipline at session start
-
-The snippet above is the **floor** — the few rules that hold with no skill loaded.
-The complete discipline is `SKILL.md`, and the surest way to apply it is to load it
-at the **start of every session** rather than rely on the agent to invoke the
-`tackit` skill when it recognizes task work. Two levers exist, both opt-in (tackit
-ships no hook of its own): an **always-loaded instructions file** carries the floor,
-and a **session-start hook** tells the agent to load the full skill. The mechanism differs per
-agent — pick yours.
+`SKILL.md` is the complete discipline. Load it at the **start of every session**
+instead of relying on the agent to invoke the `tackit` skill when it recognizes task
+work. tackit ships no hook of its own; pick your agent's lever.
 
 **Claude Code** — a `SessionStart` hook in `.claude/settings.json`. Its command's
-stdout is injected into context before the first prompt (it can't call the Skill
-tool itself; it prints a directive the agent then acts on):
+stdout is injected into context before the first prompt:
 
 ```json
 {
@@ -517,14 +83,13 @@ tool itself; it prints a directive the agent then acts on):
 }
 ```
 
-Keep the `compact` matcher — it re-fires after a context compaction, where the
-loaded skill is otherwise the first thing dropped. The hook prints a one-line
-directive and the agent loads the skill itself: hook output over 10,000 characters
-reaches the agent as a 2,000-character preview, and the skill is longer than that.
+Keep the `compact` matcher — it re-fires after a context compaction, where the loaded
+skill is otherwise the first thing dropped. The hook prints a one-line directive and
+the agent loads the skill itself: hook output over 10,000 characters reaches the agent
+as a 2,000-character preview, and the skill is longer than that.
 
 **Codex CLI** — the same hook model, in `.codex/config.toml` (or `.codex/hooks.json`,
-whose JSON mirrors Claude's block above). Same four matchers; stdout becomes
-developer context:
+whose JSON mirrors Claude's block above):
 
 ```toml
 [[hooks.SessionStart]]
@@ -534,47 +99,62 @@ type = "command"
 command = "echo 'This project uses tackit. Before any task work, invoke the tackit skill to load its discipline.'"
 ```
 
-**opencode** — no settings hook; it reads `AGENTS.md` as an always-loaded floor, so
-put the snippet there. (Its plugin system can subscribe to a `session.created` event
-for richer injection, but `AGENTS.md` is the reliable lever.)
+**opencode** and **Gemini CLI** have no session-start hook: put the always-on snippet
+below in `AGENTS.md` (read by Codex and opencode) or `GEMINI.md` (sent with every
+Gemini prompt).
 
-**Gemini CLI** — no session-start hook; `GEMINI.md` is concatenated and sent with
-every prompt, so the floor placed in `GEMINI.md` is effectively always loaded.
+### Configure your agent's settings
 
-`AGENTS.md` is the cross-agent floor file — Codex and opencode both read it, so one
-`AGENTS.md` can carry the always-on layer for several agents at once. An agent with
-no hook falls back to that floor.
+Add this floor to your agent's *always-on* instructions (`CLAUDE.md` for Claude Code,
+or the equivalent), so it holds even when the skill isn't loaded:
 
-### MCP tools
-
-```bash
-tackit mcp     # serve the stdio MCP server (the agent's primary door)
+```markdown
+## tackit
+- tackit is this project's single source of truth for tasks + dependencies. If it
+  isn't in tackit, it isn't tracked. It is not a knowledge base.
+- Importing many tasks at once? Use `load`, not N `add()` calls: one atomic import
+  with full descriptions, labels, and `depends_on` edges with `because` rationales.
+- Code ↔ task traceability is MANDATORY: cite the task id (e.g. `T42`) in the code
+  and reuse the task's distinctive vocabulary in file/function names and comments.
+  A vague task title or a code↔task vocabulary mismatch is a defect.
+- Search before creating; use `links` to find candidate connections; wire every
+  dependency explicitly with a real `because`; right-size tasks to describable units.
+- Links are for coupling ("edit one ⇒ re-check the other"), labels for membership.
+  Never create a hub task or a rollup task; a relationship goes on a link, not in prose.
+- Reconcile on change: a change marks linked neighbors stale (an `edit_append` note
+  does not). Terminal tasks are never flagged, so every flag is an obligation. Review
+  each against its neighbors, then `edit` or `reconcile`; clear a reviewed-clean set
+  with `reconcile(ids=[...])`. There is no "reconcile all". Never end a turn with stale
+  work outstanding.
+- Reuse labels before creating new ones (run `labels` first).
+- Fold-back is mandatory: a decision → its design/schema slice (never a production
+  body); a correction of the current production task → rewrite its body; progress →
+  git. Every turn with a code change names where each fold-back went, or says none.
+- After any task change, report verb-grouped (Added/Edited/Closed): id + name, a
+  `what:` and a `did:` line, then the state (N open/done/stale), worries first.
 ```
 
-The agent's primary door is the MCP server: the harness pushes typed tool schemas
-into the agent's tool zone (no `--help` round-trip, no shell quoting, can't
-hallucinate a flag that doesn't exist). Tool names are the bare verbs — `add`,
-`show`, `search`, `edit`, `edit_append`, `edit_replace_substring`, `close`,
-`reopen`, `reconcile`, `wont_do`, `retire`, `reclassify`, `links`,
-`link_add`, `link_rm`, `links_add`, `label_add`, `label_rm`, `ls`,
-`board`, `summary`, `stale`, `labels`, `render`, `history`, `load`. (T179: the two `edit_*` ops are diff-shaped
-variants of `edit` — only the snippet or the `(old, new)` pair crosses the
-wire — for appending to a meta notepad or fixing one phrase in place
-without round-tripping a large body. `edit_append` is meta-only (D255) and flags
-no neighbor (D10); both keep the same audit row and delta requirement, and
-`edit_replace_substring` fires the same cascade as `edit`.) Input schemas are generated
-from the Python type hints, so they can't drift from the real interface. Every
-result is a compact JSON envelope: `result` always, plus each of `stale_alert`,
-`label_nudge`, `coherence_nudge`, `deadref_suggestions` and
-`missing_edge_suggestions` only when it is set, so the outstanding stale set and
-per-op nudges ride along without empty keys;
-refusals (e.g. closing a stale task, retiring with an open neighbor, link_add
-to a retired endpoint, editing a closed / wont_do task — D259) come back as
-errors that state the reason and — where relevant — the resolve path inline.
+### Optional: the workflow commands
 
-## Examples: the full surface
+tackit ships the slash commands its maintainer works with: `/diagnose` proves a bug's
+root cause, `/firmup` settles a plan, `/graduate` turns it into specs and tasks, `/build`
+builds them test-first, and `/orient`, `/handoff` and `/trim` carry state between
+sessions. The `test-audit` skill comes with them. They are opinionated and Claude Code
+only. To install them, tell your agent:
 
-Everything you can drive through your agent — it maps your request to tackit's verbs:
+> Run `tackit setup` and carry out the optional workflow-commands step.
+
+### Readable git diffs
+
+The store lives at `.tackit/tackit.db` (gitignored); its committed form is a
+deterministic, gzip-compressed SQL dump, `.tackit/tackit.sql.gz`, re-written on every
+change. For readable diffs, add `.tackit/tackit.sql.gz diff=gzip-text` to
+`.gitattributes` and run `git config diff.gzip-text.textconv "gzip -dc"` once per clone.
+
+## Using tackit (through your agent)
+
+Day to day you tell your coding agent what you want in plain language and it drives
+the tools. After any change it reports what it did and what's outstanding.
 
 | Ask your agent… | tackit does |
 |---|---|
@@ -583,95 +163,132 @@ Everything you can drive through your agent — it maps your request to tackit's
 | "Show me task 12 and what it touches" | `show` — full task + labels + lean linked tasks; `because` + `last_edit_delta` where reconciliation needs them, or on every link with `include_neighbor_because=True` |
 | "Update task 12's description" | `edit` — and stales its linked tasks (cascade) |
 | "Task 12 is linked to task 7" / "remove that link" | `link_add` (with `because`) / `link_rm` |
-| "Wire up these N links between existing tasks" | `links_add` — atomic batch of `{a, b, because}` edges (per-edge `because` required; whole batch rolls back on any bad edge) |
+| "Wire up these N links between existing tasks" | `links_add` — atomic batch of `{a, b, because}` edges |
 | "What can I link to?" | `links` — anchor layer (design+schema) or depth-1 expansion |
 | "Tag task 12 `smoke-test`" / "untag it" | `label_add` / `label_rm` |
-| "What's open / closed / stale?" | `ls` / `stale` (status accepts open/closed/wont_do/spec/retired) |
+| "What's open / closed / stale?" | `ls` / `stale` / `summary` |
 | "What labels exist?" | `labels` — each with its usage |
 | "Close task 12" / "reopen it" | `close` (refused if stale / spec / wont_do / retired) / `reopen` (corrects a closed record; new work is a new task) |
 | "Mark task 12 won't-do" | `wont_do` (production/meta only; also on a closed task) with durable reason |
 | "Retire design slice D17" | `retire` (design/schema only) with durable reason + open-neighbor refusal |
 | "Reclassify task 12 to design" | `reclassify` — auto-shifts status open↔spec |
 | "I reviewed task 9 — still fine" | `reconcile` (clears stale, no cascade) |
-| "Bulk-import a plan from this file" | `load` (atomic; per-edge `because` required on every depends_on entry) |
+| "Bulk-import a plan from this file" | `load` (atomic; per-edge `because` required) |
 | "Write up the design-labelled tasks" | `render` — markdown narrative |
-| "Board view of the in-flight work" | `board` — slice-per-card view, lean by default (D211: no `because`/`description` unless opted in) |
-| "When did task 12 change status?" | `history` — status transitions + description revisions audit |
+| "Board view of the in-flight work" | `board` — slice-per-card view, lean by default |
+| "When did task 12 change status?" | `history` — status transitions + description revisions |
 
-(The same verbs are available as `tackit <verb>` on the CLI — see below.)
+## For agents: the rules in brief
+
+The **complete, canonical discipline ships as `SKILL.md`**, and each tool states your
+obligations in its own results and refusals. Rely on those at work time; this is the
+orientation.
+
+- **Fail loud — never degrade silently.** When something fails, diagnose and fix the
+  root cause; surface it with recovery options, never produce "degraded output".
+  Without this, the worklist and close-gate are only refusable suggestions.
+- **Fix broken things first.** On entering a session, scan for inherited broken state
+  (unshipped fixes, deferred notes, open items a prior session named as next). That is
+  the next task; "what's next?" with a deferred fix in scope does not mean
+  "enumerate the backlog".
+- **Single source of truth.** Tasks, dependencies and decisions go in tackit, never in
+  ad-hoc markdown or TODO comments.
+- **Reconcile on change.** The worklist is stale tasks with `status IN ('open',
+  'spec')`, and closed, wont_do and retired tasks are never flagged: a change flags
+  only live neighbors. Never end a turn while the worklist is non-empty.
+- **Kinds decide verbs.** A spec is *what should be true*, a production task *the
+  change between spec and code*, meta *the thinking*. A production task must link the
+  spec it realizes (`add` and `load` refuse it otherwise). `edit` any partial change;
+  `retire` a spec only when it is 100% gone; `close` or `wont_do` production and meta
+  work. Edits are refused on closed and wont_do tasks: `reopen` a closed task to fix it.
+- **Granular-description discipline.** Task bodies are implementation-ready: a
+  fresh-session agent with only the body and its linked neighbors can build it. Vague
+  verbs ("fix bug"), conversation references, pointer-only bodies and TBD/TODO
+  placeholders are defects.
+- **Fold back by type.** A decision goes to its spec slice, a correction rewrites the
+  current production task, progress goes to git.
+- **Code ↔ task traceability.** Nothing connects code to the task it came from except
+  how you write both: distinctive task names, the task id and vocabulary in the code.
+
+## MCP tools
+
+```bash
+tackit mcp     # serve the stdio MCP server (the agent's primary door)
+```
+
+The harness pushes typed tool schemas into the agent's tool zone, generated from the
+Python type hints so they can't drift. Tool names are the bare verbs: `add`, `show`,
+`search`, `edit`, `edit_append`, `edit_replace_substring`, `close`, `reopen`,
+`reconcile`, `wont_do`, `retire`, `reclassify`, `links`, `link_add`, `link_rm`,
+`links_add`, `label_add`, `label_rm`, `ls`, `board`, `summary`, `stale`, `labels`,
+`render`, `history`, `load`. `edit_append` (meta-only, flags no neighbor) and
+`edit_replace_substring` send only the change instead of the whole body.
+
+Reads are lean: `ls` and `board` return no bodies unless asked
+(`include_description=True`). `show` returns the full task with lean links, keeping
+`because` / `last_edit_delta` only on open/spec stale reads;
+`include_neighbor_because=True` returns them on every link. Every result is a compact
+JSON envelope: `result` always, plus each of `stale_alert`, `label_nudge`,
+`coherence_nudge`, `deadref_suggestions` and `missing_edge_suggestions` only when it is
+set. Refusals come back as errors that state the reason and the resolve path.
+
+## For humans: the CLI
+
+The CLI is the human door: debugging, scripting, and a fallback for the agent.
+`tackit --help` (and `tackit <cmd> --help`) is the full surface. `--json` prints the
+same result the MCP tool returns; alerts and nudges go to stderr.
+
+```bash
+tackit init                                                              # create .tackit/ in this project
+tackit add "FTS5 search query contract" --kind design --label search     # a design slice (D1) — the decision to realize
+tackit add "parse FTS5 query" --kind production --label search \
+  --dep 1::"parser realizes the FTS5 query contract"                      # production links the spec it realizes
+tackit search "fts"                                                      # ranked keyword search
+tackit show 2                                                            # slice: task + linked tasks + labels
+tackit edit 1 --desc "tokenized MATCH contract" \
+  --delta "switched from prefix to tokenized query"                      # edits the spec — marks linked tasks stale
+tackit stale                                                             # the reconciliation worklist
+tackit reconcile 2                                                       # reviewed-OK; clear stale
+tackit close 2                                                           # refused while stale (or atop stale deps)
+tackit wont-do 2 --reason "redundant with T3"                            # decided NOT to do (production/meta)
+tackit retire 1 --reason "premise replaced by D99"                       # design/schema spec 100% abandoned
+tackit ls --status open                                                  # query; --status accepts open/closed/wont_do/spec/retired
+```
+
+Sync between the db and the committed dump is automatic. `tackit status` / `export` /
+`import` / `restore` exist only for the divergence cases auto-sync refuses to guess at.
 
 ## Bringing in an existing project
 
-If your tracking already lives in a sprawling plan doc, scattered TODOs, or a 4000-line
-file you dread re-reading, you migrate it into tackit with `tackit load`:
+Migrate a sprawling plan doc or scattered TODOs with `tackit load`. The agent reads
+the source, slices it into right-sized tasks (the judgment, and the actual work), and
+writes one plan file. `kind` is required on every row, every `depends_on` edge needs a
+real `because`, and every `production` row must link the design/schema slice it
+realizes:
 
-1. **The agent reads the source** — in sections, if it's too big to hold at once.
-2. **It slices it into tasks** — what's a right-sized task, what depends on what. *This
-   is the judgment, and it's the actual work* — the tool can't do it for you. A clean,
-   structured doc converts almost mechanically; a messy one takes real reading.
-3. **It writes one plan file** — a compact `[key] Name` + fields format (far smaller
-   than the source, so you can review it before committing). `kind` is required on
-   every row, and every `depends_on` entry needs a real `because` rationale per edge
-   (D33 placeholder-rationale refusal). Because of the creation-gate (D256), every
-   `production` row must link the design/schema slice it realizes — so a migration
-   authors the governing spec slices alongside the tasks:
+```
+[auth-throttle] Redis-backed sessions + per-IP login rate-limiting
+  kind: design
+  desc: sessions live in Redis; the login endpoint is throttled per-IP off that store
+  labels: auth
 
-   ```
-   [auth-throttle] Redis-backed sessions + per-IP login rate-limiting
-     kind: design
-     desc: sessions live in Redis; the login endpoint is throttled per-IP off that store
-     labels: auth
+[rate-limit] Rate-limit the login endpoint
+  kind: production
+  desc: token bucket, per-IP
+  labels: auth
+  depends_on:
+    auth-throttle :: realizes the per-IP throttling half of the decision
+```
 
-   [redis-session] Add a Redis-backed session store
-     kind: production
-     labels: auth
-     depends_on:
-       auth-throttle :: realizes the Redis session-store half of the decision
-
-   [rate-limit] Rate-limit the login endpoint
-     kind: production
-     desc: token bucket, per-IP
-     labels: auth
-     depends_on:
-       auth-throttle :: realizes the per-IP throttling half of the decision
-       redis-session :: rate-limit uses the session store for per-IP counters
-   ```
-4. **`tackit load plan.txt`** — creates everything in one atomic pass, resolving
-   `depends_on` by key. A malformed line, missing `kind`, empty `because`, unknown
-   dep key, or a `production` row with no design/schema link (D256 creation-gate)
-   fails loud and rolls back the *whole* import — never a half-loaded plan.
-   Design/schema rows land at status='spec' by default (per the partition);
-   production/meta at status='open'.
-5. **One collapse pass** — review the labels the import created (`load` reports them) and
-   merge near-duplicates. A migration is exactly when label sprawl floods in.
-
-Honest notes:
-- **Every project is different.** There's no universal recipe — the threshold for "what's
-  a task" is yours, and you'll feel it out as you go.
-- **Prefer one plan file.** `depends_on` resolves by key *within a file*; if you split a
-  huge project across several `load`s, wire the cross-file links afterward with `link_add`.
-- **It's append-mostly.** tackit has no delete; the terminal verbs are `close` (work
-  shipped), `wont_do` (production/meta scope dropped), and `retire` (design/schema spec
-  100% abandoned). Your undo for a bad import is `restore` from a backup or `import` an
-  older `tackit.sql.gz`. Eyeball the plan first.
+`tackit load plan.txt` creates everything in one atomic pass; any bad row rolls back
+the whole import. Then review the labels it reports and merge near-duplicates. tackit
+has no delete: the undo for a bad import is `restore` from a backup, so read the plan
+first.
 
 ## Testing
 
-1,000+ tests: unit, adapter integration (CLI and MCP driven end-to-end), and
-**property-based** (Hypothesis stateful testing). The property machine fuzzes
-random operation sequences against the always-true invariants — including
-**kind/status partition holds** (D36), worklist filter
-`status IN ('open', 'spec')` (D28+D36), retired-terminal-no-status-change
-(D36+T132 generalized), `links()` anchor excludes retired (T180), version-
-monotonic, canonical link pairs (T86), `description_revisions` append-only
-(D29), `wont_do_reason` non-null on wont_do rows, the **spec-integrity model**
-(D254–D259: the kind ontology, the production creation-gate, the meta-only
-append-ban, and edit-refused-on-terminal), and `tackit.sql.gz` round-trip
-fidelity. The machine has already caught real bugs: a serialization edge case,
-a `reopen()` no-op guard that didn't honor the spec/open partition, and a
-`load()` path that hardcoded `status='open'` regardless of kind — exactly the
-kind of sibling-code-path miss no upfront plan would have enumerated. From a
-clone of the repo:
+Unit, adapter integration (CLI and MCP end-to-end) and Hypothesis stateful property
+tests, which fuzz operation sequences against the store's invariants. From a clone:
 
 ```bash
 pip install -e '.[test]'

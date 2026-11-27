@@ -139,7 +139,7 @@ def test_the_scan_sees_the_known_citations():
     for path in _citing_files():
         found.update(cited_sections(path.read_text(encoding="utf-8")))
     assert {"Edits aren't free", "File side-door work the moment it appears",
-            "Wire links explicitly", "Fold-backs", "Ship-on-pain"} <= found
+            "Wire links explicitly", "Fold-backs"} <= found
 
 
 # --- passages other specs require ------------------------------------------------
