@@ -879,6 +879,7 @@ PARITY_ROWS = [
     ("ls", "ls", {}, ["ls"]),
     ("ls with bodies", "ls", {"include_description": True},
      ["ls", "--include-description"]),
+    ("ls by ids", "ls", {"ids": ["T2", 1]}, ["ls", "--ids", "T2", "1"]),
     ("summary", "summary", {}, ["summary"]),
     ("stale", "stale", {}, ["stale"]),
     ("labels", "labels", {}, ["labels"]),

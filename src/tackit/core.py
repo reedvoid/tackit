@@ -2338,6 +2338,7 @@ class Core:
         kind: str | None = None,
         name_prefix: str | None = None,
         order_by: str | None = None,
+        ids: list[int | str] | None = None,
     ) -> list[Task]:
         """D15 + T157 + D36 (v0.5) + D211 + T220 + D283 - list/filter tasks by
         status, label, stale, kind, and/or name_prefix, optionally sorted by a
@@ -2358,7 +2359,16 @@ class Core:
         layer (e.g. ``name_prefix='§9.1'``) instead of the whole kind. NOTE: it
         matches the bare stored name, NOT the synthesized ``prefixed_name``
         (which begins with the kind-letter + id), so filter on ``'§9.1'``, not
-        ``'D39'``."""
+        ``'D39'``.
+
+        T372 (D57): ``ids`` limits the result to the given tasks. Each ref is an
+        int, ``'#id'`` or a prefixed name, resolved through D213's shared
+        resolver with the kind letter checked. Validate all first: any unknown
+        id or wrong kind letter refuses the whole call, naming every offender,
+        so a nonexistent id is reported, never silently missing. An empty list
+        is refused. ``ids`` composes by AND with the other filters; rows keep
+        the ``order_by`` sort and duplicates collapse."""
+        id_filter = self._resolve_ls_ids(ids)
         if status is not None and status not in (
             "open", "closed", "wont_do", "spec", "retired"
         ):
@@ -2406,6 +2416,10 @@ class Core:
             clauses.append("substr(t.name, 1, ?) = ?")
             params.append(len(name_prefix))
             params.append(name_prefix)
+        if id_filter is not None:
+            placeholders = ", ".join("?" for _ in id_filter)
+            clauses.append(f"t.id IN ({placeholders})")
+            params.extend(id_filter)
         where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
         rows = self.conn.execute(
             f"SELECT DISTINCT t.* FROM tasks t {join} {where} "
@@ -2413,6 +2427,36 @@ class Core:
             tuple(params),
         ).fetchall()
         return [self._task_from_row(r) for r in rows]
+
+    def _resolve_ls_ids(self, ids: list[int | str] | None) -> list[int] | None:
+        """T372 (D57) - resolve ``ls``'s ``ids`` refs, all of them before
+        refusing: None when the filter is absent, else the de-duplicated ids in
+        first-seen order. Refuses an empty list, and refuses the whole call when
+        any ref is unknown, malformed or carries the wrong kind letter, naming
+        every offender (the validate-all shape ``links_add`` uses)."""
+        if ids is None:
+            return None
+        if len(ids) == 0:
+            raise ValidationError(
+                "ids filter must be non-empty (an empty list matches nothing; "
+                "omit the filter to list every task) (D57)."
+            )
+        resolved: list[int] = []
+        offenders: list[str] = []
+        for ref in ids:
+            try:
+                tid = self._resolve_existing_ref(ref)
+            except (ValidationError, NotFoundError) as exc:
+                offenders.append(f"  {ref!r}: {exc}")
+                continue
+            if tid not in resolved:
+                resolved.append(tid)
+        if offenders:
+            raise ValidationError(
+                f"ls refused: {len(offenders)} id(s) name no task or the wrong "
+                f"kind -- fix every one and re-run:\n" + "\n".join(offenders)
+            )
+        return resolved
 
     def summary(self) -> dict:
         """D283 - structured-column rollup for situational awareness (serves

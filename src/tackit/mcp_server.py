@@ -700,6 +700,7 @@ def build_server() -> FastMCP:
         name_prefix: str | None = None,
         include_description: bool = False,
         order_by: str | None = None,
+        ids: list[int | str] | None = None,
     ) -> str:
         """Query/board (D15 + D211 + T220 + D283): filter tasks by status, label,
         stale, kind, and/or name_prefix, optionally sorted by a structured column.
@@ -713,13 +714,17 @@ def build_server() -> FastMCP:
         name, NOT the synthesized prefixed_name (so filter on '§9.1', not 'D39').
         `order_by` (D283) sorts by a STRUCTURED column only -- one of id / kind /
         status / created_at / updated_at / stale / degree (link count); never
-        body content. Defaults to id; a disallowed value is refused loudly."""
+        body content. Defaults to id; a disallowed value is refused loudly.
+        `ids` (D57) limits the result to the given tasks: an int, '#id' or a
+        prefixed name like 'M12' (its kind letter is checked); an unknown id or
+        a wrong letter refuses the whole call, naming each one. Use it to check
+        many ids in one call."""
         with _core() as c:
             stale_filter = True if stale else None
             tasks = []
             for t in c.ls(
                 status=status, label=label, stale=stale_filter,
-                kind=kind, name_prefix=name_prefix, order_by=order_by,
+                kind=kind, name_prefix=name_prefix, order_by=order_by, ids=ids,
             ):
                 tasks.append(project_task(t, include_description=include_description))
             return _wrap(c, tasks)

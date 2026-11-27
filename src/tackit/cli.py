@@ -506,7 +506,7 @@ def _cmd_ls(args) -> int:
         stale = True if args.stale else None
         tasks = core.ls(status=args.status, label=args.label, stale=stale,
                         kind=args.kind, name_prefix=args.name_prefix,
-                        order_by=args.order_by)
+                        order_by=args.order_by, ids=args.ids)
         if tasks:
             lines = []
             for t in tasks:
@@ -1051,6 +1051,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="literal case-sensitive name prefix, e.g. '§9.1' (T220)")
     sp.add_argument("--include-description", action="store_true",
                     help="include full task bodies (D211; default lean)")
+    sp.add_argument("--ids", nargs="+",
+                    help="only these tasks: ids, '#id' or prefixed names like M12 (D57)")
     sp.add_argument("--order-by",
                     choices=["id", "kind", "status", "created_at",
                              "updated_at", "stale", "degree"],
