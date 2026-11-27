@@ -7,6 +7,8 @@ the incremental path is really used, and that a stale index falls back to a full
 build.
 """
 
+import shutil
+
 import pytest
 
 from tackit import migrations, schema, sync
@@ -183,3 +185,94 @@ def test_local_meta_keys_never_reach_the_dump(big):
     for key in sync.LOCAL_META_KEYS:
         assert f"'{key}'" not in text, key
     assert "'version'" in text  # the dumped keys are still there
+
+
+def _count_full_builds(monkeypatch):
+    calls = []
+    real = sync._write_full
+
+    def counting(conn, store):
+        calls.append(store.root)
+        return real(conn, store)
+
+    monkeypatch.setattr(sync, "_write_full", counting)
+    return calls
+
+
+def _import_event(store, tmp_path):
+    sync.import_sql(store, force=True)
+
+
+def _restore_event(store, tmp_path):
+    backup = sync.backup_db(store)
+    sync.restore(store, backup)
+
+
+def _legacy_event(store, tmp_path):
+    # An older tackit wrote a strictly newer text dump beside the gz.
+    text = sync.read_dump(store.sql_path)
+    newer = text.replace("INSERT INTO meta (key, value) VALUES ('version', '", "INSERT INTO meta (key, value) VALUES ('version', '9", 1)
+    store.legacy_sql_path.write_bytes(newer.encode("utf-8"))
+    sync.adopt_legacy_dump(store)
+    sync.import_sql(store, force=True)
+
+
+def _pull_event(store, tmp_path):
+    # Another clone's newer dump lands on disk; the next open rebuilds from it.
+    other = tmp_path / "other"
+    shutil.copytree(store.root, other)
+    core = Core.open(start=other)
+    try:
+        core.add("made in the other clone", kind="design")
+    finally:
+        core.close_conn()
+    shutil.copyfile(Store(other).sql_path, store.sql_path)
+    assert sync.startup_sync(store) == "pulled-newer-sql"
+
+
+@pytest.mark.parametrize(
+    "event", [_import_event, _restore_event, _legacy_event, _pull_event],
+    ids=["import", "restore", "legacy-adoption", "pull"],
+)
+def test_a_full_build_follows_each_outside_change(big, tmp_path, monkeypatch, event):
+    # D379: the index is trusted only for the file it describes, so between an
+    # outside change and the end of the first write a full build must run (restore
+    # runs it itself through export; the others leave it to the first write).
+    store = big.store
+    big.close_conn()
+    calls = _count_full_builds(monkeypatch)
+    event(store, tmp_path)
+    core = Core.open(start=store.root)
+    try:
+        core.edit(2, description="first write after the outside change", delta="write after outside change")
+        assert store.root in calls  # a full build of THIS store, not the other clone's
+        monkeypatch.undo()
+        _assert_matches_full_build(core)
+        core.edit(3, description="second write, incremental again", delta="incremental again")
+        _assert_matches_full_build(core)
+    finally:
+        core.close_conn()
+
+
+def test_a_crash_after_the_file_write_before_commit_recovers_on_open(big, monkeypatch):
+    real = sync.finalize_mutation
+
+    def write_then_crash(conn, store):
+        real(conn, store)
+        raise RuntimeError("crash between the file write and COMMIT")
+
+    monkeypatch.setattr(sync, "finalize_mutation", write_then_crash)
+    with pytest.raises(RuntimeError, match="crash between"):
+        big.add("written to the dump only", kind="design")
+    monkeypatch.undo()
+    store = big.store
+    big.close_conn()
+    # The db rolled back; the dump on disk is one version ahead.
+    core = Core.open(start=store.root)
+    try:
+        names = [row[0] for row in core.conn.execute("SELECT name FROM tasks")]
+        assert "written to the dump only" in names  # rebuilt from the newer dump
+        core.edit(4, description="after recovery", delta="write after recovery")
+        _assert_matches_full_build(core)
+    finally:
+        core.close_conn()
