@@ -49,7 +49,7 @@ _DUMP_ORDER = tuple(schema.DUMPED_TABLES) + (("meta", ("key",)),)
 _META_INDEX = len(schema.DUMPED_TABLES)
 
 # Local-only meta keys (S42): never written into the dump text.
-LOCAL_META_KEYS = ("synced_sql_hash", "dump_index_stat")
+LOCAL_META_KEYS = ("synced_sql_hash", "dump_index_stat", "synced_sql_stat")
 
 
 # --- serialization ----------------------------------------------------------
@@ -501,6 +501,7 @@ def _commit_dump(conn: sqlite3.Connection, store: Store, chunks: list[dict], dat
     for chunk in chunks:
         digests.append(chunk["digest"])
     _set_meta(conn, "synced_sql_hash", _chained_digest(digests))
+    _set_meta(conn, "synced_sql_stat", _stat_key(store.sql_path))  # D60 open fast path
     if not _has_index_tables(conn):
         return  # a db not yet migrated to D379's tables (an old backup, a pre-migration export)
     conn.execute("DELETE FROM dump_chunks")
@@ -645,6 +646,7 @@ def rebuild_db_from_sql(store: Store) -> None:
         # mark the freshly-built db as in-sync with the file it came from
         conn.execute("BEGIN")
         _set_meta(conn, "synced_sql_hash", dump_hash(sql_text))
+        _set_meta(conn, "synced_sql_stat", _stat_key(store.sql_path))  # D60 open fast path
         if conn.execute("SELECT 1 FROM meta WHERE key='schema_version'").fetchone() is None:
             _set_meta(conn, "schema_version", schema.SCHEMA_VERSION)
         conn.execute("COMMIT")
@@ -720,11 +722,18 @@ def startup_sync(store: Store) -> str:
     try:
         stored_hash = get_synced_hash(conn)
         vdb = get_version(conn)
+        stored_stat = _get_meta(conn, "synced_sql_stat")
     finally:
         conn.close()
 
+    # D60 / D379 fast path: the file is the one this db last wrote or verified.
+    disk_stat = _stat_key(store.sql_path)
+    if stored_stat == disk_stat:
+        return "in-sync"
+
     disk_text = read_dump(store.sql_path)
     if hash_matches(stored_hash, disk_text):
+        _record_verified_stat(store, disk_stat)
         return "in-sync"
 
     vsql = parse_version_from_sql(disk_text)
@@ -739,6 +748,18 @@ def startup_sync(store: Store) -> str:
         f"Resolve explicitly: `tackit import --force` to adopt tackit.sql.gz "
         f"(backs up the .db first), or `tackit export` to write the .db out."
     )
+
+
+def _record_verified_stat(store: Store, disk_stat: str) -> None:
+    """After a full check finds the file in sync, record its stat so the next open
+    takes the fast path (D60)."""
+    conn = connect(store.db_path)
+    try:
+        conn.execute("BEGIN")
+        _set_meta(conn, "synced_sql_stat", disk_stat)
+        conn.execute("COMMIT")
+    finally:
+        conn.close()
 
 
 def status(store: Store) -> dict:
