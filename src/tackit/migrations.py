@@ -436,6 +436,19 @@ def _mig_010_clear_terminal_stale(conn: sqlite3.Connection) -> None:
     )
 
 
+def _mig_011_dump_change_capture(conn: sqlite3.Connection) -> None:
+    """D379 / S380 / S381 -- add the local chunk index and change log of the
+    incremental dump write, and the change-capture triggers. Reads no rows and
+    records nothing for existing rows: the index starts empty, so the batch
+    finalize that follows this migration does a full build."""
+    from . import schema
+
+    conn.execute(schema.S380_DUMP_CHUNKS)
+    conn.execute(schema.S381_DUMP_CHANGES)
+    for statement in schema.POST_ROW_DDL:
+        conn.execute(statement)
+
+
 # Ordered registry. Append migrations here in target-version order as they land
 # (T84 -> 2, T85 -> 3, T86 -> 4, ...).
 MIGRATIONS: list[Migration] = [
@@ -488,6 +501,11 @@ MIGRATIONS: list[Migration] = [
         target_version=11,
         name="clear stale on closed/wont_do/retired rows: only live tasks carry the flag (D137)",
         migrate=_mig_010_clear_terminal_stale,
+    ),
+    Migration(
+        target_version=12,
+        name="add the dump chunk index, the change log and its triggers (D379 / S380 / S381)",
+        migrate=_mig_011_dump_change_capture,
     ),
 ]
 

@@ -475,6 +475,22 @@ class TackitMachine(RuleBasedStateMachine):
         finally:
             mem.close()
 
+    @invariant()
+    def dump_file_equals_a_full_build(self):
+        """D379: after every operation the dump on disk is byte-identical to a
+        full build of the db, and its stored hash is the full text's hash. The
+        incremental write copies unchanged chunks; a missed change, a wrong cut or
+        a stale index shows up here as a byte difference."""
+        path = self.core.store.sql_path
+        if not path.exists():
+            return
+        text = sync.dump_text(self.core.conn)
+        assert path.read_bytes() == sync.compress_dump(text)
+        stored = self.core.conn.execute(
+            "SELECT value FROM meta WHERE key = 'synced_sql_hash'"
+        ).fetchone()[0]
+        assert stored == sync.dump_hash(text)
+
 
 # Bound the run so it stays fast in CI; deadline off because each step does file +
 # db IO. Suppress the too-slow health check for the per-example store setup.

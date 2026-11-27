@@ -18,8 +18,10 @@ markers in ``meta`` (S6) govern sync:
 
 from __future__ import annotations
 
+import bisect
 import gzip
 import hashlib
+import io
 import os
 import sqlite3
 import threading
@@ -39,16 +41,15 @@ _GZIP_WBITS = 31
 _FLUSH_ROW_MODULUS = 8
 _ROW_BOUNDARY = b"\nINSERT INTO "
 
-# Tables serialized into the dump, in a dependency-safe, deterministic order.
+# Tables serialized into the dump, in a dependency-safe, deterministic order
+# (schema.DUMPED_TABLES, the one home of the order), then meta's dumped keys.
 # tasks_fts (S5) is intentionally excluded -- it is derived content, rebuilt by
 # the S5 triggers when the task rows are re-inserted on import.
-_DUMP_TABLES = [
-    ("tasks", "id"),
-    ("task_labels", "task_id, label"),
-    ("links", "task_a, task_b"),
-    ("status_transitions", "id"),
-    ("description_revisions", "id"),
-]
+_DUMP_ORDER = tuple(schema.DUMPED_TABLES) + (("meta", ("key",)),)
+_META_INDEX = len(schema.DUMPED_TABLES)
+
+# Local-only meta keys (S42): never written into the dump text.
+LOCAL_META_KEYS = ("synced_sql_hash", "dump_index_stat")
 
 
 # --- serialization ----------------------------------------------------------
@@ -63,13 +64,7 @@ def _sql_literal(value) -> str:
     return f"'{text}'"
 
 
-def dump_text(conn: sqlite3.Connection) -> str:
-    """Produce the deterministic dump text from the current db state.
-
-    Self-contained: schema DDL (so the file rebuilds standalone) followed by
-    ordered INSERTs. Excludes the local-only ``synced_sql_hash`` meta row. The
-    ``version`` meta row IS included, so the file carries its own Vsql.
-    """
+def _header_lines(conn: sqlite3.Connection) -> list[str]:
     version = get_version(conn)
     lines: list[str] = [
         "-- tackit store (D18 git-canonical serialization). DO NOT hand-edit;",
@@ -81,27 +76,88 @@ def dump_text(conn: sqlite3.Connection) -> str:
     # Schema first, so a fresh checkout rebuilds by executing this file alone.
     for ddl in schema.ALL_DDL:
         lines.append(ddl.strip())
+    return lines
 
-    for table, order_by in _DUMP_TABLES:
-        rows = conn.execute(f"SELECT * FROM {table} ORDER BY {order_by}").fetchall()
-        for row in rows:
-            cols = row.keys()
-            vals = ", ".join(_sql_literal(row[c]) for c in cols)
-            collist = ", ".join(cols)
-            lines.append(f"INSERT INTO {table} ({collist}) VALUES ({vals});")
 
-    # meta last, excluding the local-only integrity hash (see module docstring).
-    meta_rows = conn.execute(
-        "SELECT key, value FROM meta WHERE key <> 'synced_sql_hash' ORDER BY key"
-    ).fetchall()
-    for row in meta_rows:
-        lines.append(
-            f"INSERT INTO meta (key, value) VALUES "
-            f"({_sql_literal(row['key'])}, {_sql_literal(row['value'])});"
-        )
-
+def _tail_lines() -> list[str]:
+    # D379 / S381: post-row DDL after every row, so loading the dump records nothing.
+    lines: list[str] = []
+    for statement in schema.POST_ROW_DDL:
+        lines.append(statement.strip())
     lines.append("COMMIT;")
-    return "\n".join(lines) + "\n"
+    return lines
+
+
+def _row_lines(conn: sqlite3.Connection, start=None, end=None):
+    """Yield ``(position, line)`` for each dumped row in dump order, where
+    position is ``(table index,) + key``; with ``start <= position < end`` when
+    either bound is given. A bound of one element means "the start of that table".
+    """
+    for index, (table, keys) in enumerate(_DUMP_ORDER):
+        if start is not None and index < start[0]:
+            continue
+        if end is not None and index > end[0]:
+            break
+        if end is not None and index == end[0] and len(end) == 1:
+            break
+        where: list[str] = []
+        params: list = []
+        if table == "meta":
+            where.append(f"key NOT IN ({', '.join('?' * len(LOCAL_META_KEYS))})")
+            params.extend(LOCAL_META_KEYS)
+        columns = ", ".join(keys)
+        marks = ", ".join("?" * len(keys))
+        if start is not None and index == start[0] and len(start) > 1:
+            where.append(f"({columns}) >= ({marks})")
+            params.extend(start[1:])
+        if end is not None and index == end[0] and len(end) > 1:
+            where.append(f"({columns}) < ({marks})")
+            params.extend(end[1:])
+        sql = f"SELECT * FROM {table}"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += f" ORDER BY {columns}"
+        for row in conn.execute(sql, params):
+            names = row.keys()
+            values = ", ".join(_sql_literal(row[name]) for name in names)
+            key = []
+            for name in keys:
+                key.append(row[name])
+            yield (index,) + tuple(key), f"INSERT INTO {table} ({', '.join(names)}) VALUES ({values});"
+
+
+def _region_bytes(conn, start, end, first: bool, last: bool):
+    """D379: the dump text of one contiguous run of chunks, as utf-8 bytes, with
+    the offset of each row it holds. ``first`` adds the header and DDL; ``last``
+    adds the post-row DDL and COMMIT. Joined in order, the runs of a whole store
+    are byte-identical to dump_text."""
+    parts: list[bytes] = []
+    positions: list[tuple[int, tuple]] = []
+    length = 0
+    if first:
+        head = "\n".join(_header_lines(conn)).encode("utf-8")
+        parts.append(head)
+        length = len(head)
+    for position, line in _row_lines(conn, start, end):
+        encoded = ("\n" + line).encode("utf-8")
+        positions.append((length, position))
+        parts.append(encoded)
+        length += len(encoded)
+    if last:
+        parts.append(("\n" + "\n".join(_tail_lines()) + "\n").encode("utf-8"))
+    return b"".join(parts), positions
+
+
+def dump_text(conn: sqlite3.Connection) -> str:
+    """Produce the deterministic dump text from the current db state: the full
+    build, and the reference the incremental write must match (D379).
+
+    Self-contained: schema DDL (so the file rebuilds standalone), ordered INSERTs,
+    then the post-row DDL. Excludes the local-only meta keys. The ``version`` meta
+    row IS included, so the file carries its own Vsql.
+    """
+    data, _ = _region_bytes(conn, None, None, True, True)
+    return data.decode("utf-8")
 
 
 _CHAINED_HASH_TAG = "c1:"
@@ -207,7 +263,11 @@ def read_dump(path: Path) -> str:
     if not raw:
         raise SyncError(f"{path} is empty, not a gzip dump; restore it from git.")
     try:
-        return gzip.decompress(raw).decode("utf-8")
+        # D379: a dump is many gzip members; GzipFile reads them in one linear
+        # pass, while gzip.decompress re-slices the rest of the buffer per member
+        # (15 s against 0.4 s on a 5,868-member, 58 MB dump).
+        with gzip.GzipFile(fileobj=io.BytesIO(raw)) as stream:
+            return stream.read().decode("utf-8")
     except (gzip.BadGzipFile, EOFError, zlib.error, UnicodeDecodeError) as exc:
         raise SyncError(f"{path} is damaged, not a readable gzip dump ({exc}); restore it from git.") from exc
 
@@ -217,9 +277,14 @@ def write_dump(path: Path, text: str) -> None:
     mid-write never leaves a partial dump. The temp name is unique per writer
     because adopt_legacy_dump runs outside any db lock, so two sessions opening
     a store during its first upgrade can write at once."""
+    write_dump_bytes(path, compress_dump(text))
+
+
+def write_dump_bytes(path: Path, data: bytes) -> None:
+    """The atomic write under write_dump, for bytes already compressed (D379)."""
     tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     try:
-        tmp.write_bytes(compress_dump(text))
+        tmp.write_bytes(data)
         os.replace(tmp, path)
     except OSError:
         tmp.unlink(missing_ok=True)
@@ -344,9 +409,193 @@ def finalize_mutation(conn: sqlite3.Connection, store: Store) -> None:
     -- Vsql > Vdb -- which startup_sync recovers as a clean rebuild from the dump.)
     """
     _set_meta(conn, "version", str(get_version(conn) + 1))
-    text = dump_text(conn)
-    _set_meta(conn, "synced_sql_hash", dump_hash(text))
-    write_dump(store.sql_path, text)
+    chunks = _load_chunk_index(conn, store)
+    if chunks is None:
+        _write_full(conn, store)
+    else:
+        _write_incremental(conn, store, chunks)
+
+
+# --- D379: incremental dump write ---------------------------------------------
+
+def _stat_key(path: Path) -> str:
+    """The file identity D379 and D60 compare: size, mtime_ns and inode."""
+    info = path.stat()
+    return f"{info.st_size}:{info.st_mtime_ns}:{info.st_ino}"
+
+
+def _get_meta(conn: sqlite3.Connection, key: str) -> str | None:
+    row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+    if row is None:
+        return None
+    return row[0]
+
+
+def _has_index_tables(conn: sqlite3.Connection) -> bool:
+    row = conn.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' "
+        "AND name IN ('dump_chunks', 'dump_changes')"
+    ).fetchone()
+    return row[0] == 2
+
+
+def _position_from_index(row) -> tuple | None:
+    if row["tbl"] is None:
+        return None
+    keys = _DUMP_ORDER[row["tbl"]][1]
+    if len(keys) == 1:
+        return (row["tbl"], row["k1"])
+    return (row["tbl"], row["k1"], row["k2"])
+
+
+def _load_chunk_index(conn: sqlite3.Connection, store: Store) -> list[dict] | None:
+    """S380: the chunk index, or None when it does not describe the file on disk
+    (missing, empty, or its stat key differs: a pull, import, restore, rebuild,
+    legacy adoption or migration), in which case the write is a full build."""
+    if not store.sql_path.exists():
+        return None
+    if not _has_index_tables(conn):
+        return None
+    if _get_meta(conn, "dump_index_stat") != _stat_key(store.sql_path):
+        return None
+    chunks = []
+    for row in conn.execute("SELECT * FROM dump_chunks ORDER BY seq"):
+        chunks.append({
+            "position": _position_from_index(row),
+            "offset": row["byte_offset"],
+            "length": row["byte_length"],
+            "digest": row["digest"],
+        })
+    if not chunks:
+        return None
+    return chunks
+
+
+def _chunks_of_region(data: bytes, positions, first: bool) -> list[dict]:
+    """Split one region's bytes into chunks by the D60 cut rule, each with its
+    first row position, gzip member and digest."""
+    position_at = {}
+    for offset, position in positions:
+        position_at[offset] = position
+    cuts = chunk_cuts(data)
+    chunks = []
+    for start, end in zip(cuts, cuts[1:]):
+        piece = data[start:end]
+        if start == 0 and first:
+            position = None
+        else:
+            position = position_at[start]
+        chunks.append({
+            "position": position,
+            "member": compress_member(piece),
+            "digest": hashlib.sha256(piece).digest(),
+        })
+    return chunks
+
+
+def _commit_dump(conn: sqlite3.Connection, store: Store, chunks: list[dict], data: bytes) -> None:
+    """Write the assembled file, then record its hash, its chunk index and its
+    stat, and empty the change log, all inside the caller's transaction."""
+    write_dump_bytes(store.sql_path, data)
+    digests = []
+    for chunk in chunks:
+        digests.append(chunk["digest"])
+    _set_meta(conn, "synced_sql_hash", _chained_digest(digests))
+    if not _has_index_tables(conn):
+        return  # a db not yet migrated to D379's tables (an old backup, a pre-migration export)
+    conn.execute("DELETE FROM dump_chunks")
+    rows = []
+    offset = 0
+    for seq, chunk in enumerate(chunks):
+        position = chunk["position"]
+        tbl = k1 = k2 = None
+        if position is not None:
+            tbl = position[0]
+            k1 = position[1]
+            if len(position) > 2:
+                k2 = position[2]
+        rows.append((seq, tbl, k1, k2, offset, chunk["length"], chunk["digest"]))
+        offset += chunk["length"]
+    conn.executemany(
+        "INSERT INTO dump_chunks(seq, tbl, k1, k2, byte_offset, byte_length, digest) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        rows,
+    )
+    conn.execute("DELETE FROM dump_changes")
+    _set_meta(conn, "dump_index_stat", _stat_key(store.sql_path))
+
+
+def _write_full(conn: sqlite3.Connection, store: Store) -> None:
+    """D379: the full build -- every row serialized, every chunk compressed."""
+    data, positions = _region_bytes(conn, None, None, True, True)
+    chunks = _chunks_of_region(data, positions, True)
+    members = []
+    for chunk in chunks:
+        members.append(chunk["member"])
+        chunk["length"] = len(chunk["member"])
+    _commit_dump(conn, store, chunks, b"".join(members))
+
+
+def _write_incremental(conn: sqlite3.Connection, store: Store, old: list[dict]) -> None:
+    """D379: rebuild only the chunks holding changed rows (plus the header chunk
+    and the meta tail, which change on every write) and copy every other chunk's
+    member from the current file. Each run of rebuilt chunks starts at a row that
+    did not change, so its cut decision -- which depends only on that row -- is
+    the same as in a full build, and the result is byte-identical to one."""
+    firsts = []
+    for chunk in old[1:]:
+        firsts.append(chunk["position"])
+
+    def chunk_of(position):
+        return bisect.bisect_right(firsts, position)
+
+    affected = {0}
+    meta_chunk = chunk_of((_META_INDEX,))
+    for index in range(max(meta_chunk - 1, 0), len(old)):
+        affected.add(index)
+    for row in conn.execute("SELECT DISTINCT tbl, k1, k2 FROM dump_changes"):
+        if len(_DUMP_ORDER[row["tbl"]][1]) == 1:
+            position = (row["tbl"], row["k1"])
+        else:
+            position = (row["tbl"], row["k1"], row["k2"])
+        index = chunk_of(position)
+        affected.add(index)
+        if index > 0:
+            affected.add(index - 1)
+
+    runs = []
+    for index in sorted(affected):
+        if runs and runs[-1][1] == index - 1:
+            runs[-1][1] = index
+        else:
+            runs.append([index, index])
+
+    current = store.sql_path.read_bytes()
+    chunks: list[dict] = []
+    members: list[bytes] = []
+    next_index = 0
+    for run_start, run_end in runs:
+        for index in range(next_index, run_start):
+            chunk = old[index]
+            members.append(current[chunk["offset"]:chunk["offset"] + chunk["length"]])
+            chunks.append(chunk)
+        first = run_start == 0
+        last = run_end == len(old) - 1
+        start = old[run_start]["position"]
+        end = None
+        if not last:
+            end = old[run_end + 1]["position"]
+        data, positions = _region_bytes(conn, start, end, first, last)
+        for chunk in _chunks_of_region(data, positions, first):
+            chunk["length"] = len(chunk["member"])
+            members.append(chunk["member"])
+            chunks.append(chunk)
+        next_index = run_end + 1
+    for index in range(next_index, len(old)):
+        chunk = old[index]
+        members.append(current[chunk["offset"]:chunk["offset"] + chunk["length"]])
+        chunks.append(chunk)
+    _commit_dump(conn, store, chunks, b"".join(members))
 
 
 def export(store: Store) -> int:
@@ -357,9 +606,7 @@ def export(store: Store) -> int:
     conn = connect(store.db_path)
     try:
         conn.execute("BEGIN")
-        text = dump_text(conn)
-        _set_meta(conn, "synced_sql_hash", dump_hash(text))
-        write_dump(store.sql_path, text)
+        _write_full(conn, store)
         conn.execute("COMMIT")
         return get_version(conn)
     finally:

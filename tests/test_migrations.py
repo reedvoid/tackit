@@ -1160,7 +1160,7 @@ def test_mig_011_clears_terminal_flags_keeps_live_flags_and_updated_at(tmp_path)
     _seed_v10_store_with_flags_everywhere(tmp_path)
     c = Core.open(start=tmp_path)
     try:
-        assert migrations.get_schema_version(c.conn) == 11
+        assert migrations.get_schema_version(c.conn) == int(schema.SCHEMA_VERSION)
         assert _flags_and_stamps(c) == _EXPECTED_AFTER_MIG_011
     finally:
         c.close_conn()
@@ -1177,7 +1177,7 @@ def test_mig_011_runs_after_rebuilding_from_a_version_10_dump(tmp_path):
     assert not Store(clone).db_path.exists()
     c = Core.open(start=clone)
     try:
-        assert migrations.get_schema_version(c.conn) == 11
+        assert migrations.get_schema_version(c.conn) == int(schema.SCHEMA_VERSION)
         assert _flags_and_stamps(c) == _EXPECTED_AFTER_MIG_011
     finally:
         c.close_conn()

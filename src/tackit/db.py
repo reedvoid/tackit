@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .errors import NotFoundError, TackitError
-from .schema import ALL_DDL, SCHEMA_VERSION
+from .schema import ALL_DDL, POST_ROW_DDL, SCHEMA_VERSION
 
 DIR_NAME = ".tackit"
 DB_NAME = "tackit.db"
@@ -122,6 +122,9 @@ def init_store(root: Path | None = None) -> Store:
     try:
         for ddl in ALL_DDL:
             conn.executescript(ddl)
+        # D379 / S381: created after rows (a fresh store has none).
+        for statement in POST_ROW_DDL:
+            conn.execute(statement)
         # Seed meta (S6) on a fresh db; leave existing values alone (D18).
         conn.execute(
             "INSERT OR IGNORE INTO meta(key, value) VALUES ('version', '0');"

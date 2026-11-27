@@ -6,7 +6,7 @@ core logic (graph integrity in D14, status/stale rules in D7); see those
 slices for the authoritative formulations.
 """
 
-SCHEMA_VERSION = "11"
+SCHEMA_VERSION = "12"
 
 # D26 task kind taxonomy. The four values are also reserved label strings (D14):
 # label_add / load refuse a label equal to any of them, because S1.kind absorbs
@@ -189,6 +189,66 @@ CREATE TABLE IF NOT EXISTS description_revisions (
 );
 """
 
+# --- D379: the dumped tables, in dump order, with the key each is ordered by --
+# The one home of the dump order: sync.dump_text writes rows in this order, the
+# chunk index (S380) records row positions as (index in this list,) + key, and the
+# change-capture triggers (S381) record keys the same way. meta follows them in
+# the dump (its dumped keys only).
+DUMPED_TABLES = (
+    ("tasks", ("id",)),
+    ("task_labels", ("task_id", "label")),
+    ("links", ("task_a", "task_b")),
+    ("status_transitions", ("id",)),
+    ("description_revisions", ("id",)),
+)
+
+# --- S380 `dump_chunks` (local-only, never dumped) ------------------------------
+# One row per chunk of the current tackit.sql.gz, in file order: the chunk's first
+# row position (tbl = index in DUMPED_TABLES plus meta's index after them; NULL for
+# the header chunk), the byte range of its gzip member, and the sha256 of its text.
+# Valid only while meta's dump_index_stat matches the file on disk (D379).
+S380_DUMP_CHUNKS = """
+CREATE TABLE IF NOT EXISTS dump_chunks (
+    seq          INTEGER PRIMARY KEY,
+    tbl          INTEGER,
+    k1,
+    k2,
+    byte_offset  INTEGER NOT NULL,
+    byte_length  INTEGER NOT NULL,
+    digest       BLOB    NOT NULL
+);
+"""
+
+# --- S381 `dump_changes` (local-only, never dumped) -----------------------------
+# Rows of the dumped tables touched since the last dump write: tbl is the index in
+# DUMPED_TABLES, k1/k2 the row's key (k2 NULL for one-column keys). Filled by the
+# triggers below, drained by the dump write in the same transaction (D379).
+S381_DUMP_CHANGES = """
+CREATE TABLE IF NOT EXISTS dump_changes (
+    tbl  INTEGER NOT NULL,
+    k1   NOT NULL,
+    k2
+);
+"""
+
+
+def _dump_change_triggers() -> list[str]:
+    """S381: AFTER INSERT / UPDATE / DELETE on each dumped table records the row's
+    key, so a write through any connection reaches the next incremental dump."""
+    statements = []
+    for index, (table, keys) in enumerate(DUMPED_TABLES):
+        for event in ("INSERT", "UPDATE", "DELETE"):
+            ref = "OLD" if event == "DELETE" else "NEW"
+            k2 = f"{ref}.{keys[1]}" if len(keys) > 1 else "NULL"
+            statements.append(
+                f"CREATE TRIGGER IF NOT EXISTS dump_change_{table}_{event.lower()} "
+                f"AFTER {event} ON {table} BEGIN "
+                f"INSERT INTO dump_changes(tbl, k1, k2) VALUES ({index}, {ref}.{keys[0]}, {k2}); "
+                f"END;"
+            )
+    return statements
+
+
 # Ordered DDL for a fresh store. tasks before its dependents; FTS table before
 # its triggers.
 ALL_DDL = [
@@ -200,4 +260,11 @@ ALL_DDL = [
     S5_FTS_TRIGGERS,
     S6_META,
     S7_DESCRIPTION_REVISIONS,
+    S380_DUMP_CHUNKS,
+    S381_DUMP_CHANGES,
 ]
+
+# D379 / S381: DDL created AFTER rows on every path that loads rows (init_store,
+# the dump's own text, the migration), one statement per entry so a migration can
+# conn.execute each. Loading a dump therefore records no changes.
+POST_ROW_DDL = _dump_change_triggers()
