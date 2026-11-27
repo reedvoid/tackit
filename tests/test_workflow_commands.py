@@ -400,3 +400,55 @@ def test_no_shipped_command_cites_an_outside_methods_phases():
 )
 def test_diagnose_and_build_wording_fixes_landed(filename, phrase):
     assert phrase in _shipped()[filename]
+
+
+# --- T371 (D306): one planted-mutant run procedure, inline where mutants are demanded ---
+
+MUTANT_RUN_PARAGRAPH = (
+    "RUNNING PLANTED MUTANTS: give each mutant its own copy of the source and tests in a "
+    "fresh, uniquely named scratch directory (create it new; never clear an existing one), "
+    "point the interpreter at that copy and check the imported code resolves into it "
+    "(Python: PYTHONPATH to the copy's src), give each run its own test temp root and turn "
+    "off shared caches (pytest: `--basetemp` set inside the copy, and `-p no:cacheprovider`), "
+    "and put "
+    "one break in each copy, never several (grouped breaks hide which break failed which "
+    "test). Launch every independent mutant at once, up to the machine's core count; run "
+    "them one after another only when one mutant's result decides the next. A sweep "
+    "question (which existing tests pin this behavior?) runs the full suite per mutant, "
+    "because a test that builds its target set at runtime escapes a grep; proving one new "
+    "test can fail runs that test's own file. Report per mutant what was broken and the "
+    "failing test ids, or \"0 failed\": no test pins it, so the plan needs a new pin."
+)
+MUTANT_RUN_FILES = ("commands/firmup.md", "commands/build.md", "skills/test-audit/SKILL.md")
+
+
+def _files_missing_the_mutant_procedure(shipped: dict[str, str]) -> list[str]:
+    """Every shipped file that mentions a mutant must carry the run procedure verbatim."""
+    missing = []
+    for name, text in sorted(shipped.items()):
+        if "mutant" in text.lower() and MUTANT_RUN_PARAGRAPH not in text:
+            missing.append(name)
+    return missing
+
+
+@pytest.mark.parametrize("filename", MUTANT_RUN_FILES)
+def test_mutant_run_paragraph_is_identical_in_each_demanding_file(filename):
+    assert MUTANT_RUN_PARAGRAPH in _shipped()[filename]
+
+
+def test_every_file_that_mentions_mutants_carries_the_procedure():
+    assert _files_missing_the_mutant_procedure(_shipped()) == []
+
+
+def test_the_mutant_procedure_check_can_fail():
+    shipped = dict(_shipped())
+    assert shipped["commands/build.md"].count(MUTANT_RUN_PARAGRAPH) == 1
+    # a drifted copy (one word changed) is caught by name
+    shipped["commands/build.md"] = shipped["commands/build.md"].replace(
+        "core count", "CPU count"
+    )
+    assert _files_missing_the_mutant_procedure(shipped) == ["commands/build.md"]
+    # a new file demanding mutants without the procedure is caught too
+    shipped = dict(_shipped())
+    shipped["commands/trim.md"] = shipped["commands/trim.md"] + "\nPlant a mutant.\n"
+    assert _files_missing_the_mutant_procedure(shipped) == ["commands/trim.md"]
