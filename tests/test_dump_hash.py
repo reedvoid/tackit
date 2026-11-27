@@ -104,3 +104,20 @@ def test_a_store_holding_an_untagged_hash_opens_in_sync_and_retags_on_write(stor
         core.close_conn()
     assert stored.startswith("c1:")
     assert sync.status(Store(store_path))["verdict"] == "in sync"
+
+
+def test_read_dump_streams_the_members_instead_of_gzip_decompress(tmp_path, monkeypatch):
+    # gzip.decompress re-slices the remaining buffer per member: 15 s against
+    # 0.4 s on a 5,868-member, 58 MB dump. A timing test would be flaky, so pin
+    # the reader itself: read_dump must not route through gzip.decompress.
+    import gzip
+
+    path = tmp_path / "dump.sql.gz"
+    text = _rows(2000)
+    sync.write_dump(path, text)
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("read_dump used gzip.decompress")
+
+    monkeypatch.setattr(gzip, "decompress", refuse)
+    assert sync.read_dump(path) == text
