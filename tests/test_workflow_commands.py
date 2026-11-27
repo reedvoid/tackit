@@ -452,3 +452,32 @@ def test_the_mutant_procedure_check_can_fail():
     shipped = dict(_shipped())
     shipped["commands/trim.md"] = shipped["commands/trim.md"] + "\nPlant a mutant.\n"
     assert _files_missing_the_mutant_procedure(shipped) == ["commands/trim.md"]
+
+
+# --- T374 (D306, D57): the commands name the tool for the read they demand -------
+
+SHOW_READ_SENTENCE = "Read a tackit task or slice with `show <id>`: one call returns the whole body."
+TRIM_IDS_CHECK = (
+    "tackit id → check ALL the ids in one `ls` call with `ids=[...]` (CLI: "
+    "`tackit --json ls --ids M12 T40`), never one `show` per id. A refusal naming "
+    "an id means no such task exists: that line is stale."
+)
+
+
+@pytest.mark.parametrize("filename", ("commands/firmup.md", "commands/orient.md"))
+def test_read_in_full_steps_name_show_identically(filename):
+    assert SHOW_READ_SENTENCE in _shipped()[filename]
+
+
+def test_trim_checks_every_id_in_one_ls_call():
+    text = _shipped()["commands/trim.md"]
+    assert TRIM_IDS_CHECK in text
+    # the converse: the old one-call-per-id instruction is gone
+    assert "`show`/`board` it" not in text
+
+
+def test_readme_names_the_id_list_check():
+    text = _normalized(REPO / "README.md")
+    assert '| "Are M12 and T40 still open?" | `ls` with `ids` (one call for any number of ids) |' in text
+    assert ("`ls` with `ids=[...]` checks many tasks in one call, and every `ls` and "
+            "`stale` row carries `description_chars`.") in text

@@ -13,6 +13,7 @@ Get oriented:
    - ⚠ Check MEMORY.md against the budget /trim defines, or note that the last handoff logged a bloat alert. Over → NOTE it and recommend a SOLO /trim. Do NOT trim (read-only).
      MEMORY.md BUDGET: Zone 1 (above the index heading) ≤ 40 lines and ≤ 8 KB; the whole file ≤ 120 lines and ≤ 12 KB; every Zone 2 line ≤ 300 bytes. Measure with `wc -lc`, not by eye.
 2. First BUILD THE READING LIST, then read every item on it IN FULL — this is the step I keep under-doing, so the list is explicit and each item gets checked off. A 40-line window around a cited line is NOT reading the file; grep is not reading. From the immediate next task(s) plus a layer or two UP (drawing on the session file + the Zone-2 pointers as your menu), enumerate and read:
+   - Read a tackit task or slice with `show <id>`: one call returns the whole body.
    - every design/schema slice it links (D#/S#) — the WHOLE slice, not just the one rule referenced;
    - every memory topic-file it links (`[[…]]`) or that a Zone-2 pointer names as relevant;
    - every code touchpoint — the WHOLE function/section it sits in, plus the callers/callees the design leans on — NEVER just a ±20-line window around the cited line;

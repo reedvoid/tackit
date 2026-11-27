@@ -167,6 +167,7 @@ the tools. After any change it reports what it did and what's outstanding.
 | "What can I link to?" | `links` — anchor layer (design+schema) or depth-1 expansion |
 | "Tag task 12 `smoke-test`" / "untag it" | `label_add` / `label_rm` |
 | "What's open / closed / stale?" | `ls` / `stale` / `summary` |
+| "Are M12 and T40 still open?" | `ls` with `ids` (one call for any number of ids) |
 | "What labels exist?" | `labels` — each with its usage |
 | "Close task 12" / "reopen it" | `close` (refused if stale / spec / wont_do / retired) / `reopen` (corrects a closed record; new work is a new task) |
 | "Mark task 12 won't-do" | `wont_do` (production/meta only; also on a closed task) with durable reason |
@@ -225,7 +226,8 @@ Python type hints so they can't drift. Tool names are the bare verbs: `add`, `sh
 `edit_replace_substring` send only the change instead of the whole body.
 
 Reads are lean: `ls` and `board` return no bodies unless asked
-(`include_description=True`). `show` returns the full task with lean links, keeping
+(`include_description=True`). `ls` with `ids=[...]` checks many tasks in one call, and every `ls` and
+`stale` row carries `description_chars`. `show` returns the full task with lean links, keeping
 `because` / `last_edit_delta` only on open/spec stale reads;
 `include_neighbor_because=True` returns them on every link. Every result is a compact
 JSON envelope: `result` always, plus each of `stale_alert`, `label_nudge`,

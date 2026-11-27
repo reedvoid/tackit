@@ -7,6 +7,7 @@ argument-hint: <meta task id> [optional: emphasis / scope]
 Target meta task (+ any emphasis): $ARGUMENTS
 
 1. READ THE META IN FULL + its linked neighbors. Then BUILD A READING LIST and read every item IN FULL — first-hand, never a keyword skim or a ±20-line window (a window confirms a `file:line`; it does not teach the design):
+   - Read a tackit task or slice with `show <id>`: one call returns the whole body.
    - every design/schema slice the change HITS — the WHOLE slice + the exact rule; classify each edit as REVISE / CONFIRM / EXTEND / RETIRE / UNCHANGED-but-referenced.
    - A READ DELEGATED to an agent (the project bars reading that file here) counts only for what the agent actually read. Its brief requires it to report, per file, READ IN FULL or SAMPLED + what it left out. A sampled or skipped file stays an unread item unless the plan states why sampling answers its question.
    - every code touchpoint — the WHOLE function/section + the callers/callees the design leans on. ⭐ READ THE CODE YOURSELF for every load-bearing claim: a task body OVER-CLAIMS blast radius and a summary/delegated claim has been wrong before — each factual claim carries `file:line` or the word UNVERIFIED, no third option; a universal quantifier (all/only/none) obliges an ENUMERATED check.
