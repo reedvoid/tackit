@@ -1,6 +1,6 @@
 """M376: the suite's own run settings, set in tests/conftest.py.
 
-The temp root goes to the RAM disk when the machine has one (disk I/O was ~95% of
+The temp root goes to the RAM disk when the machine has one (disk I/O was ~87% of
 the serial run), and the slow Hypothesis tests are scheduled first so a parallel
 run is not left waiting on one of them at the end.
 """

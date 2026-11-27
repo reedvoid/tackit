@@ -13,10 +13,11 @@ from tackit.core import Core
 from tackit.db import init_store
 
 # M376: every tackit write commits SQLite and rewrites the store dump, so on disk the
-# suite waits on I/O (measured: 658s serial on disk, 31.5s serial with temp files in
-# RAM). Put pytest's temp root on the RAM disk when the machine has one and the caller
-# did not choose a root; an explicit --basetemp still wins. Speed only: elsewhere the
-# default temp dir is used unchanged.
+# suite waits on I/O. Measured with nothing else running: 246s serial and 125s on 6
+# workers on disk, against 31.5s serial and about 12s on 6 workers in RAM. Put
+# pytest's temp root on the RAM disk when the machine has one and the caller did not
+# choose a root; an explicit --basetemp still wins. Speed only: elsewhere the default
+# temp dir is used unchanged.
 _RAM_DISK = "/dev/shm"
 
 
