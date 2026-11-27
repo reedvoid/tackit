@@ -163,23 +163,40 @@ def dump_text(conn: sqlite3.Connection) -> str:
 _CHAINED_HASH_TAG = "c1:"
 
 
+def _row_starts(data: bytes) -> list[int]:
+    """The offsets of true row starts: each ``\nINSERT INTO `` outside a quoted
+    literal. A task body may quote such a line; the dump escapes a quote inside a
+    literal by doubling it, so a match is outside every literal exactly when an
+    even number of quotes precedes it."""
+    starts = []
+    quotes = 0
+    counted_to = 0
+    position = data.find(_ROW_BOUNDARY)
+    while position != -1:
+        quotes += data.count(b"'", counted_to, position)
+        counted_to = position
+        if quotes % 2 == 0:
+            starts.append(position)
+        position = data.find(_ROW_BOUNDARY, position + 1)
+    return starts
+
+
 def chunk_cuts(data: bytes) -> list[int]:
     """D60/D379: the byte offsets where the dump's chunks start, plus the end.
 
-    A chunk starts at a row boundary (``\\nINSERT INTO ``) whose row, up to the
-    next boundary, has a crc32 divisible by 8, so a chunk's extent depends only on
-    its own rows. The first chunk (header and DDL) starts at 0. Zero-length
-    chunks are never produced."""
+    A chunk starts at a row start whose row, up to the next row start, has a
+    crc32 divisible by 8, so a chunk's extent depends only on its own rows. The
+    first chunk (header and DDL) starts at 0. Zero-length chunks are never
+    produced. Given the bytes of a run that begins at a row start, it yields the
+    same cuts as the whole text does inside that run."""
+    starts = _row_starts(data)
     cuts = [0]
-    row_start = data.find(_ROW_BOUNDARY)
-    while row_start != -1:
-        next_row = data.find(_ROW_BOUNDARY, row_start + 1)
+    for index, row_start in enumerate(starts):
         row_end = len(data)
-        if next_row != -1:
-            row_end = next_row
+        if index + 1 < len(starts):
+            row_end = starts[index + 1]
         if row_start > cuts[-1] and zlib.crc32(data[row_start:row_end]) % _FLUSH_ROW_MODULUS == 0:
             cuts.append(row_start)
-        row_start = next_row
     cuts.append(len(data))
     return cuts
 

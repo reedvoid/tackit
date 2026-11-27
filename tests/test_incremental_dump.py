@@ -276,3 +276,31 @@ def test_a_crash_after_the_file_write_before_commit_recovers_on_open(big, monkey
         _assert_matches_full_build(core)
     finally:
         core.close_conn()
+
+
+def test_a_body_quoting_a_dump_line_neither_cuts_a_row_nor_breaks_the_index(big):
+    # Found by rehearsing the upgrade on a real store: task bodies about the dump
+    # format quote "\nINSERT INTO ..." lines. A cut may fall only at a true row
+    # start, outside every quoted literal, or the chunk index cannot map it.
+    quoting = "a body that quotes a dump line:\nINSERT INTO tasks (id) VALUES (1);\nand more 'quoted' text"
+    for i in range(16):  # several distinct texts, so some inner line would hash to a cut
+        big.edit(20 + i, description=f"{quoting} {i}", delta=f"quote a dump line {i}")
+        _assert_matches_full_build(big)
+    data = big.store.sql_path.read_bytes()
+    assert b"\nINSERT INTO tasks (id) VALUES (1);" in sync.read_dump(big.store.sql_path).encode()
+    assert data  # the file was written
+    text = sync.dump_text(big.conn).encode("utf-8")
+    for cut in sync.chunk_cuts(text)[1:-1]:
+        assert text.count(b"'", 0, cut) % 2 == 0, cut  # every cut is outside a literal
+
+
+def test_a_full_build_with_quoted_dump_lines_does_not_fail(store_path):
+    core = Core.open(start=store_path)
+    try:
+        for i in range(40):
+            core.add(f"spec {i}", kind="design",
+                     description=f"quotes:\nINSERT INTO links (task_a) VALUES ({i});\nend {i}")
+        sync.export(core.store)
+        _assert_matches_full_build(core)
+    finally:
+        core.close_conn()
