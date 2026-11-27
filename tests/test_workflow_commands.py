@@ -20,7 +20,7 @@ EXPECTED_FILES = {f"commands/{name}.md" for name in COMMANDS} | {
 ALLOWED_SLICE_CITATIONS = {"D245", "D250", "D256"}
 
 # /context is a Claude Code built-in. /open is a false match on `NEXT`/open-hub in trim.md.
-NON_COMMAND_SLASH_TOKENS = {"/context", "/open"}
+NON_COMMAND_SLASH_TOKENS = {"/context", "/open", "/dev"}  # /dev: the /dev/shm path (M376)
 SLASH_TOKEN = re.compile(r"(?<![\w/.~-])/[a-z]+\b")
 REFERENCE_FILE = re.compile(r"references/[\w-]+\.md")
 STORE_STYLE_ID = re.compile(r"\b[MDST]\d{3,}\b")
@@ -406,18 +406,24 @@ def test_diagnose_and_build_wording_fixes_landed(filename, phrase):
 
 MUTANT_RUN_PARAGRAPH = (
     "RUNNING PLANTED MUTANTS: give each mutant its own copy of the source and tests in a "
-    "fresh, uniquely named scratch directory (create it new; never clear an existing one), "
-    "point the interpreter at that copy and check the imported code resolves into it "
-    "(Python: PYTHONPATH to the copy's src), give each run its own test temp root and turn "
-    "off shared caches (pytest: `--basetemp` set inside the copy, and `-p no:cacheprovider`), "
-    "and put "
-    "one break in each copy, never several (grouped breaks hide which break failed which "
-    "test). Launch every independent mutant at once, up to the machine's core count; run "
-    "them one after another only when one mutant's result decides the next. A sweep "
-    "question (which existing tests pin this behavior?) runs the full suite per mutant, "
-    "because a test that builds its target set at runtime escapes a grep; proving one new "
-    "test can fail runs that test's own file. Report per mutant what was broken and the "
-    "failing test ids, or \"0 failed\": no test pins it, so the plan needs a new pin."
+    "fresh, uniquely named scratch directory (create it new; never clear an existing "
+    "one), point the interpreter at that copy and check the imported code resolves into "
+    "it (Python: PYTHONPATH to the copy's src), give each run its own test temp root and "
+    "turn off shared caches (pytest: `--basetemp` set to a fresh directory named for the "
+    "copy, on a RAM disk such as `/dev/shm` when the machine has one, because test file "
+    "I/O can outweigh the tests themselves; and `-p no:cacheprovider`), and put one break"
+    " in each copy, never several (grouped breaks hide which break failed which test). "
+    "Launch every independent mutant at once, up to the machine's core count; run them "
+    "one after another only when one mutant's result decides the next. When the test "
+    "runner itself runs in parallel (pytest-xdist's `-n`), the concurrent mutants share "
+    "one worker budget, the core count minus a few: pass each run `-n` equal to that "
+    "budget divided by the number of concurrent mutants, at least 1 and at most the "
+    "worker count the project's CLAUDE.md names, because a worker count in the project's "
+    "test config is otherwise multiplied by every copy. A sweep question (which existing "
+    "tests pin this behavior?) runs the full suite per mutant, because a test that builds"
+    " its target set at runtime escapes a grep; proving one new test can fail runs that "
+    'test\'s own file. Report per mutant what was broken and the failing test ids, or "0 '
+    'failed": no test pins it, so the plan needs a new pin.'
 )
 MUTANT_RUN_FILES = ("commands/firmup.md", "commands/build.md", "skills/test-audit/SKILL.md")
 

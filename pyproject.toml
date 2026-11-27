@@ -36,6 +36,11 @@ test = [
     "pytest>=8,<10",
     "coverage>=7,<8",
     "hypothesis==6.152.7",
+    # M376 (2026-11-26): parallel test runs. pytest-xdist 3.8.0 (2025-07-01) and its
+    # dependency execnet 2.1.2 (2025-11-12), both the latest releases, both past the
+    # 14-day bar; OSV: no advisories; GuardDog: 0 malicious indicators each.
+    "pytest-xdist==3.8.0",
+    "execnet==2.1.2",
 ]
 
 [project.scripts]
@@ -70,3 +75,8 @@ include = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# M376: parallel by default. 6 workers is the measured knee on a 20-core machine with
+# temp files in RAM (tests/conftest.py): 4 to 12 workers all finish in 11-13s, bounded
+# by the ~10s Hypothesis state machine. worksteal lets idle workers take queued tests.
+# Pass `-n 0` for a serial one-file debug run.
+addopts = "-n 6 --dist worksteal"
