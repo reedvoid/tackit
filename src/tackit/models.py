@@ -349,15 +349,18 @@ _TASK_LIST_DROP = {"name", "created_at", "updated_at"}
 
 
 def project_task(task: "Task", *, include_description: bool) -> dict:
-    """D211 + T221: lean LIST projection of a Task for `ls`. Always drops the
-    bare `name` (recoverable from `prefixed_name`) and the `created_at` /
-    `updated_at` timestamps; drops `description` too unless asked. Keeps id,
-    prefixed_name, kind, status, stale, wont_do_reason. For one row's full
-    scalars use `show`."""
+    """D211 + T221 + T373: lean LIST projection of a Task for `ls` and `stale`.
+    Always drops the bare `name` (recoverable from `prefixed_name`) and the
+    `created_at` / `updated_at` timestamps; drops `description` too unless asked.
+    Keeps id, prefixed_name, kind, status, stale, wont_do_reason, and adds
+    `description_chars`, the body's length in characters (the body caps' unit),
+    whether or not the body is included. For one row's full scalars use `show`."""
     exclude = set(_TASK_LIST_DROP)
     if not include_description:
         exclude.add("description")
-    return task.model_dump(mode="json", exclude=exclude)
+    row = task.model_dump(mode="json", exclude=exclude)
+    row["description_chars"] = len(task.description or "")
+    return row
 
 
 def project_slice(

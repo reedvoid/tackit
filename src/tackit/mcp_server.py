@@ -718,7 +718,8 @@ def build_server() -> FastMCP:
         `ids` (D57) limits the result to the given tasks: an int, '#id' or a
         prefixed name like 'M12' (its kind letter is checked); an unknown id or
         a wrong letter refuses the whole call, naming each one. Use it to check
-        many ids in one call."""
+        many ids in one call. Every row carries `description_chars`, the body
+        length in characters (D211)."""
         with _core() as c:
             stale_filter = True if stale else None
             tasks = []
@@ -744,7 +745,8 @@ def build_server() -> FastMCP:
     @mcp.tool(structured_output=False)
     def stale() -> str:
         """The reconciliation worklist (D11): all stale open/spec tasks, as short
-        rows with no bodies (D211); `show` opens one. Empty == done."""
+        rows with no bodies (D211), each with its `description_chars`; `show`
+        opens one. Empty == done."""
         with _core() as c:
             tasks = []
             for t in c.stale_worklist():

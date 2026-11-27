@@ -692,7 +692,8 @@ def test_the_label_nudge_still_rides_the_envelope_on_a_lean_result(store):
 # --- `stale`: short rows, no bodies, no opt-in (D211, D11) ----------------------
 
 
-SHORT_ROW_KEYS = {"id", "prefixed_name", "kind", "status", "stale", "wont_do_reason"}
+SHORT_ROW_KEYS = {"id", "prefixed_name", "kind", "status", "stale", "wont_do_reason",
+                  "description_chars"}
 LONG_BODY = "a long body line " * 500
 
 
