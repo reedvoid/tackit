@@ -91,23 +91,33 @@ def test_compress_is_deterministic():
     assert sync.compress_dump(text) == sync.compress_dump(text)
 
 
-def test_flush_points_are_row_aligned_at_about_one_row_in_eight():
-    """A stream with no flushes would still round-trip, so check the flush rule
-    itself: each Z_FULL_FLUSH ends in the empty stored block 00 00 FF FF, and
-    everything before it decompresses to whole rows. 2000 rows at 1 in 8 is about
-    250 flushes; the bounds refuse 1 in 4 (about 500) and 1 in 16 (about 125)."""
-    data = sync.compress_dump(_rows(2000))
-    marker = b"\x00\x00\xff\xff"
-    flushes = 0
-    position = data.find(marker)
-    while position != -1:
+def _gzip_members(data):
+    """Each gzip member's decompressed bytes, walked with the decompressor's
+    unused_data (a byte scan for 1f 8b could match inside compressed data)."""
+    members = []
+    rest = data
+    while rest:
         decompressor = zlib.decompressobj(31)
-        so_far = decompressor.decompress(data[: position + len(marker)])
-        assert so_far.startswith(b"-- header")
-        assert so_far.endswith(b");") or so_far.endswith(b"BEGIN;")
-        flushes += 1
-        position = data.find(marker, position + 1)
-    assert 180 <= flushes <= 330
+        members.append(decompressor.decompress(rest))
+        assert decompressor.eof, "a member was cut short"
+        rest = decompressor.unused_data
+    return members
+
+
+def test_members_are_row_aligned_at_about_one_row_in_eight():
+    """D60/D379: one gzip member per chunk. A single-member file would still
+    round-trip, so check the chunk rule itself: the first member is the header,
+    every later member starts at a row boundary and ends on a whole row. 2000
+    rows at 1 in 8 is about 250 chunks; the bounds refuse 1 in 4 (about 500) and
+    1 in 16 (about 125)."""
+    members = _gzip_members(sync.compress_dump(_rows(2000)))
+    assert members[0].startswith(b"-- header")
+    for member in members[1:]:
+        assert member.startswith(b"\nINSERT INTO ")
+    for member in members[:-1]:
+        assert member.endswith(b");") or member.endswith(b"BEGIN;")
+    assert b"".join(members) == _rows(2000).encode("utf-8")
+    assert 180 <= len(members) <= 330
 
 
 def test_early_row_change_keeps_later_bytes_identical():

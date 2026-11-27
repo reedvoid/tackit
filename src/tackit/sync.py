@@ -7,8 +7,10 @@ markers in ``meta`` (S6) govern sync:
   * ``version``         - monotonic generation counter, +1 per mutation. The
                           *ordering* signal ("which is newer"). Embedded in the
                           dump (as a meta row) so the disk file carries its Vsql.
-  * ``synced_sql_hash`` - sha256 of the decompressed text of the last dump *this
-                          db produced*. The *integrity* signal. Local-only:
+  * ``synced_sql_hash`` - the chained per-chunk hash (``dump_hash``, D379) of the
+                          decompressed text of the last dump *this db produced*
+                          (an untagged value is the older whole-text sha256).
+                          The *integrity* signal. Local-only:
                           deliberately NOT written into the dumped text (that
                           would be circular), so the hash of the on-disk file's
                           text lines up with what's stored.
@@ -102,8 +104,58 @@ def dump_text(conn: sqlite3.Connection) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _hash_text(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+_CHAINED_HASH_TAG = "c1:"
+
+
+def chunk_cuts(data: bytes) -> list[int]:
+    """D60/D379: the byte offsets where the dump's chunks start, plus the end.
+
+    A chunk starts at a row boundary (``\\nINSERT INTO ``) whose row, up to the
+    next boundary, has a crc32 divisible by 8, so a chunk's extent depends only on
+    its own rows. The first chunk (header and DDL) starts at 0. Zero-length
+    chunks are never produced."""
+    cuts = [0]
+    row_start = data.find(_ROW_BOUNDARY)
+    while row_start != -1:
+        next_row = data.find(_ROW_BOUNDARY, row_start + 1)
+        row_end = len(data)
+        if next_row != -1:
+            row_end = next_row
+        if row_start > cuts[-1] and zlib.crc32(data[row_start:row_end]) % _FLUSH_ROW_MODULUS == 0:
+            cuts.append(row_start)
+        row_start = next_row
+    cuts.append(len(data))
+    return cuts
+
+
+def _chained_digest(digests) -> str:
+    chain = hashlib.sha256()
+    for digest in digests:
+        chain.update(digest)
+    return _CHAINED_HASH_TAG + chain.hexdigest()
+
+
+def dump_hash(text: str) -> str:
+    """D379: the integrity hash of dump text -- sha256 over the ordered sha256
+    digests of its chunks, tagged ``c1:``. It covers the decompressed text, so a
+    recompression never reads as divergence (D60)."""
+    data = text.encode("utf-8")
+    cuts = chunk_cuts(data)
+    digests = []
+    for start, end in zip(cuts, cuts[1:]):
+        digests.append(hashlib.sha256(data[start:end]).digest())
+    return _chained_digest(digests)
+
+
+def hash_matches(stored: str, text: str) -> bool:
+    """D379: compare a stored synced_sql_hash with dump text. A tagged value is the
+    chained hash; an untagged one is the whole-text sha256 written before D379, so
+    a store from before the change still opens in sync."""
+    if stored.startswith(_CHAINED_HASH_TAG):
+        return stored == dump_hash(text)
+    if not stored:
+        return False
+    return stored == hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 # --- meta accessors (S6) ----------------------------------------------------
@@ -126,27 +178,25 @@ def _set_meta(conn: sqlite3.Connection, key: str, value: str) -> None:
     )
 
 
-def compress_dump(text: str) -> bytes:
-    """T301 / D18: gzip ``text``, full-flushing at content-defined row boundaries.
-    A flush resets the compressor, so the bytes for a run of rows depend only on
-    those rows, and git can delta one version of the dump against the next."""
-    data = text.encode("utf-8")
+def compress_member(chunk: bytes) -> bytes:
+    """One standard gzip member holding ``chunk`` (D60): its bytes depend only on
+    the chunk, so an unchanged chunk compresses identically in every version."""
     compressor = zlib.compressobj(_DUMP_COMPRESSION_LEVEL, zlib.DEFLATED, _GZIP_WBITS)
+    return compressor.compress(chunk) + compressor.flush()
+
+
+def compress_dump(text: str) -> bytes:
+    """T301 / D60 / D379: gzip ``text`` as one member per content-defined chunk, so
+    runs of unchanged rows compress to identical bytes whatever precedes them and
+    git can delta one version of the dump against the next. Any gunzip reads a
+    multi-member file. Empty text is one empty member."""
+    data = text.encode("utf-8")
+    cuts = chunk_cuts(data)
     parts: list[bytes] = []
-    chunk_start = 0
-    row_start = data.find(_ROW_BOUNDARY)
-    while row_start != -1:
-        next_row = data.find(_ROW_BOUNDARY, row_start + 1)
-        row_end = len(data)
-        if next_row != -1:
-            row_end = next_row
-        if zlib.crc32(data[row_start:row_end]) % _FLUSH_ROW_MODULUS == 0:
-            parts.append(compressor.compress(data[chunk_start:row_start]))
-            parts.append(compressor.flush(zlib.Z_FULL_FLUSH))
-            chunk_start = row_start
-        row_start = next_row
-    parts.append(compressor.compress(data[chunk_start:]))
-    parts.append(compressor.flush())
+    for start, end in zip(cuts, cuts[1:]):
+        parts.append(compress_member(data[start:end]))
+    if not parts:
+        parts.append(compress_member(b""))
     return b"".join(parts)
 
 
@@ -223,7 +273,7 @@ def refuse_diverged_legacy(store: Store) -> None:
         vdb = get_version(conn)
     finally:
         conn.close()
-    if _hash_text(legacy_text) == stored_hash:
+    if hash_matches(stored_hash, legacy_text):
         return
     vsql = parse_version_from_sql(legacy_text)
     if vsql > vdb:
@@ -295,7 +345,7 @@ def finalize_mutation(conn: sqlite3.Connection, store: Store) -> None:
     """
     _set_meta(conn, "version", str(get_version(conn) + 1))
     text = dump_text(conn)
-    _set_meta(conn, "synced_sql_hash", _hash_text(text))
+    _set_meta(conn, "synced_sql_hash", dump_hash(text))
     write_dump(store.sql_path, text)
 
 
@@ -308,7 +358,7 @@ def export(store: Store) -> int:
     try:
         conn.execute("BEGIN")
         text = dump_text(conn)
-        _set_meta(conn, "synced_sql_hash", _hash_text(text))
+        _set_meta(conn, "synced_sql_hash", dump_hash(text))
         write_dump(store.sql_path, text)
         conn.execute("COMMIT")
         return get_version(conn)
@@ -347,7 +397,7 @@ def rebuild_db_from_sql(store: Store) -> None:
         conn.executescript(sql_text)
         # mark the freshly-built db as in-sync with the file it came from
         conn.execute("BEGIN")
-        _set_meta(conn, "synced_sql_hash", _hash_text(sql_text))
+        _set_meta(conn, "synced_sql_hash", dump_hash(sql_text))
         if conn.execute("SELECT 1 FROM meta WHERE key='schema_version'").fetchone() is None:
             _set_meta(conn, "schema_version", schema.SCHEMA_VERSION)
         conn.execute("COMMIT")
@@ -427,7 +477,7 @@ def startup_sync(store: Store) -> str:
         conn.close()
 
     disk_text = read_dump(store.sql_path)
-    if _hash_text(disk_text) == stored_hash:
+    if hash_matches(stored_hash, disk_text):
         return "in-sync"
 
     vsql = parse_version_from_sql(disk_text)
@@ -465,7 +515,8 @@ def status(store: Store) -> dict:
     if sql_exists:
         disk_text = read_dump(store.sql_path)
         info["sql_version"] = parse_version_from_sql(disk_text)
-        info["sql_hash"] = _hash_text(disk_text)
+        info["sql_hash"] = dump_hash(disk_text)
+        sql_matches = hash_matches(info.get("synced_sql_hash", ""), disk_text)
 
     if legacy_exists:
         info["verdict"] = (
@@ -477,7 +528,7 @@ def status(store: Store) -> dict:
     elif db_exists and not sql_exists:
         info["verdict"] = "no tackit.sql.gz; run `tackit export` to create it"
     elif db_exists and sql_exists:
-        if info.get("synced_sql_hash") == info.get("sql_hash"):
+        if sql_matches:
             info["verdict"] = "in sync"
         elif info["sql_version"] > info["db_version"]:
             info["verdict"] = "tackit.sql.gz is newer (a pull); next op rebuilds the db"
